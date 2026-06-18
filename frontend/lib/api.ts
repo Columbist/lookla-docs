@@ -1,4 +1,7 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
+// Server-side: call backend directly. Client-side: via nginx proxy.
+const API_BASE = typeof window === 'undefined'
+  ? (process.env.API_INTERNAL_URL || 'http://localhost:8001/api')
+  : '/api';
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
