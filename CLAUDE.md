@@ -368,6 +368,8 @@ URL структура: `/el/`, `/en/`, `/ru/`, `/uk/` + `hreflang` теги.
 
 | Версия | Дата | Что сделано |
 |--------|------|------------|
+| 0.6 | 2026-06-18 | Sprint 6+8+9: Chat, Admin panel, Stripe payments (65 endpoints total) |
+| 0.5 | 2026-06-18 | Fix: search page client-side, next-intl 4.x |
 | 0.4 | 2026-06-18 | Sprint 4-5: Owner claiming, master registration, booking system |
 | 0.3 | 2026-06-18 | Sprint 3: Auth (JWT, register, login, OAuth, rate limiting) |
 | 0.2 | 2026-06-18 | Sprint 1-2: FastAPI + Next.js (home, search, salon detail, map, 4 langs) |
