@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
@@ -12,7 +12,7 @@ interface Props {
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { slug } = await params;
+  const slug = (params as any).slug;
   const salon = await api.salons.get(slug).catch(() => null);
   if (!salon) return { title: 'Not found' };
   return {
@@ -23,8 +23,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function SalonPage({ params }: Props) {
-  const { locale, slug } = await params;
-  const t = await getTranslations('salon');
+  const locale = (params as any).locale ?? 'el';
+  const slug = (params as any).slug;
+  setRequestLocale(locale);
+  const t = await getTranslations({ locale, namespace: 'salon' });
   const salon = await api.salons.get(slug).catch(() => null);
   if (!salon) notFound();
 

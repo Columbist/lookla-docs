@@ -368,4 +368,7 @@ URL структура: `/el/`, `/en/`, `/ru/`, `/uk/` + `hreflang` теги.
 
 | Версия | Дата | Что сделано |
 |--------|------|------------|
+| 0.4 | 2026-06-18 | Sprint 4-5: Owner claiming, master registration, booking system |
+| 0.3 | 2026-06-18 | Sprint 3: Auth (JWT, register, login, OAuth, rate limiting) |
+| 0.2 | 2026-06-18 | Sprint 1-2: FastAPI + Next.js (home, search, salon detail, map, 4 langs) |
 | 0.1 | 2026-06-17 | Инициализация проекта, создан CLAUDE.md |

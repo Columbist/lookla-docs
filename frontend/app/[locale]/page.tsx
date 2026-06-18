@@ -1,5 +1,5 @@
 import { useTranslations } from 'next-intl';
-import { getTranslations } from 'next-intl/server';
+import { getTranslations, setRequestLocale } from 'next-intl/server';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import SearchBar from '@/components/SearchBar';
@@ -11,9 +11,10 @@ export default async function HomePage({
 }: {
   params: { locale: string };
 }) {
-  const { locale } = await params;
-  const t = await getTranslations('home');
-  const nt = await getTranslations('nav');
+  const locale = (params as any).locale ?? 'el';
+  setRequestLocale(locale);
+  const t = await getTranslations({ locale, namespace: 'home' });
+  const nt = await getTranslations({ locale, namespace: 'nav' });
 
   const [cities, categories] = await Promise.all([
     api.cities().catch(() => []),
