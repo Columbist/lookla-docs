@@ -1,0 +1,83 @@
+{
+  "nav": {
+    "salons": "Κομμωτήρια & Σαλόνια",
+    "masters": "Ελεύθεροι Επαγγελματίες",
+    "search_placeholder": "Υπηρεσία ή τοποθεσία...",
+    "login": "Σύνδεση",
+    "register": "Εγγραφή"
+  },
+  "home": {
+    "hero_title": "Βρείτε τον τέλειο κομμωτή ή ειδικό ομορφιάς",
+    "hero_subtitle": "Χιλιάδες σαλόνια και επαγγελματίες σε όλη την Ελλάδα",
+    "search_button": "Αναζήτηση",
+    "popular_cities": "Δημοφιλείς πόλεις",
+    "popular_services": "Δημοφιλείς υπηρεσίες",
+    "how_it_works": "Πώς λειτουργεί",
+    "near_me": "Κοντά μου"
+  },
+  "search": {
+    "results_count": "{count} αποτελέσματα",
+    "filter_city": "Πόλη",
+    "filter_category": "Κατηγορία",
+    "filter_rating": "Βαθμολογία",
+    "filter_price": "Τιμή",
+    "no_results": "Δεν βρέθηκαν αποτελέσματα",
+    "map_view": "Χάρτης",
+    "list_view": "Λίστα",
+    "salons_tab": "Σαλόνια",
+    "masters_tab": "Επαγγελματίες",
+    "home_visits": "Κατ' οίκον"
+  },
+  "salon": {
+    "call": "Κλήση",
+    "viber": "Viber",
+    "whatsapp": "WhatsApp",
+    "website": "Ιστοσελίδα",
+    "book": "Κράτηση",
+    "message": "Μήνυμα",
+    "request_slot": "Ζητήστε ραντεβού",
+    "report": "Αναφορά προβλήματος",
+    "hours": "Ώρες λειτουργίας",
+    "services": "Υπηρεσίες",
+    "reviews": "Αξιολογήσεις",
+    "photos": "Φωτογραφίες",
+    "translated_from": "Μεταφράστηκε από τα {lang}",
+    "show_original": "Εμφάνιση πρωτοτύπου",
+    "verified": "Επαληθευμένο",
+    "open_now": "Ανοιχτό τώρα",
+    "closed": "Κλειστό"
+  },
+  "master": {
+    "home_visits": "Κατ' οίκον επισκέψεις",
+    "home_studio": "Studio στο σπίτι",
+    "radius": "Εξυπηρετεί έως {km} χλμ",
+    "portfolio": "Portfolio",
+    "before": "Πριν",
+    "after": "Μετά"
+  },
+  "report": {
+    "title": "Αναφορά προβλήματος",
+    "closed": "Το κατάστημα είναι κλειστό",
+    "wrong_phone": "Λάθος τηλέφωνο",
+    "wrong_address": "Λάθος διεύθυνση",
+    "wrong_hours": "Λάθος ώρες",
+    "duplicate": "Διπλή καταχώρηση",
+    "inappropriate": "Ακατάλληλο περιεχόμενο",
+    "other": "Άλλο",
+    "submit": "Υποβολή",
+    "thanks": "Ευχαριστούμε για την αναφορά σας"
+  },
+  "common": {
+    "rating": "Βαθμολογία",
+    "price": "Τιμή",
+    "distance": "{km} χλμ",
+    "loading": "Φόρτωση...",
+    "error": "Κάτι πήγε στραβά",
+    "close": "Κλείσιμο",
+    "save": "Αποθήκευση",
+    "cancel": "Ακύρωση",
+    "confirm": "Επιβεβαίωση",
+    "see_all": "Δείτε όλα",
+    "language": "Γλώσσα"
+  }
+}

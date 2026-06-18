@@ -1,0 +1,83 @@
+{
+  "nav": {
+    "salons": "Salons & Studios",
+    "masters": "Independent Professionals",
+    "search_placeholder": "Service or location...",
+    "login": "Log in",
+    "register": "Sign up"
+  },
+  "home": {
+    "hero_title": "Find your perfect beauty professional",
+    "hero_subtitle": "Thousands of salons and professionals across Greece",
+    "search_button": "Search",
+    "popular_cities": "Popular cities",
+    "popular_services": "Popular services",
+    "how_it_works": "How it works",
+    "near_me": "Near me"
+  },
+  "search": {
+    "results_count": "{count} results",
+    "filter_city": "City",
+    "filter_category": "Category",
+    "filter_rating": "Rating",
+    "filter_price": "Price",
+    "no_results": "No results found",
+    "map_view": "Map",
+    "list_view": "List",
+    "salons_tab": "Salons",
+    "masters_tab": "Professionals",
+    "home_visits": "Home visits"
+  },
+  "salon": {
+    "call": "Call",
+    "viber": "Viber",
+    "whatsapp": "WhatsApp",
+    "website": "Website",
+    "book": "Book now",
+    "message": "Message",
+    "request_slot": "Request appointment",
+    "report": "Report a problem",
+    "hours": "Opening hours",
+    "services": "Services",
+    "reviews": "Reviews",
+    "photos": "Photos",
+    "translated_from": "Translated from {lang}",
+    "show_original": "Show original",
+    "verified": "Verified",
+    "open_now": "Open now",
+    "closed": "Closed"
+  },
+  "master": {
+    "home_visits": "Home visits",
+    "home_studio": "Home studio",
+    "radius": "Serves up to {km} km",
+    "portfolio": "Portfolio",
+    "before": "Before",
+    "after": "After"
+  },
+  "report": {
+    "title": "Report a problem",
+    "closed": "Salon is permanently closed",
+    "wrong_phone": "Wrong phone number",
+    "wrong_address": "Wrong address",
+    "wrong_hours": "Wrong opening hours",
+    "duplicate": "Duplicate listing",
+    "inappropriate": "Inappropriate content",
+    "other": "Other",
+    "submit": "Submit",
+    "thanks": "Thank you for your report"
+  },
+  "common": {
+    "rating": "Rating",
+    "price": "Price",
+    "distance": "{km} km",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "close": "Close",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "see_all": "See all",
+    "language": "Language"
+  }
+}

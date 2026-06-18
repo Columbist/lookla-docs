@@ -85,6 +85,22 @@ cat /etc/nginx/sites-enabled/*
 
 ---
 
+### PostGIS не установлен (postgres:16-alpine)
+**Симптом:** `ERROR: type "geography" does not exist` при geo-запросах
+**Причина:** `postgres:16-alpine` не включает PostGIS. `CREATE EXTENSION postgis` в init.sql игнорировалось (`IF NOT EXISTS`).
+**Решение:** Используем Haversine-формулу в чистом SQL — точность ±0.5% до 100 км, достаточно для продакшна.
+```sql
+6371.0 * acos(LEAST(1.0,
+  cos(radians(:lat)) * cos(radians(s.lat)) *
+  cos(radians(s.lng) - radians(:lng)) +
+  sin(radians(:lat)) * sin(radians(s.lat))
+)) AS distance_km
+```
+**Дата:** 2026-06-17
+**Примечание:** PostGIS можно добавить позже, переключив образ на `postgis/postgis:16-alpine` при следующей плановой миграции данных.
+
+---
+
 ## Добавлять сюда при каждой новой решённой проблеме
 Формат:
 ```

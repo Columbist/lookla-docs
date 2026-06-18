@@ -1,0 +1,83 @@
+{
+  "nav": {
+    "salons": "Салони краси",
+    "masters": "Майстри",
+    "search_placeholder": "Услуга или город...",
+    "login": "Увійти",
+    "register": "Реєстрація"
+  },
+  "home": {
+    "hero_title": "Знайдіть свого майстра краси",
+    "hero_subtitle": "Тисячі салонів і майстрів по всій Греції",
+    "search_button": "Пошук",
+    "popular_cities": "Популярні міста",
+    "popular_services": "Popular services",
+    "how_it_works": "How it works",
+    "near_me": "Поруч зі мною"
+  },
+  "search": {
+    "results_count": "{count} результатів",
+    "filter_city": "City",
+    "filter_category": "Category",
+    "filter_rating": "Rating",
+    "filter_price": "Price",
+    "no_results": "Нічого не знайдено",
+    "map_view": "Карта",
+    "list_view": "Список",
+    "salons_tab": "Salons",
+    "masters_tab": "Professionals",
+    "home_visits": "Виїзд додому"
+  },
+  "salon": {
+    "call": "Зателефонувати",
+    "viber": "Viber",
+    "whatsapp": "WhatsApp",
+    "website": "Website",
+    "book": "Записатися",
+    "message": "Написати",
+    "request_slot": "Запросити час",
+    "report": "Сообщить о проблеме",
+    "hours": "Часы работы",
+    "services": "Услуги",
+    "reviews": "Отзывы",
+    "photos": "Photos",
+    "translated_from": "Перекладено з {lang}",
+    "show_original": "Показати оригінал",
+    "verified": "Verified",
+    "open_now": "Open now",
+    "closed": "Closed"
+  },
+  "master": {
+    "home_visits": "Home visits",
+    "home_studio": "Home studio",
+    "radius": "Serves up to {km} km",
+    "portfolio": "Portfolio",
+    "before": "Before",
+    "after": "After"
+  },
+  "report": {
+    "title": "Report a problem",
+    "closed": "Salon is permanently closed",
+    "wrong_phone": "Wrong phone number",
+    "wrong_address": "Wrong address",
+    "wrong_hours": "Wrong opening hours",
+    "duplicate": "Duplicate listing",
+    "inappropriate": "Inappropriate content",
+    "other": "Other",
+    "submit": "Submit",
+    "thanks": "Thank you for your report"
+  },
+  "common": {
+    "rating": "Rating",
+    "price": "Price",
+    "distance": "{km} km",
+    "loading": "Загрузка...",
+    "error": "Что-то пошло не так",
+    "close": "Close",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "see_all": "Смотреть все",
+    "language": "Language"
+  }
+}
