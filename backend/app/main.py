@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import get_settings
 from app.core.database import check_db
-from app.routers import salons, search, professionals, categories, reports, auth
+from app.routers import salons, search, professionals, categories, reports, auth, owner, masters, booking
 
 settings = get_settings()
 
@@ -61,6 +61,9 @@ app.include_router(professionals.router, prefix="/api")
 app.include_router(categories.router)
 app.include_router(reports.router)
 app.include_router(auth.router)
+app.include_router(owner.router)
+app.include_router(masters.router)
+app.include_router(booking.router)
 
 
 @app.get("/api/health")
