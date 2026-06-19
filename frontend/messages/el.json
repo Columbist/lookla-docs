@@ -13,6 +13,12 @@
     "popular_cities": "Δημοφιλείς πόλεις",
     "popular_services": "Δημοφιλείς υπηρεσίες",
     "how_it_works": "Πώς λειτουργεί",
+    "step_search_title": "Αναζητήστε",
+    "step_search_desc": "Βρείτε σαλόνια ή επαγγελματίες κοντά σας",
+    "step_book_title": "Κλείστε ραντεβού",
+    "step_book_desc": "Επιλέξτε ώρα και κάντε κράτηση online",
+    "step_enjoy_title": "Απολαύστε",
+    "step_enjoy_desc": "Πηγαίνετε στο ραντεβού σας και απολαύστε",
     "near_me": "Κοντά μου"
   },
   "search": {

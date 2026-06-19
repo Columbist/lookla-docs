@@ -72,11 +72,11 @@ export default async function HomePage({
         <h2 className="text-xl font-semibold text-gray-800 mb-8">{t('how_it_works')}</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {[
-            { step: '1', icon: '🔍', title: locale === 'el' ? 'Αναζητήστε' : 'Search', desc: locale === 'el' ? 'Βρείτε σαλόνια ή επαγγελματίες κοντά σας' : 'Find salons or professionals near you' },
-            { step: '2', icon: '📅', title: locale === 'el' ? 'Κλείστε ραντεβού' : 'Book', desc: locale === 'el' ? 'Επιλέξτε ώρα και κάντε κράτηση online' : 'Choose a time and book online' },
-            { step: '3', icon: '✨', title: locale === 'el' ? 'Απολαύστε' : 'Enjoy', desc: locale === 'el' ? 'Πηγαίνετε στο ραντεβού σας και απολαύστε' : 'Go to your appointment and enjoy' },
+            { icon: '🔍', title: t('step_search_title'), desc: t('step_search_desc') },
+            { icon: '📅', title: t('step_book_title'), desc: t('step_book_desc') },
+            { icon: '✨', title: t('step_enjoy_title'), desc: t('step_enjoy_desc') },
           ].map(item => (
-            <div key={item.step} className="text-center">
+            <div key={item.icon} className="text-center">
               <div className="text-4xl mb-3">{item.icon}</div>
               <h3 className="font-semibold text-gray-800 mb-2">{item.title}</h3>
               <p className="text-gray-500 text-sm">{item.desc}</p>
@@ -91,7 +91,7 @@ export default async function HomePage({
           © 2026 Lookla — Beauty Marketplace Greece
           <div className="flex justify-center gap-4 mt-2">
             {['el','en','ru','uk'].map(l => (
-              <Link key={l} href={`/${l}`} className={`uppercase ${l === locale ? 'text-pink-600 font-medium' : 'hover:text-gray-600'}`}>{l}</Link>
+              <Link key={l} href={l === 'el' ? '/' : `/${l}`} className={`uppercase ${l === locale ? 'text-pink-600 font-medium' : 'hover:text-gray-600'}`}>{l}</Link>
             ))}
           </div>
         </div>

@@ -13,6 +13,12 @@
     "popular_cities": "Popular cities",
     "popular_services": "Popular services",
     "how_it_works": "How it works",
+    "step_search_title": "Search",
+    "step_search_desc": "Find salons or professionals near you",
+    "step_book_title": "Book",
+    "step_book_desc": "Choose a time and book online",
+    "step_enjoy_title": "Enjoy",
+    "step_enjoy_desc": "Go to your appointment and enjoy",
     "near_me": "Near me"
   },
   "search": {

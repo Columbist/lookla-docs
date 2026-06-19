@@ -11,8 +11,14 @@
     "hero_subtitle": "Тысячи салонов и мастеров по всей Греции",
     "search_button": "Поиск",
     "popular_cities": "Популярные города",
-    "popular_services": "Popular services",
-    "how_it_works": "How it works",
+    "popular_services": "Популярные услуги",
+    "how_it_works": "Как это работает",
+    "step_search_title": "Найдите",
+    "step_search_desc": "Найдите салоны или мастеров рядом с вами",
+    "step_book_title": "Запишитесь",
+    "step_book_desc": "Выберите время и запишитесь онлайн",
+    "step_enjoy_title": "Наслаждайтесь",
+    "step_enjoy_desc": "Приходите на встречу и наслаждайтесь",
     "near_me": "Рядом со мной"
   },
   "search": {
