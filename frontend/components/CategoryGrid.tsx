@@ -23,10 +23,10 @@ export default function CategoryGrid({ categories, locale }: { categories: Categ
         <Link
           key={cat.slug}
           href={`${prefix}/search?category=${cat.slug}`}
-          className="flex flex-col items-center p-4 bg-white border border-gray-100 rounded-xl hover:border-pink-200 hover:shadow-sm transition-all text-center"
+          className="flex flex-col items-center p-5 bg-white border border-gray-100 rounded-2xl hover:border-pink-200 hover:shadow-sm transition-all text-center min-h-[96px] justify-center"
         >
-          <span className="text-2xl mb-2">{ICONS[cat.slug] || '💈'}</span>
-          <span className="text-xs text-gray-700 font-medium leading-tight">{names[cat.slug] || cat.name}</span>
+          <span className="text-4xl mb-3">{ICONS[cat.slug] || '💈'}</span>
+          <span className="text-sm text-gray-700 font-medium leading-tight">{names[cat.slug] || cat.name}</span>
         </Link>
       ))}
     </div>

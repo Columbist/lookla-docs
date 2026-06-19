@@ -80,35 +80,35 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         <div className="bg-white rounded-xl p-5 mb-4">
           <div className="flex items-start justify-between gap-3 mb-4">
             <div>
-              <h1 className="text-xl font-bold text-gray-900 mb-1">{salon.name}</h1>
-              <p className="text-gray-500 text-sm">
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">{salon.name}</h1>
+              <p className="text-gray-500 text-base">
                 {[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(' ')}
               </p>
               {salon.rating_google && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <span className="text-yellow-400 text-sm">★</span>
-                  <span className="font-semibold text-sm text-gray-800">{parseFloat(salon.rating_google).toFixed(1)}</span>
-                  <span className="text-gray-400 text-xs">({salon.rating_count} αξιολογήσεις)</span>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-yellow-400">★</span>
+                  <span className="font-bold text-base text-gray-800">{parseFloat(salon.rating_google).toFixed(1)}</span>
+                  <span className="text-gray-400 text-sm">({salon.rating_count} αξιολογήσεις)</span>
                 </div>
               )}
             </div>
             {salon.is_verified && (
-              <span className="shrink-0 bg-blue-50 text-blue-600 text-xs px-2 py-1 rounded-full font-medium">✓ {t.verified}</span>
+              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">✓ {t.verified}</span>
             )}
           </div>
 
           {/* CTA buttons */}
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex gap-2">
-              <button className="flex-1 py-2.5 bg-pink-600 text-white rounded-xl text-sm font-semibold hover:bg-pink-700">📅 {t.book}</button>
-              <button className="flex-1 py-2.5 border border-pink-200 text-pink-600 rounded-xl text-sm font-medium hover:bg-pink-50">⏰ {t.request}</button>
+              <button className="flex-1 py-4 bg-pink-600 text-white rounded-xl text-base font-bold hover:bg-pink-700">📅 {t.book}</button>
+              <button className="flex-1 py-4 border border-pink-200 text-pink-600 rounded-xl text-base font-semibold hover:bg-pink-50">⏰ {t.request}</button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {phone && <a href={`tel:${phone}`} className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-green-700 rounded-xl text-sm font-medium hover:bg-green-100">📞 {t.call}</a>}
-              {viberLink && <a href={viberLink} className="flex items-center gap-1.5 px-3 py-2 bg-purple-50 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">📲 {t.viber}</a>}
-              {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-medium hover:bg-emerald-100">💬 {t.whatsapp}</a>}
-              {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100">🌐 {t.website}</a>}
-              <button className="flex items-center gap-1.5 px-3 py-2 bg-gray-50 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-100">✉️ {t.message}</button>
+            <div className="grid grid-cols-2 gap-2">
+              {phone && <a href={`tel:${phone}`} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-green-50 text-green-700 rounded-xl text-base font-semibold hover:bg-green-100">📞 {t.call}</a>}
+              {viberLink && <a href={viberLink} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-50 text-purple-700 rounded-xl text-base font-semibold hover:bg-purple-100">📲 {t.viber}</a>}
+              {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-700 rounded-xl text-base font-semibold hover:bg-emerald-100">💬 {t.whatsapp}</a>}
+              {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-blue-50 text-blue-700 rounded-xl text-base font-semibold hover:bg-blue-100">🌐 {t.website}</a>}
+              <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-gray-50 text-gray-600 rounded-xl text-base font-semibold hover:bg-gray-100">✉️ {t.message}</button>
             </div>
           </div>
         </div>
@@ -116,7 +116,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         {/* Description */}
         {desc && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <p className="text-gray-700 text-sm leading-relaxed">{desc}</p>
+            <p className="text-gray-700 text-base leading-relaxed">{desc}</p>
             {isTranslated && (
               <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">🌐 {t.translated} Greek</p>
             )}
@@ -126,16 +126,16 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         {/* Services */}
         {salon.services.length > 0 && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <h2 className="font-semibold text-gray-800 mb-3">{t.services}</h2>
-            <div className="divide-y divide-gray-50">
+            <h2 className="text-lg font-bold text-gray-800 mb-3">{t.services}</h2>
+            <div className="divide-y divide-gray-100">
               {salon.services.slice(0, 15).map(svc => (
-                <div key={svc.id} className="py-2.5 flex items-center justify-between">
+                <div key={svc.id} className="py-3.5 flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-800">{svc.name_el || svc.name}</p>
-                    {svc.duration_min && <p className="text-xs text-gray-400">{svc.duration_min} λεπτά</p>}
+                    <p className="text-base text-gray-800">{svc.name_el || svc.name}</p>
+                    {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} λεπτά</p>}
                   </div>
                   {svc.price_from && (
-                    <span className="text-sm font-medium text-gray-700 ml-4 shrink-0">
+                    <span className="text-base font-semibold text-gray-700 ml-4 shrink-0">
                       {svc.price_to && String(svc.price_to) !== String(svc.price_from) ? `${svc.price_from}–${svc.price_to}€` : `${svc.price_from}€`}
                     </span>
                   )}
@@ -148,7 +148,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         {/* Hours */}
         {salon.hours.length > 0 && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <h2 className="font-semibold text-gray-800 mb-3">{t.hours}</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-3">{t.hours}</h2>
             <SalonHours hours={salon.hours} locale={locale} />
           </div>
         )}
@@ -159,7 +159,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
             <div className="flex flex-wrap gap-3">
               {salon.social_links.map(sl => (
                 <a key={sl.platform} href={sl.url} target="_blank" rel="noopener noreferrer"
-                   className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-pink-600 border border-gray-100 px-3 py-1.5 rounded-full hover:border-pink-200 transition-colors">
+                   className="flex items-center gap-2 text-base text-gray-600 hover:text-pink-600 border border-gray-100 px-4 py-2.5 rounded-full hover:border-pink-200 transition-colors">
                   <span>{SOCIAL_ICONS[sl.platform] || '🔗'}</span>
                   <span>{SOCIAL_LABELS[sl.platform] || sl.platform}</span>
                 </a>
@@ -170,11 +170,11 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
 
         {/* Map placeholder */}
         {salon.lat && salon.lng && (
-          <div className="bg-white rounded-xl p-4 mb-4">
-            <p className="text-sm text-gray-500">📍 {[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(', ')}</p>
+          <div className="bg-white rounded-xl p-5 mb-4">
+            <p className="text-base text-gray-500">📍 {[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(', ')}</p>
             <a href={`https://www.google.com/maps/search/?api=1&query=${salon.lat},${salon.lng}`}
                target="_blank" rel="noopener noreferrer"
-               className="text-xs text-blue-600 hover:underline mt-1 block">Άνοιγμα στο Google Maps →</a>
+               className="text-base text-blue-600 hover:underline mt-1.5 block">Άνοιγμα στο Google Maps →</a>
           </div>
         )}
 

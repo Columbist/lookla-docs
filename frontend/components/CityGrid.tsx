@@ -50,10 +50,10 @@ export default function CityGrid({ cities, locale }: { cities: City[]; locale: s
         <Link
           key={city.city}
           href={`${prefix}/search?city=${encodeURIComponent(city.city)}`}
-          className="p-3 bg-white rounded-xl border border-gray-100 hover:border-pink-200 hover:shadow-sm transition-all"
+          className="p-4 bg-white rounded-xl border border-gray-100 hover:border-pink-200 hover:shadow-sm transition-all min-h-[64px] flex flex-col justify-center"
         >
-          <div className="text-sm font-medium text-gray-800 truncate">{getCityName(city.city, locale)}</div>
-          <div className="text-xs text-gray-400 mt-0.5">{city.count} {word}</div>
+          <div className="text-base font-semibold text-gray-800 truncate">{getCityName(city.city, locale)}</div>
+          <div className="text-sm text-gray-400 mt-0.5">{city.count} {word}</div>
         </Link>
       ))}
     </div>
