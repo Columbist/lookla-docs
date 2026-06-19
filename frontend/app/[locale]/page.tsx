@@ -1,10 +1,10 @@
-import { useTranslations } from 'next-intl';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import SearchBar from '@/components/SearchBar';
 import CategoryGrid from '@/components/CategoryGrid';
 import CityGrid from '@/components/CityGrid';
+import LanguageSwitcher from '@/components/LanguageSwitcher';
 
 export default async function HomePage({
   params,
@@ -89,11 +89,7 @@ export default async function HomePage({
       <footer className="border-t border-gray-100 py-8 mt-8">
         <div className="max-w-6xl mx-auto px-4 text-center text-sm text-gray-400">
           © 2026 Lookla — Beauty Marketplace Greece
-          <div className="flex justify-center gap-4 mt-2">
-            {['el','en','ru','uk'].map(l => (
-              <Link key={l} href={l === 'el' ? '/' : `/${l}`} className={`uppercase ${l === locale ? 'text-pink-600 font-medium' : 'hover:text-gray-600'}`}>{l}</Link>
-            ))}
-          </div>
+          <LanguageSwitcher currentLocale={locale} />
         </div>
       </footer>
     </div>
