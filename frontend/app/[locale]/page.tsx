@@ -1,10 +1,10 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import Link from 'next/link';
 import { api } from '@/lib/api';
 import SearchBar from '@/components/SearchBar';
 import CategoryGrid from '@/components/CategoryGrid';
 import CityGrid from '@/components/CityGrid';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
+import Header from '@/components/Header';
 
 export default async function HomePage({
   params,
@@ -14,7 +14,6 @@ export default async function HomePage({
   const locale = (params as any).locale ?? 'el';
   setRequestLocale(locale);
   const t = await getTranslations({ locale, namespace: 'home' });
-  const nt = await getTranslations({ locale, namespace: 'nav' });
 
   const [cities, categories] = await Promise.all([
     api.cities().catch(() => []),
@@ -25,22 +24,7 @@ export default async function HomePage({
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Link href={`/${locale}`} className="text-xl font-bold text-pink-600">
-            Lookla
-          </Link>
-          <nav className="hidden md:flex items-center gap-6 text-sm text-gray-600">
-            <Link href={`/${locale}/search`} className="hover:text-pink-600">{nt('salons')}</Link>
-            <Link href={`/${locale}/masters`} className="hover:text-pink-600">{nt('masters')}</Link>
-          </nav>
-          <div className="flex items-center gap-2">
-            <Link href={`/${locale}/login`} className="text-sm text-gray-600 hover:text-pink-600 px-3 py-1.5">{nt('login')}</Link>
-            <Link href={`/${locale}/register`} className="text-sm bg-pink-600 text-white px-3 py-1.5 rounded-lg hover:bg-pink-700">{nt('register')}</Link>
-          </div>
-        </div>
-      </header>
+      <Header locale={locale} />
 
       {/* Hero */}
       <section className="bg-gradient-to-br from-pink-50 to-purple-50 py-16 px-4">
