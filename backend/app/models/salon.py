@@ -119,6 +119,13 @@ class ServiceCategory(Base):
     sort_order = Column(Integer, default=0)
 
 
+class SalonCategory(Base):
+    __tablename__ = "salon_categories"
+
+    salon_id    = Column(Integer, ForeignKey("salons.id", ondelete="CASCADE"), primary_key=True)
+    category_id = Column(Integer, ForeignKey("service_categories.id", ondelete="CASCADE"), primary_key=True)
+
+
 class Review(Base):
     __tablename__ = "reviews"
     __table_args__ = (UniqueConstraint("source", "source_id"),)

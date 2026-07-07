@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Cookie
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel, EmailStr
@@ -21,10 +23,62 @@ from app.services.moderation import is_disposable_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
+limiter = Limiter(key_func=get_remote_address)
 
-COOKIE_OPTS = dict(httponly=True, samesite="lax", secure=False)  # secure=True after HTTPS
+COOKIE_OPTS = dict(httponly=True, samesite="lax", secure=True)
 
 # ─────────────────────────── helpers ──────────────────────────────────────────
+
+# Google JWKS — cached in module-level dict, refreshed when kid is missing
+_google_jwks: dict = {}
+_GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
+
+
+def _verify_google_id_token(id_token: str, audience: str) -> dict:
+    """Verify Google id_token signature (RS256) and standard claims.
+
+    Fetches Google JWKS on first call or when the key id (kid) is unknown.
+    Raises on any verification failure — caller should treat as auth error.
+    """
+    import httpx
+    from jose import jwt as jose_jwt, jwk, JWTError
+    from jose.utils import base64url_decode
+    import json as _json
+
+    if not id_token:
+        raise ValueError("empty id_token")
+
+    # Decode header to get kid without verifying signature yet
+    header_seg = id_token.split(".")[0]
+    header_seg += "=" * (4 - len(header_seg) % 4)
+    import base64 as _b64
+    header = _json.loads(_b64.urlsafe_b64decode(header_seg))
+    kid = header.get("kid")
+
+    global _google_jwks
+    if kid not in _google_jwks:
+        resp = httpx.get(_GOOGLE_JWKS_URI, timeout=10)
+        resp.raise_for_status()
+        _google_jwks = {k["kid"]: k for k in resp.json()["keys"]}
+
+    if kid not in _google_jwks:
+        raise ValueError(f"kid {kid!r} not in Google JWKS")
+
+    public_key = jwk.construct(_google_jwks[kid])
+    claims = jose_jwt.decode(
+        id_token,
+        public_key,
+        algorithms=["RS256"],
+        audience=audience,
+        issuer=["https://accounts.google.com", "accounts.google.com"],
+        options={"verify_exp": True},
+    )
+
+    if not claims.get("email_verified"):
+        raise ValueError("email not verified by Google")
+
+    return claims
+
 
 def _set_auth_cookies(response: Response, user_id: int):
     access  = create_access_token(user_id)
@@ -78,8 +132,9 @@ class ChangePasswordIn(BaseModel):
 # ─────────────────────────── endpoints ────────────────────────────────────────
 
 @router.post("/register", status_code=201)
+@limiter.limit("5/minute;20/hour")
 async def register(body: RegisterIn, request: Request, response: Response, db: Session = Depends(get_db)):
-    _check_honeypot(body.dict())
+    _check_honeypot(body.model_dump())
 
     if is_disposable_email(body.email):
         raise HTTPException(400, "Disposable email addresses are not allowed")
@@ -200,7 +255,7 @@ def get_me(access_token: Optional[str] = Cookie(None), db: Session = Depends(get
     if not access_token:
         raise HTTPException(401, "Not authenticated")
     payload = decode_token(access_token)
-    if not payload:
+    if not payload or payload.get("type") != "access":
         raise HTTPException(401, "Invalid token")
     user = db.query(User).filter(User.id == int(payload["sub"])).first()
     if not user:
@@ -211,7 +266,8 @@ def get_me(access_token: Optional[str] = Cookie(None), db: Session = Depends(get
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db)):
+@limiter.limit("3/minute;10/hour")
+async def forgot_password(request: Request, body: ForgotPasswordIn, db: Session = Depends(get_db)):
     user = None
     if body.email:
         user = db.query(User).filter(User.email == body.email, User.is_active == True).first()
@@ -255,33 +311,84 @@ def reset_password(body: ResetPasswordIn, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
-@router.post("/google")
-async def google_auth(code: str, response: Response, db: Session = Depends(get_db)):
-    """Exchange Google OAuth code for user session."""
+GOOGLE_REDIRECT_URI = "https://lookla.gr/api/auth/google/callback"
+GOOGLE_SCOPES = "openid email profile"
+
+
+@router.get("/google/start")
+async def google_start(locale: str = "el", response: Response = None):
+    """Redirect browser to Google OAuth consent screen."""
     if not settings.google_client_id:
         raise HTTPException(503, "Google OAuth not configured")
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+
+    csrf_token = secrets.token_urlsafe(32)
+    # state = "<csrf_token>:<locale>" — validated on callback
+    state = f"{csrf_token}:{locale}"
+    params = urllib.parse.urlencode({
+        "client_id": settings.google_client_id,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "state": state,
+    })
+    redirect = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+    # Store CSRF token in a short-lived httpOnly cookie for callback validation
+    redirect.set_cookie("oauth_csrf", csrf_token, max_age=600, **COOKIE_OPTS)
+    return redirect
+
+
+@router.get("/google/callback")
+async def google_callback(
+    request: Request,
+    code: str,
+    state: str = "",
+    response: Response = None,
+    db: Session = Depends(get_db),
+    oauth_csrf: str = Cookie(default=None),
+):
+    """Handle Google OAuth callback, set session cookie, redirect to account."""
+    from fastapi.responses import RedirectResponse
+
+    # Parse state: "<csrf_token>:<locale>"
+    parts = state.split(":", 1)
+    csrf_from_state = parts[0] if parts else ""
+    locale = parts[1] if len(parts) > 1 and parts[1] in ("el", "en", "ru", "uk") else "el"
+    prefix = "" if locale == "el" else f"/{locale}"
+    error_url = f"{prefix}/login?error=google_failed"
+
+    # CSRF validation — reject if token missing or mismatched
+    if not oauth_csrf or not secrets.compare_digest(oauth_csrf, csrf_from_state):
+        return RedirectResponse(f"{prefix}/login?error=csrf_mismatch")
+
+    if not settings.google_client_id:
+        return RedirectResponse(error_url)
 
     async with __import__('httpx').AsyncClient() as client:
-        # Exchange code for tokens
         token_r = await client.post("https://oauth2.googleapis.com/token", data={
             "code": code,
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "redirect_uri": "https://lookla.gr/auth/google/callback",
+            "redirect_uri": GOOGLE_REDIRECT_URI,
             "grant_type": "authorization_code",
         })
         if not token_r.is_success:
-            raise HTTPException(400, "Google OAuth failed")
+            return RedirectResponse(error_url)
 
-        id_token = token_r.json().get("id_token")
-        # Verify and decode id_token (simplified — in prod use google-auth library)
-        import base64, json
-        payload_b64 = id_token.split(".")[1] + "=="
-        userinfo = json.loads(base64.urlsafe_b64decode(payload_b64))
+        id_token = token_r.json().get("id_token", "")
+        try:
+            userinfo = _verify_google_id_token(id_token, settings.google_client_id)
+        except Exception:
+            return RedirectResponse(error_url)
 
     google_id = userinfo.get("sub")
     email     = userinfo.get("email")
-    name      = userinfo.get("name")
+    name      = userinfo.get("name", "")
+
+    if not google_id or not email:
+        return RedirectResponse(error_url)
 
     user = db.query(User).filter(User.google_id == google_id).first()
     if not user:
@@ -289,10 +396,13 @@ async def google_auth(code: str, response: Response, db: Session = Depends(get_d
         if user:
             user.google_id = google_id
         else:
-            user = User(email=email, name=name, google_id=google_id, is_email_verified=True)
+            user = User(email=email, name=name, google_id=google_id, is_email_verified=True,
+                        preferred_language=locale)
             db.add(user)
             db.flush()
     db.commit()
 
-    _set_auth_cookies(response, user.id)
-    return {"id": user.id, "email": user.email, "name": user.name}
+    redirect = RedirectResponse(f"{prefix}/account", status_code=302)
+    _set_auth_cookies(redirect, user.id)
+    redirect.delete_cookie("oauth_csrf")
+    return redirect

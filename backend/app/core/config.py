@@ -30,13 +30,15 @@ class Settings(BaseSettings):
     r2_account_id: str = ""
     r2_access_key: str = ""
     r2_secret_key: str = ""
-    r2_bucket: str = "lookla-media"
-    r2_public_url: str = "https://media.lookla.gr"
+    r2_bucket: str = "lookla-photos"
+    r2_endpoint: str = ""
+    r2_cdn_url: str = "https://cdn.lookla.gr"
+    r2_public_url: str = "https://cdn.lookla.gr"  # legacy alias
 
-    # Email (Brevo)
-    brevo_api_key: str = ""
-    brevo_sender_email: str = "noreply@lookla.gr"
-    brevo_sender_name: str = "Lookla"
+    # Email (Resend)
+    resend_api_key: str = ""
+    resend_sender_email: str = "noreply@lookla.gr"
+    resend_sender_name: str = "Lookla"
 
     # Translations
     deepl_api_key: str = ""

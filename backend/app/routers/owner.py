@@ -50,7 +50,7 @@ async def request_claim(body: ClaimIn, user: User = Depends(get_current_user), d
 
     # Send verification code
     if body.channel == "email" and salon.email:
-        await send_email(salon.email, "verify", lang="el", url=f"Κωδικός επαλήθευσης Lookla: {token}")
+        await send_email(salon.email, "claim", lang="el", code=token)
     # SMS/WhatsApp would go here when API keys are available
 
     return {"status": "ok", "hint": f"Code sent to salon contact ({body.channel})"}
@@ -88,11 +88,41 @@ def verify_claim(salon_id: int, token: str, user: User = Depends(get_current_use
 @router.get("/salons")
 def my_salons(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.execute(text("""
-        SELECT s.id, s.name, s.address_city, s.is_verified, s.is_active
+        SELECT s.id, s.name, s.slug, s.address_city, s.is_verified, s.is_active
         FROM salons s JOIN salon_owners so ON s.id = so.salon_id
         WHERE so.user_id = :uid
     """), {"uid": user.id}).mappings().all()
     return [dict(r) for r in rows]
+
+
+@router.get("/salons/{salon_id}")
+def get_my_salon(salon_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_ownership(user.id, salon_id, db)
+    row = db.execute(text("""
+        SELECT s.id, s.name, s.slug, s.address_city, s.address_street, s.address_number,
+               s.phone_primary, s.phone_secondary, s.email, s.website,
+               s.description_el, s.description_en, s.is_verified, s.is_active
+        FROM salons s WHERE s.id = :id
+    """), {"id": salon_id}).mappings().first()
+    if not row:
+        raise HTTPException(404)
+
+    services = db.execute(text("""
+        SELECT id, name, name_el, duration_min, price_from, price_to, currency
+        FROM services WHERE salon_id = :id ORDER BY id
+    """), {"id": salon_id}).mappings().all()
+
+    hours = db.execute(text("""
+        SELECT day_of_week, open_time, close_time, is_closed
+        FROM salon_hours WHERE salon_id = :id ORDER BY day_of_week
+    """), {"id": salon_id}).mappings().all()
+
+    social = db.execute(text("""
+        SELECT platform, url FROM social_links WHERE salon_id = :id
+    """), {"id": salon_id}).mappings().all()
+
+    return {**dict(row), "services": [dict(r) for r in services],
+            "hours": [dict(r) for r in hours], "social_links": [dict(r) for r in social]}
 
 
 # ─── Edit salon ───────────────────────────────────────────────────────────────
@@ -114,7 +144,7 @@ class SalonUpdateIn(BaseModel):
 @router.put("/salons/{salon_id}")
 def update_salon(salon_id: int, body: SalonUpdateIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_ownership(user.id, salon_id, db)
-    updates = {k: v for k, v in body.dict().items() if v is not None}
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         return {"status": "ok"}
     set_clause = ", ".join(f"{k} = :{k}" for k in updates)
@@ -140,7 +170,7 @@ class ServiceIn(BaseModel):
 @router.post("/salons/{salon_id}/services", status_code=201)
 def add_service(salon_id: int, body: ServiceIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_ownership(user.id, salon_id, db)
-    svc = Service(salon_id=salon_id, **body.dict())
+    svc = Service(salon_id=salon_id, **body.model_dump())
     db.add(svc)
     db.commit()
     return {"id": svc.id, "status": "ok"}
@@ -152,7 +182,7 @@ def update_service(salon_id: int, service_id: int, body: ServiceIn, user: User =
     svc = db.query(Service).filter(Service.id == service_id, Service.salon_id == salon_id).first()
     if not svc:
         raise HTTPException(404)
-    for k, v in body.dict().items():
+    for k, v in body.model_dump().items():
         if v is not None:
             setattr(svc, k, v)
     db.commit()
@@ -169,8 +199,14 @@ def delete_service(salon_id: int, service_id: int, user: User = Depends(get_curr
 
 # ─── Hours ────────────────────────────────────────────────────────────────────
 
+class HourItem(BaseModel):
+    day_of_week: int
+    open_time: Optional[str] = None
+    close_time: Optional[str] = None
+    is_closed: bool = False
+
 class HoursIn(BaseModel):
-    hours: list[dict]   # [{day_of_week, open_time, close_time, is_closed}]
+    hours: list[HourItem]
 
 
 @router.put("/salons/{salon_id}/hours")
@@ -182,8 +218,8 @@ def update_hours(salon_id: int, body: HoursIn, user: User = Depends(get_current_
             VALUES (:sid, :dow, :open, :close, :closed)
             ON CONFLICT (salon_id, day_of_week)
             DO UPDATE SET open_time = :open, close_time = :close, is_closed = :closed
-        """), {"sid": salon_id, "dow": h["day_of_week"], "open": h.get("open_time"),
-               "close": h.get("close_time"), "closed": h.get("is_closed", False)})
+        """), {"sid": salon_id, "dow": h.day_of_week, "open": h.open_time,
+               "close": h.close_time, "closed": h.is_closed})
     db.execute(text("UPDATE salons SET hours_verified_at = NOW() WHERE id = :id"), {"id": salon_id})
     db.commit()
     return {"status": "ok"}

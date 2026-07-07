@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import get_settings
 from app.core.database import check_db
-from app.routers import salons, search, professionals, categories, reports, auth, owner, masters, booking, chat, payments, admin
+from app.routers import salons, search, professionals, categories, reports, auth, owner, masters, booking, chat, payments, admin, media
 
 settings = get_settings()
 
@@ -27,20 +27,21 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_docs = settings.environment != "production"
 app = FastAPI(
     title="Lookla API",
     description="Beauty marketplace Greece — lookla.gr",
     version="0.1.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if _docs else None,
+    redoc_url="/api/redoc" if _docs else None,
+    openapi_url="/api/openapi.json" if _docs else None,
     lifespan=lifespan,
 )
 
 # CORS — allow frontend + mobile
 origins = [o.strip() for o in settings.allowed_origins.split(",")]
 if settings.environment == "development":
-    origins = ["*"]
+    origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -67,6 +68,7 @@ app.include_router(booking.router)
 app.include_router(chat.router)
 app.include_router(payments.router)
 app.include_router(admin.router)
+app.include_router(media.router)
 
 
 @app.get("/api/health")

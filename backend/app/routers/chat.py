@@ -11,7 +11,7 @@ from sqlalchemy import text
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_optional
 from app.models.user import User
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -239,8 +239,8 @@ def unread_count(user: User = Depends(get_current_user), db: Session = Depends(g
 @router.post("/availability-requests", status_code=201)
 def create_availability_request(
     body: AvailabilityRequestIn,
-    user: Optional[User] = Depends(lambda db=None: None),   # optional auth
     db: Session = Depends(get_db),
+    user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Client requests available time from salon/professional (soft inquiry)."""
     req_id = db.execute(text("""
@@ -278,7 +278,16 @@ def owner_requests(user: User = Depends(get_current_user), db: Session = Depends
 
 @router.post("/availability-requests/{req_id}/propose")
 def propose_slot(req_id: int, body: ProposeSlotIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Owner proposes a specific time slot for the request."""
+    """Owner proposes a specific time slot for the request. Only the salon owner may call this."""
+    req = db.execute(text("""
+        SELECT ar.id FROM availability_requests ar
+        JOIN salons s ON ar.salon_id = s.id
+        JOIN salon_owners so ON s.id = so.salon_id
+        WHERE ar.id = :id AND so.user_id = :uid
+    """), {"id": req_id, "uid": user.id}).first()
+    if not req:
+        raise HTTPException(403, "Not authorised to propose a slot for this request")
+
     db.execute(text("""
         UPDATE availability_requests
         SET status = 'replied', proposed_slot = :slot, reply_text = :text, updated_at = NOW()
@@ -290,10 +299,11 @@ def propose_slot(req_id: int, body: ProposeSlotIn, user: User = Depends(get_curr
 
 @router.post("/availability-requests/{req_id}/confirm")
 def confirm_slot(req_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Client confirms the proposed slot → creates appointment."""
+    """Client confirms the proposed slot → creates appointment. Only the requesting client may call this."""
     req = db.execute(text("""
-        SELECT * FROM availability_requests WHERE id = :id AND status = 'replied'
-    """), {"id": req_id}).first()
+        SELECT * FROM availability_requests
+        WHERE id = :id AND status = 'replied' AND client_user_id = :uid
+    """), {"id": req_id, "uid": user.id}).first()
 
     if not req:
         raise HTTPException(404, "Request not found or not in replied state")

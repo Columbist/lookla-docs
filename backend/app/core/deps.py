@@ -28,7 +28,7 @@ def get_current_user_optional(
     if not access_token:
         return None
     payload = decode_token(access_token)
-    if not payload:
+    if not payload or payload.get("type") != "access":
         return None
     return db.query(User).filter(User.id == int(payload["sub"]), User.is_active == True).first()
 

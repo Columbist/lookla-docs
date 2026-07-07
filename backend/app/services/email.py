@@ -16,6 +16,12 @@ TEMPLATES = {
         "ru": ("Сброс пароля — Lookla", "Ваш код сброса: {code}  (действует 10 минут)"),
         "uk": ("Скидання пароля — Lookla", "Ваш код скидання: {code}  (дійсний 10 хвилин)"),
     },
+    "claim": {
+        "el": ("Επαλήθευση ιδιοκτησίας σαλονιού — Lookla", "Ο κωδικός επαλήθευσης για το σαλόνι σας στο Lookla είναι: {code}\n\nΙσχύει για 1 ώρα. Αν δεν υποβάλατε αυτό το αίτημα, αγνοήστε αυτό το email."),
+        "en": ("Salon ownership verification — Lookla", "Your Lookla salon verification code is: {code}\n\nValid for 1 hour. If you didn't request this, please ignore this email."),
+        "ru": ("Подтверждение владения салоном — Lookla", "Ваш код подтверждения салона в Lookla: {code}\n\nДействителен 1 час."),
+        "uk": ("Підтвердження власності салону — Lookla", "Ваш код підтвердження салону в Lookla: {code}\n\nДійсний 1 годину."),
+    },
     "booking_confirm": {
         "el": ("Επιβεβαίωση κράτησης — Lookla", "Η κράτησή σας επιβεβαιώθηκε για {datetime} στο {salon}."),
         "en": ("Booking confirmed — Lookla", "Your booking is confirmed for {datetime} at {salon}."),
@@ -26,7 +32,7 @@ TEMPLATES = {
 
 
 async def send_email(to: str, template: str, lang: str = "el", **kwargs) -> bool:
-    if not settings.brevo_api_key:
+    if not settings.resend_api_key:
         print(f"[email] No API key — skipping: {template} to {to}")
         return False
 
@@ -38,20 +44,22 @@ async def send_email(to: str, template: str, lang: str = "el", **kwargs) -> bool
     body = body_tpl.format(**kwargs)
 
     payload = {
-        "sender": {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
-        "to": [{"email": to}],
+        "from": f"{settings.resend_sender_name} <{settings.resend_sender_email}>",
+        "to": [to],
         "subject": subject,
-        "textContent": body,
+        "text": body,
     }
 
     async with httpx.AsyncClient() as client:
         try:
             r = await client.post(
-                "https://api.brevo.com/v3/smtp/email",
+                "https://api.resend.com/emails",
                 json=payload,
-                headers={"api-key": settings.brevo_api_key},
+                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
                 timeout=10,
             )
+            if r.status_code not in (200, 201):
+                print(f"[email] Resend error {r.status_code}: {r.text}")
             return r.status_code in (200, 201)
         except Exception as e:
             print(f"[email] Error: {e}")

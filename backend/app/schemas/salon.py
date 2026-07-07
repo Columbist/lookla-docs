@@ -1,15 +1,19 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, time, date
 from decimal import Decimal
 
 
 class SalonHourOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     day_of_week: int
-    open_time: Optional[str]
-    close_time: Optional[str]
+    open_time: Optional[time]
+    close_time: Optional[time]
     is_closed: bool
+
+    @field_serializer("open_time", "close_time")
+    def serialize_time(self, v: Optional[time]) -> Optional[str]:
+        return v.strftime("%H:%M") if v else None
 
 
 class PhotoOut(BaseModel):
@@ -38,6 +42,20 @@ class SocialLinkOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     platform: str
     url: str
+
+
+class ReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    source: str
+    author_name: Optional[str]
+    rating: Optional[int]
+    text: Optional[str]
+    published_at: Optional[date]
+
+    @field_serializer("published_at")
+    def serialize_date(self, v: Optional[date]) -> Optional[str]:
+        return v.isoformat() if v else None
 
 
 class SalonListItem(BaseModel):
@@ -76,6 +94,7 @@ class SalonDetail(SalonListItem):
     photos: list[PhotoOut] = []
     services: list[ServiceOut] = []
     social_links: list[SocialLinkOut] = []
+    reviews: list[ReviewOut] = []
     review_count: int = 0
 
 

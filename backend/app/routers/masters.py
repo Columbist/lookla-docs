@@ -2,6 +2,7 @@
 Professional (master) registration and self-management.
 """
 import re
+import unicodedata
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -18,14 +19,11 @@ router = APIRouter(prefix="/api/masters", tags=["masters"])
 SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
-def _make_slug(name: str, db: Session) -> str:
-    base = SLUG_RE.sub("-", name.lower()).strip("-")[:60]
-    slug = base
-    n = 1
-    while db.execute(text("SELECT 1 FROM professionals WHERE slug = :s"), {"s": slug}).first():
-        slug = f"{base}-{n}"
-        n += 1
-    return slug
+def _make_slug(name: str, user_id: int) -> str:
+    """Deterministic slug: <name>-<user_id>. Unique because user_id is unique per professional."""
+    normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    base = SLUG_RE.sub("-", normalized.lower()).strip("-")[:55] or "master"
+    return f"{base}-{user_id}"
 
 
 class ProfessionalCreateIn(BaseModel):
@@ -59,8 +57,8 @@ def register_professional(body: ProfessionalCreateIn, user: User = Depends(get_c
     if existing:
         raise HTTPException(409, "You already have a professional profile")
 
-    slug = _make_slug(body.name, db)
-    pro = Professional(user_id=user.id, slug=slug, is_active=False, **body.dict())  # pending review
+    slug = _make_slug(body.name, user.id)
+    pro = Professional(user_id=user.id, slug=slug, is_active=False, **body.model_dump())  # pending review
     db.add(pro)
     db.flush()
 
@@ -84,7 +82,7 @@ def update_my_profile(body: ProfessionalCreateIn, user: User = Depends(get_curre
     pro = db.query(Professional).filter(Professional.user_id == user.id).first()
     if not pro:
         raise HTTPException(404, "No professional profile")
-    for k, v in body.dict().items():
+    for k, v in body.model_dump().items():
         if v is not None:
             setattr(pro, k, v)
     db.commit()

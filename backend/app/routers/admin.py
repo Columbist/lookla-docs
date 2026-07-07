@@ -99,7 +99,7 @@ def approve_professional(pro_id: int, is_active: bool, user: User = Depends(requ
 @router.get("/claims")
 def list_claims(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     rows = db.execute(text("""
-        SELECT ct.id, ct.salon_id, ct.token, ct.expires_at, ct.used_at, ct.created_at,
+        SELECT ct.id, ct.salon_id, ct.expires_at, ct.used_at, ct.created_at,
                s.name AS salon_name, u.email AS user_email
         FROM claiming_tokens ct
         JOIN salons s ON ct.salon_id = s.id

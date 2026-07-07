@@ -1,16 +1,10 @@
 'use client';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import type { SalonDetail } from '@/lib/api';
 import ReportButton from '@/components/ReportButton';
 import SalonHours from '@/components/SalonHours';
-
-const T: Record<string, Record<string, string>> = {
-  el: { call: 'Κλήση', viber: 'Viber', whatsapp: 'WhatsApp', website: 'Ιστοσελίδα', book: 'Κράτηση', message: 'Μήνυμα', request: 'Ζητήστε ραντεβού', report: 'Αναφορά', hours: 'Ώρες λειτουργίας', services: 'Υπηρεσίες', photos: 'Φωτογραφίες', translated: 'Μεταφράστηκε από τα', original: 'Εμφάνιση πρωτοτύπου', verified: 'Επαληθευμένο', not_found: 'Το σαλόνι δεν βρέθηκε', back: 'Πίσω στην αναζήτηση' },
-  en: { call: 'Call', viber: 'Viber', whatsapp: 'WhatsApp', website: 'Website', book: 'Book', message: 'Message', request: 'Request slot', report: 'Report', hours: 'Opening hours', services: 'Services', photos: 'Photos', translated: 'Translated from', original: 'Show original', verified: 'Verified', not_found: 'Salon not found', back: 'Back to search' },
-  ru: { call: 'Позвонить', viber: 'Viber', whatsapp: 'WhatsApp', website: 'Сайт', book: 'Записаться', message: 'Написать', request: 'Запросить время', report: 'Пожаловаться', hours: 'Часы работы', services: 'Услуги', photos: 'Фото', translated: 'Переведено с', original: 'Показать оригинал', verified: 'Подтверждено', not_found: 'Салон не найден', back: 'Назад к поиску' },
-  uk: { call: 'Зателефонувати', viber: 'Viber', whatsapp: 'WhatsApp', website: 'Сайт', book: 'Записатися', message: 'Написати', request: 'Запросити час', report: 'Поскаржитися', hours: 'Години роботи', services: 'Послуги', photos: 'Фото', translated: 'Перекладено з', original: 'Показати оригінал', verified: 'Підтверджено', not_found: 'Салон не знайдено', back: 'Назад до пошуку' },
-};
 
 const SOCIAL_ICONS: Record<string, string> = { instagram: '📷', facebook: '👥', facebook_messenger: '💬', viber: '📲', whatsapp: '💬', tiktok: '🎵', youtube: '▶️' };
 const SOCIAL_LABELS: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', facebook_messenger: 'Messenger', viber: 'Viber', whatsapp: 'WhatsApp', tiktok: 'TikTok', youtube: 'YouTube' };
@@ -18,24 +12,26 @@ const SOCIAL_LABELS: Record<string, string> = { instagram: 'Instagram', facebook
 interface Props { salon: SalonDetail | null; locale: string; slug: string; }
 
 export default function SalonDetailClient({ salon, locale, slug }: Props) {
-  const t = T[locale] || T.el;
+  const t = useTranslations('salon');
   const prefix = locale === 'el' ? '' : `/${locale}`;
+  const [showAllPhotos, setShowAllPhotos] = useState(false);
 
   if (!salon) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <p className="text-5xl mb-4">💈</p>
-          <h1 className="text-xl font-bold text-gray-800 mb-2">{t.not_found}</h1>
-          <Link href={`${prefix}/search`} className="text-pink-600 hover:underline text-sm">{t.back}</Link>
+          <h1 className="text-xl font-bold text-gray-800 mb-2">{t('not_found')}</h1>
+          <Link href={`${prefix}/search`} className="text-pink-600 hover:underline text-sm">{t('back')}</Link>
         </div>
       </div>
     );
   }
 
   const phone = salon.phone_primary?.replace(/\s/g, '');
-  const viberLink = salon.social_links?.find(s => s.platform === 'viber')?.url || (phone ? `viber://chat?number=+30${phone}` : null);
-  const waLink = salon.social_links?.find(s => s.platform === 'whatsapp')?.url || (phone ? `https://wa.me/30${phone}` : null);
+  const e164 = phone ? (phone.startsWith('+') ? phone.replace(/\D/g, '') : `30${phone.replace(/\D/g, '')}`) : null;
+  const viberLink = salon.social_links?.find(s => s.platform === 'viber')?.url || (e164 ? `viber://chat?number=+${e164}` : null);
+  const waLink = salon.social_links?.find(s => s.platform === 'whatsapp')?.url || (e164 ? `https://wa.me/${e164}` : null);
 
   // Pick best description for locale
   const descMap: Record<string, string | undefined> = { el: salon.description_el || salon.description, en: salon.description, ru: salon.description_ru || salon.description, uk: salon.description_uk || salon.description };
@@ -65,12 +61,29 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Photo gallery */}
         {salon.photos.length > 0 ? (
-          <div className={`grid gap-1.5 rounded-xl overflow-hidden mb-6 h-56 ${salon.photos.length >= 3 ? 'grid-cols-3' : salon.photos.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {salon.photos.slice(0, 3).map((photo, i) => (
-              <div key={photo.id} className={`relative bg-gray-100 ${i === 0 && salon.photos.length >= 3 ? 'col-span-2' : ''}`}>
-                <img src={photo.url} alt={salon.name} className="w-full h-full object-cover" loading={i === 0 ? 'eager' : 'lazy'} />
+          <div className="mb-6">
+            <div className={`grid gap-1.5 rounded-xl overflow-hidden h-56 ${salon.photos.length >= 3 ? 'grid-cols-3' : salon.photos.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {salon.photos.slice(0, 3).map((photo, i) => (
+                <div key={photo.id} className={`relative bg-gray-100 ${i === 0 && salon.photos.length >= 3 ? 'col-span-2' : ''}`}>
+                  <img src={photo.url} alt={salon.name} className="w-full h-full object-cover" loading={i === 0 ? 'eager' : 'lazy'} />
+                  {i === 2 && salon.photos.length > 3 && !showAllPhotos && (
+                    <button onClick={() => setShowAllPhotos(true)}
+                      className="absolute inset-0 bg-black/50 text-white flex items-center justify-center text-sm font-semibold hover:bg-black/60 transition-colors">
+                      +{salon.photos.length - 3} φωτογραφίες
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {showAllPhotos && salon.photos.length > 3 && (
+              <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+                {salon.photos.slice(3).map((photo) => (
+                  <div key={photo.id} className="relative bg-gray-100 h-32 rounded-lg overflow-hidden">
+                    <img src={photo.url} alt={salon.name} className="w-full h-full object-cover" loading="lazy" />
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         ) : (
           <div className="h-48 rounded-xl bg-gradient-to-br from-pink-50 to-purple-50 flex items-center justify-center text-6xl mb-6">💈</div>
@@ -88,27 +101,34 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
                 <div className="flex items-center gap-2 mt-2">
                   <span className="text-yellow-400">★</span>
                   <span className="font-bold text-base text-gray-800">{parseFloat(salon.rating_google).toFixed(1)}</span>
-                  <span className="text-gray-400 text-sm">({salon.rating_count} αξιολογήσεις)</span>
+                  <span className="text-gray-400 text-sm">({t('reviews_count', { count: salon.rating_count })})</span>
                 </div>
               )}
             </div>
             {salon.is_verified && (
-              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">✓ {t.verified}</span>
+              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">✓ {t('verified')}</span>
             )}
           </div>
+
+          {/* Address detail */}
+          {(salon.address_region || salon.address_postal) && (
+            <p className="text-sm text-gray-400 mt-1">
+              {[salon.address_postal, salon.address_region].filter(Boolean).join(' · ')}
+            </p>
+          )}
 
           {/* CTA buttons */}
           <div className="space-y-3">
             <div className="flex gap-2">
-              <button className="flex-1 py-4 bg-pink-600 text-white rounded-xl text-base font-bold hover:bg-pink-700">📅 {t.book}</button>
-              <button className="flex-1 py-4 border border-pink-200 text-pink-600 rounded-xl text-base font-semibold hover:bg-pink-50">⏰ {t.request}</button>
+              <button className="flex-1 py-4 bg-pink-600 text-white rounded-xl text-base font-bold hover:bg-pink-700">📅 {t('book')}</button>
+              <button className="flex-1 py-4 border border-pink-200 text-pink-600 rounded-xl text-base font-semibold hover:bg-pink-50">⏰ {t('request')}</button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {phone && <a href={`tel:${phone}`} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-green-50 text-green-700 rounded-xl text-base font-semibold hover:bg-green-100">📞 {t.call}</a>}
-              {viberLink && <a href={viberLink} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-50 text-purple-700 rounded-xl text-base font-semibold hover:bg-purple-100">📲 {t.viber}</a>}
-              {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-700 rounded-xl text-base font-semibold hover:bg-emerald-100">💬 {t.whatsapp}</a>}
-              {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-blue-50 text-blue-700 rounded-xl text-base font-semibold hover:bg-blue-100">🌐 {t.website}</a>}
-              <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-gray-50 text-gray-600 rounded-xl text-base font-semibold hover:bg-gray-100">✉️ {t.message}</button>
+              {phone && <a href={`tel:${phone}`} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-green-50 text-green-700 rounded-xl text-base font-semibold hover:bg-green-100">📞 {t('call')}</a>}
+              {viberLink && <a href={viberLink} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-50 text-purple-700 rounded-xl text-base font-semibold hover:bg-purple-100">📲 {t('viber')}</a>}
+              {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-700 rounded-xl text-base font-semibold hover:bg-emerald-100">💬 {t('whatsapp')}</a>}
+              {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-blue-50 text-blue-700 rounded-xl text-base font-semibold hover:bg-blue-100">🌐 {t('website')}</a>}
+              <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-gray-50 text-gray-600 rounded-xl text-base font-semibold hover:bg-gray-100">✉️ {t('message')}</button>
             </div>
           </div>
         </div>
@@ -118,7 +138,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
           <div className="bg-white rounded-xl p-5 mb-4">
             <p className="text-gray-700 text-base leading-relaxed">{desc}</p>
             {isTranslated && (
-              <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">🌐 {t.translated} Greek</p>
+              <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">🌐 {t('translated')} Greek</p>
             )}
           </div>
         )}
@@ -126,13 +146,13 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         {/* Services */}
         {salon.services.length > 0 && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">{t.services}</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
             <div className="divide-y divide-gray-100">
               {salon.services.slice(0, 15).map(svc => (
                 <div key={svc.id} className="py-3.5 flex items-center justify-between">
                   <div>
                     <p className="text-base text-gray-800">{svc.name_el || svc.name}</p>
-                    {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} λεπτά</p>}
+                    {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} {t('minutes')}</p>}
                   </div>
                   {svc.price_from && (
                     <span className="text-base font-semibold text-gray-700 ml-4 shrink-0">
@@ -145,10 +165,41 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
           </div>
         )}
 
+        {/* Reviews */}
+        {salon.reviews && salon.reviews.length > 0 && (
+          <div className="bg-white rounded-xl p-5 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
+              {salon.review_count > salon.reviews.length && (
+                <span className="text-sm text-gray-400">{t('reviews_count', { count: salon.review_count })}</span>
+              )}
+            </div>
+            <div className="space-y-4">
+              {salon.reviews.map(rev => (
+                <div key={rev.id} className="border-b border-gray-50 last:border-0 pb-4 last:pb-0">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm text-gray-800">{rev.author_name || t('anonymous')}</span>
+                      {rev.source !== 'google' && (
+                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full capitalize">{rev.source}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {rev.rating && <span className="text-yellow-400 text-sm">{'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}</span>}
+                      {rev.published_at && <span className="text-xs text-gray-400">{rev.published_at.slice(0, 7)}</span>}
+                    </div>
+                  </div>
+                  {rev.text && <p className="text-sm text-gray-600 leading-relaxed">{rev.text}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Hours */}
         {salon.hours.length > 0 && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">{t.hours}</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-3">{t('hours')}</h2>
             <SalonHours hours={salon.hours} locale={locale} />
           </div>
         )}
@@ -171,16 +222,24 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
         {/* Map placeholder */}
         {salon.lat && salon.lng && (
           <div className="bg-white rounded-xl p-5 mb-4">
-            <p className="text-base text-gray-500">📍 {[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(', ')}</p>
+            <p className="text-base text-gray-500">📍 {[salon.address_street, salon.address_number, salon.address_city, salon.address_postal].filter(Boolean).join(', ')}</p>
+            {salon.address_region && <p className="text-sm text-gray-400 mt-0.5">{salon.address_region}</p>}
             <a href={`https://www.google.com/maps/search/?api=1&query=${salon.lat},${salon.lng}`}
                target="_blank" rel="noopener noreferrer"
-               className="text-base text-blue-600 hover:underline mt-1.5 block">Άνοιγμα στο Google Maps →</a>
+               className="text-base text-blue-600 hover:underline mt-1.5 block">{t('open_maps')}</a>
           </div>
+        )}
+
+        {/* Data freshness */}
+        {salon.data_verified_at && (
+          <p className="text-center text-xs text-gray-300 mb-4">
+            {t('data_updated')} {new Date(salon.data_verified_at).toLocaleDateString(locale === 'el' ? 'el-GR' : locale, { year: 'numeric', month: 'long' })}
+          </p>
         )}
 
         {/* Report */}
         <div className="text-center mt-6 mb-8">
-          <ReportButton salonId={salon.id} locale={locale} label={t.report} />
+          <ReportButton salonId={salon.id} locale={locale} label={t('report')} />
         </div>
       </div>
     </div>

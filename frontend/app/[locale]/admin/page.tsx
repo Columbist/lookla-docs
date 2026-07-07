@@ -16,10 +16,12 @@ export default function AdminPage({ params }: { params: { locale: string } }) {
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!d || d.role !== 'admin') router.push('/'); });
-    fetch('/api/admin/stats', { credentials: 'include' }).then(r => r.json()).then(setStats).catch(() => {});
-    fetch('/api/admin/salons?needs_review=true&limit=20', { credentials: 'include' }).then(r => r.json()).then(d => setSalons(d.items || [])).catch(() => {});
-    fetch('/api/admin/reports?status=open', { credentials: 'include' }).then(r => r.json()).then(setReports).catch(() => {});
+      .then(d => {
+        if (!d || d.role !== 'admin') { router.push('/'); return; }
+        fetch('/api/admin/stats', { credentials: 'include' }).then(r => r.json()).then(setStats).catch(() => {});
+        fetch('/api/admin/salons?needs_review=true&limit=20', { credentials: 'include' }).then(r => r.json()).then(d => setSalons(d.items || [])).catch(() => {});
+        fetch('/api/admin/reports?status=open', { credentials: 'include' }).then(r => r.json()).then(setReports).catch(() => {});
+      });
   }, []);
 
   const approveReport = async (id: number, status: string) => {

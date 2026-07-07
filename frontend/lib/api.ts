@@ -5,6 +5,8 @@ const API_BASE = typeof window === 'undefined'
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    cache: 'no-store',
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   });
@@ -49,10 +51,13 @@ export interface SalonHour { day_of_week: number; open_time?: string; close_time
 export interface Photo { id: number; url: string; caption?: string; is_primary: boolean; width?: number; height?: number; }
 export interface ServiceItem { id: number; name: string; name_el?: string; description?: string; duration_min?: number; price_from?: string; price_to?: string; currency: string; }
 export interface SocialLink { platform: string; url: string; }
+export interface ReviewItem { id: number; source: string; author_name?: string; rating?: number; text?: string; published_at?: string; }
 export interface SalonDetail extends SalonListItem {
   name_el?: string; description?: string; description_el?: string; description_ru?: string; description_uk?: string;
-  address_full?: string; email?: string; website?: string;
+  address_full?: string; address_region?: string; address_postal?: string; email?: string; website?: string;
+  data_verified_at?: string;
   hours: SalonHour[]; photos: Photo[]; services: ServiceItem[]; social_links: SocialLink[];
+  reviews: ReviewItem[];
   review_count: number;
 }
 export interface SalonListResponse { items: SalonListItem[]; total: number; page: number; limit: number; pages: number; }

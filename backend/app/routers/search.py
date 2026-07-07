@@ -38,6 +38,12 @@ def search(
         )
         params["q"] = q
 
+    if category:
+        conditions.append(
+            "(s.name ILIKE :cat OR s.description ILIKE :cat)"
+        )
+        params["cat"] = f"%{category}%"
+
     # Haversine distance (no PostGIS required)
     haversine = (
         "6371.0 * acos(LEAST(1.0, "
@@ -85,16 +91,3 @@ def search(
 
     rows = db.execute(sql, params).mappings().all()
     return [SearchResult(**dict(row)) for row in rows]
-
-
-@router.get("/cities")
-def get_cities(db: Session = Depends(get_db)):
-    rows = db.execute(text("""
-        SELECT address_city, COUNT(*) as count
-        FROM salons
-        WHERE is_active = true AND address_city IS NOT NULL
-        GROUP BY address_city
-        ORDER BY count DESC
-        LIMIT 50
-    """)).all()
-    return [{"city": r[0], "count": r[1]} for r in rows]
