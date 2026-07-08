@@ -46,6 +46,7 @@ export interface SalonListItem {
   lat?: number; lng?: number; phone_primary?: string;
   rating_google?: string; rating_count: number; price_level?: number;
   is_verified: boolean; primary_photo?: string;
+  min_price?: number; is_open_now?: boolean;
 }
 export interface SalonHour { day_of_week: number; open_time?: string; close_time?: string; is_closed: boolean; }
 export interface Photo { id: number; url: string; caption?: string; is_primary: boolean; width?: number; height?: number; }

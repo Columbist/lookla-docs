@@ -74,8 +74,9 @@ class SalonListItem(BaseModel):
     price_level: Optional[int]
     is_verified: bool
     primary_photo: Optional[str] = None
-    # translation info
-    description_lang: Optional[str] = None  # which lang the description is in
+    description_lang: Optional[str] = None
+    min_price: Optional[float] = None
+    is_open_now: Optional[bool] = None
 
 
 class SalonDetail(SalonListItem):

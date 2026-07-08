@@ -249,7 +249,7 @@ function SearchContent({ locale }: { locale: string }) {
                   <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" />
                 ))
               ) : salons.length > 0 ? (
-                salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} />)
+                salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} />)
               ) : (
                 <div className="col-span-3 text-center py-16 text-gray-400">{t('no_results')}</div>
               )}

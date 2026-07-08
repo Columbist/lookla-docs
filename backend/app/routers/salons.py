@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, or_
 from typing import Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import math
+
+ATHENS_TZ = ZoneInfo("Europe/Athens")
 
 from app.core.database import get_db
 from app.models.salon import Salon, SalonHour, Photo, Service, Review, SocialLink, SalonCategory, ServiceCategory
@@ -203,6 +207,46 @@ def _primary_photo(salon: Salon) -> Optional[str]:
     return _proxy_url(primary or salon.photos[0])
 
 
+def _batch_min_prices(salon_ids: list, db: Session, name_keywords: list | None = None) -> dict:
+    """Returns {salon_id: min_price_float}. Optionally filtered by service name keywords."""
+    if not salon_ids:
+        return {}
+    where = "salon_id = ANY(:ids) AND price_from >= 5 AND is_active = TRUE"
+    params: dict = {"ids": salon_ids}
+    if name_keywords:
+        clauses = " OR ".join(f"name ILIKE :kw{i}" for i, _ in enumerate(name_keywords))
+        where += f" AND ({clauses})"
+        for i, kw in enumerate(name_keywords):
+            params[f"kw{i}"] = f"%{kw}%"
+    rows = db.execute(text(f"""
+        SELECT salon_id, MIN(price_from)::float
+        FROM services WHERE {where}
+        GROUP BY salon_id
+    """), params).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def _batch_open_now(salon_ids: list, db: Session) -> dict:
+    """Returns {salon_id: bool} — whether each salon is open right now (Athens time)."""
+    if not salon_ids:
+        return {}
+    now = datetime.now(ATHENS_TZ)
+    dow = now.weekday()  # 0=Mon … 6=Sun, matches DB convention
+    current = now.time().replace(tzinfo=None)
+    rows = db.execute(text("""
+        SELECT salon_id, open_time, close_time, is_closed
+        FROM salon_hours
+        WHERE salon_id = ANY(:ids) AND day_of_week = :dow
+    """), {"ids": salon_ids, "dow": dow}).fetchall()
+    result = {}
+    for r in rows:
+        if r.is_closed:
+            result[r.salon_id] = False
+        elif r.open_time and r.close_time:
+            result[r.salon_id] = r.open_time <= current <= r.close_time
+    return result
+
+
 def _batch_primary_photos(salon_ids: list, db: Session) -> dict:
     """Single query for primary photos — eliminates N+1 in list/map endpoints."""
     if not salon_ids:
@@ -263,7 +307,9 @@ def map_salons(
         query = query.filter(Salon.price_level == price_level)
 
     salons = query.order_by(Salon.rating_google.desc().nullslast()).limit(2000).all()
-    photo_map = _batch_primary_photos([s.id for s in salons], db)
+    s_ids = [s.id for s in salons]
+    photo_map = _batch_primary_photos(s_ids, db)
+    open_map = _batch_open_now(s_ids, db)
     return [
         {
             "id": s.id,
@@ -275,6 +321,7 @@ def map_salons(
             "phone_primary": s.phone_primary,
             "rating_google": float(s.rating_google) if s.rating_google else None,
             "primary_photo": photo_map.get(s.id),
+            "is_open_now": open_map.get(s.id),
         }
         for s in salons
     ]
@@ -345,11 +392,17 @@ def list_salons(
         .all()
     )
 
-    photo_map = _batch_primary_photos([s.id for s in salons], db)
+    salon_ids = [s.id for s in salons]
+    photo_map = _batch_primary_photos(salon_ids, db)
+    price_map = _batch_min_prices(salon_ids, db, CATEGORY_KEYWORDS.get(category) if category else None)
+    open_map = _batch_open_now(salon_ids, db)
+
     items = []
     for s in salons:
         item = SalonListItem.model_validate(s)
         item.primary_photo = photo_map.get(s.id)
+        item.min_price = price_map.get(s.id)
+        item.is_open_now = open_map.get(s.id)
         items.append(item)
 
     return PaginatedSalons(
