@@ -1,8 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import type { SalonDetail } from '@/lib/api';
+import type { SalonDetail, ServiceItem, ReviewItem } from '@/lib/api';
 import ReportButton from '@/components/ReportButton';
 import SalonHours from '@/components/SalonHours';
 
@@ -11,10 +11,54 @@ const SOCIAL_LABELS: Record<string, string> = { instagram: 'Instagram', facebook
 
 interface Props { salon: SalonDetail | null; locale: string; slug: string; }
 
+const TRANSLATED_LABEL: Record<string, string> = {
+  el: 'Μεταφράστηκε', en: 'Translated', ru: 'Переведено', uk: 'Перекладено',
+};
+
+function TranslatedBadge({ locale }: { locale: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-gray-400 ml-1.5">
+      🌐 {TRANSLATED_LABEL[locale] ?? 'Translated'}
+    </span>
+  );
+}
+
+function useLazySection<T>(
+  salonId: number,
+  path: 'services' | 'reviews',
+  locale: string,
+): [T[], boolean, React.RefObject<HTMLDivElement>] {
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const fetched = useRef(false);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting || fetched.current) return;
+      fetched.current = true;
+      obs.disconnect();
+      fetch(`/api/salons/${salonId}/${path}?lang=${locale}`)
+        .then(r => r.json())
+        .then((d: T[]) => { setData(Array.isArray(d) ? d : []); setLoading(false); })
+        .catch(() => setLoading(false));
+    }, { rootMargin: '400px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [salonId, path, locale]);
+
+  return [data, loading, sentinelRef];
+}
+
 export default function SalonDetailClient({ salon, locale, slug }: Props) {
   const t = useTranslations('salon');
   const prefix = locale === 'el' ? '' : `/${locale}`;
   const [showAllPhotos, setShowAllPhotos] = useState(false);
+
+  const [services, servicesLoading, servicesRef] = useLazySection<ServiceItem>(salon?.id ?? 0, 'services', locale);
+  const [reviews, reviewsLoading, reviewsRef] = useLazySection<ReviewItem>(salon?.id ?? 0, 'reviews', locale);
 
   if (!salon) {
     return (
@@ -143,58 +187,79 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
           </div>
         )}
 
-        {/* Services */}
-        {salon.services.length > 0 && (
-          <div className="bg-white rounded-xl p-5 mb-4">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
-            <div className="divide-y divide-gray-100">
-              {salon.services.slice(0, 15).map(svc => (
-                <div key={svc.id} className="py-3.5 flex items-center justify-between">
-                  <div>
-                    <p className="text-base text-gray-800">{svc.name_el || svc.name}</p>
-                    {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} {t('minutes')}</p>}
-                  </div>
-                  {svc.price_from && (
-                    <span className="text-base font-semibold text-gray-700 ml-4 shrink-0">
-                      {svc.price_to && String(svc.price_to) !== String(svc.price_from) ? `${svc.price_from}–${svc.price_to}€` : `${svc.price_from}€`}
-                    </span>
-                  )}
-                </div>
-              ))}
+        {/* Services — lazy-loaded */}
+        <div ref={servicesRef}>
+          {servicesLoading ? (
+            <div className="bg-white rounded-xl p-5 mb-4 space-y-3">
+              {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
             </div>
-          </div>
-        )}
+          ) : services.length > 0 && (
+            <div className="bg-white rounded-xl p-5 mb-4">
+              <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
+              <div className="divide-y divide-gray-100">
+                {services.map(svc => (
+                  <div key={svc.id} className="py-3.5 flex items-center justify-between">
+                    <div>
+                      <p className="text-base text-gray-800">
+                        {svc.name}
+                        {svc.is_translated && <TranslatedBadge locale={locale} />}
+                      </p>
+                      {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} {t('minutes')}</p>}
+                    </div>
+                    {svc.price_from && (
+                      <span className="text-base font-semibold text-gray-700 ml-4 shrink-0">
+                        {svc.price_to && String(svc.price_to) !== String(svc.price_from) ? `${svc.price_from}–${svc.price_to}€` : `${svc.price_from}€`}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
-        {/* Reviews */}
-        {salon.reviews && salon.reviews.length > 0 && (
-          <div className="bg-white rounded-xl p-5 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
-              {salon.review_count > salon.reviews.length && (
-                <span className="text-sm text-gray-400">{t('reviews_count', { count: salon.review_count })}</span>
-              )}
-            </div>
-            <div className="space-y-4">
-              {salon.reviews.map(rev => (
-                <div key={rev.id} className="border-b border-gray-50 last:border-0 pb-4 last:pb-0">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm text-gray-800">{rev.author_name || t('anonymous')}</span>
-                      {rev.source !== 'google' && (
-                        <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full capitalize">{rev.source}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {rev.rating && <span className="text-yellow-400 text-sm">{'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}</span>}
-                      {rev.published_at && <span className="text-xs text-gray-400">{rev.published_at.slice(0, 7)}</span>}
-                    </div>
-                  </div>
-                  {rev.text && <p className="text-sm text-gray-600 leading-relaxed">{rev.text}</p>}
+        {/* Reviews — lazy-loaded */}
+        <div ref={reviewsRef}>
+          {reviewsLoading ? (
+            <div className="bg-white rounded-xl p-5 mb-4 space-y-4">
+              {[1,2,3].map(i => (
+                <div key={i} className="space-y-2">
+                  <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+                  <div className="h-12 bg-gray-100 rounded animate-pulse" />
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          ) : reviews.length > 0 && (
+            <div className="bg-white rounded-xl p-5 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
+                {salon.review_count > reviews.length && (
+                  <span className="text-sm text-gray-400">{t('reviews_count', { count: salon.review_count })}</span>
+                )}
+              </div>
+              <div className="space-y-4">
+                {reviews.map(rev => (
+                  <div key={rev.id} className="border-b border-gray-50 last:border-0 pb-4 last:pb-0">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm text-gray-800">{rev.author_name || t('anonymous')}</span>
+                        {rev.source !== 'google' && (
+                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full capitalize">{rev.source}</span>
+                        )}
+                        {rev.is_translated && <TranslatedBadge locale={locale} />}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {rev.rating && <span className="text-yellow-400 text-sm">{'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}</span>}
+                        {rev.published_at && <span className="text-xs text-gray-400">{rev.published_at.slice(0, 7)}</span>}
+                      </div>
+                    </div>
+                    {rev.text && <p className="text-sm text-gray-600 leading-relaxed">{rev.text}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Hours */}
         {salon.hours.length > 0 && (

@@ -50,9 +50,9 @@ export interface SalonListItem {
 }
 export interface SalonHour { day_of_week: number; open_time?: string; close_time?: string; is_closed: boolean; }
 export interface Photo { id: number; url: string; caption?: string; is_primary: boolean; width?: number; height?: number; }
-export interface ServiceItem { id: number; name: string; name_el?: string; description?: string; duration_min?: number; price_from?: string; price_to?: string; currency: string; }
+export interface ServiceItem { id: number; name: string; name_el?: string; description?: string; duration_min?: number; price_from?: string; price_to?: string; currency: string; name_original?: string; is_translated?: boolean; }
 export interface SocialLink { platform: string; url: string; }
-export interface ReviewItem { id: number; source: string; author_name?: string; rating?: number; text?: string; published_at?: string; }
+export interface ReviewItem { id: number; source: string; author_name?: string; rating?: number; text?: string; published_at?: string; is_translated?: boolean; }
 export interface SalonDetail extends SalonListItem {
   name_el?: string; description?: string; description_el?: string; description_ru?: string; description_uk?: string;
   address_full?: string; address_region?: string; address_postal?: string; email?: string; website?: string;

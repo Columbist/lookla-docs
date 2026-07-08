@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, or_
 from typing import Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import math
+
+from app.services.translate import is_bot, translate_batch
 
 ATHENS_TZ = ZoneInfo("Europe/Athens")
 
@@ -414,6 +416,12 @@ def list_salons(
     )
 
 
+def _resolve(salon_id: int | str, db: Session):
+    if isinstance(salon_id, str) and not salon_id.isdigit():
+        return db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active == True).first()
+    return db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active == True).first()
+
+
 @router.get("/{salon_id}", response_model=SalonDetail)
 def get_salon(salon_id: int | str, db: Session = Depends(get_db)):
     if isinstance(salon_id, str) and not salon_id.isdigit():
@@ -430,11 +438,10 @@ def get_salon(salon_id: int | str, db: Session = Depends(get_db)):
     # Rewrite Google photo URLs to proxy endpoint for lazy R2 migration
     for photo_out, photo_model in zip(detail.photos, salon.photos):
         photo_out.url = _proxy_url(photo_model)
-    sorted_reviews = sorted(
-        salon.reviews,
-        key=lambda r: (r.source == "google", r.published_at is None),
-    )
-    detail.reviews = sorted_reviews[:10]
+    # Services and reviews are lazy-loaded by the client; strip them from main response
+    detail.services = []
+    detail.reviews = []
+    detail.review_count = len(salon.reviews)
     return detail
 
 
@@ -447,3 +454,93 @@ def get_photos(salon_id: int, db: Session = Depends(get_db)):
     for out, model in zip(photos, salon.photos):
         out.url = _proxy_url(model)
     return photos
+
+
+@router.get("/{salon_id}/services")
+def get_salon_services(
+    salon_id: int | str,
+    lang: str = Query("el", regex="^(el|en|ru|uk)$"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    """Lazy endpoint: translates service names on-demand for real users. Returns [] for bots."""
+    ua = request.headers.get("user-agent") if request else None
+    if is_bot(ua):
+        return []
+
+    salon = _resolve(salon_id, db)
+    if not salon:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    services = [s for s in salon.services if s.is_active]
+
+    if lang != "el":
+        col = f"name_{lang}"
+        missing = [s for s in services if not getattr(s, col)]
+        if missing:
+            source_texts = [s.name_el or s.name for s in missing]
+            translated = translate_batch(source_texts, lang)
+            for svc, t in zip(missing, translated):
+                setattr(svc, col, t)
+            db.commit()
+
+    result = []
+    for s in services:
+        name_translated = getattr(s, f"name_{lang}") if lang != "el" else None
+        name = name_translated or s.name_el or s.name
+        result.append({
+            "id": s.id,
+            "name": name,
+            "name_original": s.name_el or s.name,
+            "is_translated": bool(name_translated),
+            "duration_min": s.duration_min,
+            "price_from": str(s.price_from) if s.price_from else None,
+            "price_to": str(s.price_to) if s.price_to else None,
+            "currency": s.currency,
+        })
+    return result
+
+
+@router.get("/{salon_id}/reviews")
+def get_salon_reviews(
+    salon_id: int | str,
+    lang: str = Query("el", regex="^(el|en|ru|uk)$"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    """Lazy endpoint: translates review texts on-demand for real users. Returns [] for bots."""
+    ua = request.headers.get("user-agent") if request else None
+    if is_bot(ua):
+        return []
+
+    salon = _resolve(salon_id, db)
+    if not salon:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    sorted_reviews = sorted(
+        salon.reviews,
+        key=lambda r: (r.source != "google", r.published_at is None),
+    )[:15]
+
+    if lang != "el":
+        col = f"text_{lang}"
+        missing = [r for r in sorted_reviews if r.text and not getattr(r, col)]
+        if missing:
+            translated = translate_batch([r.text for r in missing], lang)
+            for rev, t in zip(missing, translated):
+                setattr(rev, col, t)
+            db.commit()
+
+    result = []
+    for r in sorted_reviews:
+        text_translated = getattr(r, f"text_{lang}") if (lang != "el" and r.text) else None
+        result.append({
+            "id": r.id,
+            "source": r.source,
+            "author_name": r.author_name,
+            "rating": r.rating,
+            "text": text_translated or r.text,
+            "is_translated": bool(text_translated),
+            "published_at": r.published_at.isoformat() if r.published_at else None,
+        })
+    return result
