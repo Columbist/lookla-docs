@@ -19,7 +19,7 @@
 
 ## What Lookla is
 
-A multilingual directory of beauty salons, barbershops, spas, and independent professionals in Greece. Clients search by city, category, and language. The platform serves users in Greek, English, Russian, and Ukrainian.
+A multilingual directory of beauty salons, barbershops, spas, and independent professionals in Greece. Clients search by area, category, and language. The platform serves users in Greek, English, Russian, and Ukrainian.
 
 Current data: ~6300 salons, aggregated from public sources (crawlers). No fake data. No paid listings.
 
@@ -27,9 +27,11 @@ Current data: ~6300 salons, aggregated from public sources (crawlers). No fake d
 
 ## Current Phase
 
-**Product definition.** The platform is built and deployed. The product decisions that should have preceded the build are now being documented formally.
+**M-01 — MVP Athens Launch. In Progress.**
 
-The immediate task is: define the MVP formally so the next development phase is driven by approved decisions, not engineering intuition.
+Product decisions are approved (DEC-008 to DEC-017). Implementation can begin against the approved scope.
+
+The MVP Definition is approved. The Scope Lock is set. The next step is implementing the pre-launch checklist in `01_PRODUCT/MVP_SCOPE_LOCK.md`.
 
 ---
 
@@ -38,72 +40,100 @@ The immediate task is: define the MVP formally so the next development phase is 
 | Document | What it defines |
 |---|---|
 | `00_GOVERNANCE/PROJECT_CHARTER.md` | Highest authority. All rules. Read this first. |
-| `00_GOVERNANCE/DECISION_LOG.md` | All official decisions (DEC-001 to DEC-007) |
+| `00_GOVERNANCE/DECISION_LOG.md` | All official decisions (DEC-001 to DEC-017) |
 | `01_PRODUCT/PRODUCT_SCOPE.md` | What Lookla IS and IS NOT |
-| `01_PRODUCT/PRODUCT_VISION.md` | Why Lookla exists, who it's for, how it differs from Google Maps / Fresha / Booksy / Treatwell |
+| `01_PRODUCT/PRODUCT_VISION.md` | Why Lookla exists, who it's for, differentiators |
 | `01_PRODUCT/PRODUCT_TERMINOLOGY.md` | Official dictionary — use these terms in all documents |
-| `04_ARCHITECTURE/AI_STRATEGY.md` | AI features postponed; current translation is infrastructure |
+| `01_PRODUCT/MVP_DEFINITION.md` | Approved MVP scope, decisions, readiness checklist |
+| `01_PRODUCT/MVP_SCOPE_LOCK.md` | Locked boundary — what MVP WILL and WILL NOT have |
+| `04_ARCHITECTURE/AI_STRATEGY.md` | AI features postponed; translation is infrastructure |
 | `06_ENGINEERING/AUDIT.md` | Full technical audit of current implementation |
 
 ---
 
-## What is Draft (needs Product Owner decisions)
+## What is Draft (not yet approved)
 
 | Document | Blocking question |
 |---|---|
-| `01_PRODUCT/MVP_DEFINITION.md` | 10 open questions (Q-01 to Q-10) — MVP cannot be approved without them |
-| `01_PRODUCT/PERSONAS.md` | Which persona is primary for MVP? |
-| `01_PRODUCT/USER_JOURNEYS.md` | Depends on persona priority and city filter decision |
-| `03_PAGES/SEARCH.md` | City filter label decision (Q-03) |
-| `03_PAGES/SALON.md` | Review labeling (Q-06), verified badge (Q-07), booking CTA (Q-08) |
+| `01_PRODUCT/PERSONAS.md` | Needs status update to Approved — DEC-009 resolves primary persona |
+| `01_PRODUCT/USER_JOURNEYS.md` | Needs status update to Approved — all blocking decisions are resolved |
+| `03_PAGES/SEARCH.md` | Needs update for DEC-010 location hierarchy |
+| `03_PAGES/SALON.md` | Needs update for DEC-013 reviews, DEC-014 badge, DEC-015 CTA |
 | `02_DESIGN/*` | No design system approved yet |
-| `05_ROADMAP/ROADMAP.md` | No milestones approved yet |
 
 ---
 
-## Current Decisions (DEC-001 to DEC-007)
+## All Decisions (DEC-001 to DEC-017)
 
-| ID | Decision |
-|---|---|
-| DEC-001 | Private project, no company, no monetization, no advertising |
-| DEC-002 | Documentation-first: no implementation without approved docs |
-| DEC-003 | No fake data, reviews, ratings, or activity of any kind |
-| DEC-004 | Every feature requires evidence of user need before implementation |
-| DEC-005 | AI product features postponed until measurable user value confirmed |
-| DEC-006 | Stripe/subscriptions exist in code but must not be user-facing |
-| DEC-007 | Monorepo: docs live with code in `lookla-platform` |
+| ID | Decision | Status |
+|---|---|---|
+| DEC-001 | Private project, no company, no monetization, no advertising | Approved |
+| DEC-002 | Documentation-first: no implementation without approved docs | Approved |
+| DEC-003 | No fake data, reviews, ratings, or activity of any kind | Approved |
+| DEC-004 | Every feature requires evidence of user need before implementation | Approved |
+| DEC-005 | AI product features postponed until measurable user value confirmed | Approved |
+| DEC-006 | Stripe/subscriptions exist in code but must not be user-facing | Approved |
+| DEC-007 | Monorepo: docs live with code in `lookla-platform` | Approved |
+| DEC-008 | MVP success = 500 verified contact interactions in 90 days | Approved |
+| DEC-009 | Primary persona: local residents; P-02 (ru/uk) → P-01 (el) → P-03 (expat); tourists last | Approved |
+| DEC-010 | Location hierarchy: Country → Region → City → District; replace "City" filter label | Approved |
+| DEC-011 | el/en/ru mandatory for MVP; uk optional (ships, lower QA priority) | Approved |
+| DEC-012 | Athens metropolitan area first for MVP validation | Approved |
+| DEC-013 | Keep Google reviews; label: "Source: Google Reviews / Imported: Yes / Original: No" | Approved |
+| DEC-014 | Replace ✓ with "Information reviewed" (admin) or "Owner verified" (claimed); no badge = default | Approved |
+| DEC-015 | Remove booking stubs; replace with "Call salon" / "Message on WhatsApp" / "Visit website" | Approved |
+| DEC-016 | View/call/WhatsApp = anonymous; Save/favorites = registration required | Approved |
+| DEC-017 | GA4 + Search Console required before launch; Clarity/Hotjar optional post-launch | Approved |
 
 ---
 
-## Current Blockers
+## Current Product Decisions: All Resolved
 
-The following decisions are required from the Product Owner before development can proceed on MVP:
+| Question | Decision | Reference | Impact |
+|---|---|---|---|
+| Q-01 — MVP success metric | 500 contact clicks in 90 days | DEC-008 | Defines analytics requirements and launch gate |
+| Q-02 — Primary persona | P-02 (Russian/Ukrainian) first, then P-01 (Greek) | DEC-009 | ru QA priority; WhatsApp prominence; tourist features deferred |
+| Q-03 — City filter | Full area hierarchy; district-level search | DEC-010 | Data reclassification + UI change required |
+| Q-04 — Language priority | el/en/ru mandatory; uk optional | DEC-011 | QA allocation before launch |
+| Q-05 — Geographic focus | Athens first | DEC-012 | Data quality focus; 100 salons reviewed |
+| Q-06 — Review labeling | Show with Google source label | DEC-013 | UI change on salon detail page |
+| Q-07 — Verified badge | Replace ✓ with text label | DEC-014 | UI change + backend `is_verified` clarification |
+| Q-08 — Booking CTA | Remove stubs; real contact CTAs only | DEC-015 | UI change on salon detail page |
+| Q-09 — Registration | Anonymous for discovery; required only for favorites | DEC-016 | Current implementation is correct — confirmed |
+| Q-10 — Analytics | GA4 + Search Console required before launch | DEC-017 | Code change in frontend; privacy policy update |
 
-1. **Q-01** — MVP success metric: what proves the MVP worked?
-2. **Q-02** — Primary persona: Greek local, Russian/Ukrainian resident, or English tourist?
-3. **Q-03** — City filter: rename to "Area"? Group districts? Leave as-is?
-4. **Q-04** — Language priority for MVP: all equal or ru/uk first?
-5. **Q-05** — Geography: national or Athens-first for validation?
-6. **Q-06** — Review labeling: show Google as source?
-7. **Q-07** — Verified badge: keep, remove, or rename?
-8. **Q-08** — Booking CTA: remove stubs or label "coming soon"?
-9. **Q-09** — Registration: required to see contact info?
-10. **Q-10** — Analytics: GA4, Plausible, or none for MVP?
+**Status: All 10 questions resolved. No product decisions are currently blocking.**
 
-All questions are documented in `01_PRODUCT/MVP_DEFINITION.md`.
+---
+
+## Pre-Launch Implementation Blockers
+
+The following implementation tasks must be complete before M-01 can launch:
+
+| Item | Decision | Status |
+|---|---|---|
+| Location hierarchy (area/district filter) | DEC-010 | ⬜ Not started |
+| Review source label on salon detail page | DEC-013 | ⬜ Not started |
+| Verified badge → text label | DEC-014 | ⬜ Not started |
+| Booking stubs removed; contact CTAs only | DEC-015 | ⬜ Not started |
+| GA4 installed + contact events tracked | DEC-017 | ⬜ Not started |
+| Search Console verified | DEC-017 | ⬜ Not started |
+| Privacy policy updated | DEC-017 | ⬜ Not started |
+| Athens data quality (100+ salons) | DEC-012 | ⬜ Not started |
+| Russian translation QA (sample) | DEC-011 | ⬜ Not started |
+| /pricing and /plans: not in navigation | DEC-006 | ⬜ Unverified |
 
 ---
 
 ## Known Mismatches (implementation ≠ documentation)
 
-These are not bugs — they are product decisions that need to be made:
-
-| Mismatch | Location |
+| Mismatch | Decision that resolves it |
 |---|---|
-| `is_verified` badge means "admin reviewed" not "owner verified" | SALON.md, PRODUCT_TERMINOLOGY.md |
-| Reviews show as-is without "Source: Google" label | SALON.md |
-| City filter says "City" but returns districts | SEARCH.md, PRODUCT_TERMINOLOGY.md |
-| `/pricing` page exists — must not be linked per DEC-006 (unverified) | DECISION_LOG.md DEC-006 |
+| ✓ badge means "admin reviewed" not "owner verified" | DEC-014 — replace with text label |
+| Reviews show without "Source: Google" label | DEC-013 — add source label |
+| City filter says "City" but returns districts | DEC-010 — implement area hierarchy |
+| Booking stub buttons visible on salon page | DEC-015 — remove, replace with contact CTAs |
+| `/pricing` page exists — may be linked (unverified) | DEC-006 — verify and remove from navigation if linked |
 
 ---
 
@@ -115,16 +145,21 @@ These are not bugs — they are product decisions that need to be made:
 - Do not invent personas, journeys, or product decisions
 - Do not expose Stripe, subscriptions, or monetization to users
 - Do not add fake data or fake activity signals
+- Do not add geo search "near me" UI (tourists deprioritized per DEC-009)
+- Do not add AI-generated content or AI ranking (DEC-005)
 
 ---
 
 ## Next Milestone
 
-**M-01 — MVP Definition Approved**  
-Status: Not started  
-Requires: All 10 questions in `MVP_DEFINITION.md` answered and logged as DEC-008+
+**M-01 — MVP Athens Launch**  
+Status: **In Progress**  
+Reference: `05_ROADMAP/ROADMAP.md`  
+Launch gate: `01_PRODUCT/MVP_SCOPE_LOCK.md`
 
-After M-01: design and implementation can proceed against an approved spec.
+All product decisions are resolved. Implementation of the pre-launch checklist can begin.
+
+After M-01 completes (500 contact interactions measured): plan M-02 based on evidence from M-01.
 
 ---
 
@@ -133,10 +168,10 @@ After M-01: design and implementation can proceed against an approved spec.
 For any AI assistant entering this project:
 
 1. Read `00_GOVERNANCE/PROJECT_CHARTER.md` — the rules
-2. Read `01_PRODUCT/MVP_DEFINITION.md` — the current state and open questions
-3. Read `01_PRODUCT/PRODUCT_SCOPE.md` + `01_PRODUCT/PRODUCT_VISION.md` — what the product is
-4. Read `06_ENGINEERING/AUDIT.md` — what is actually built (if engineering context is needed)
-5. Check `00_GOVERNANCE/DECISION_LOG.md` before making any recommendation
+2. Read `01_PRODUCT/MVP_SCOPE_LOCK.md` — exactly what MVP includes and excludes
+3. Read `01_PRODUCT/MVP_DEFINITION.md` — the approved decisions with context
+4. Read `00_GOVERNANCE/DECISION_LOG.md` — all formal decisions
+5. Read `06_ENGINEERING/AUDIT.md` — what is actually built (if engineering context is needed)
 
 ---
 

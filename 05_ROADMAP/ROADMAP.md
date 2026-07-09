@@ -34,13 +34,46 @@ implementation_status: N/A — planning document
 
 **Goal:** Validate that real users find Lookla useful for discovering beauty services in Greece.
 
-**Success criteria:** _[Awaiting approval]_
+**Success criteria:** 500 verified user interactions (phone/WhatsApp/website click) within 90 days of launch (DEC-008).
 
 ---
 
 ## Approved Milestones
 
-_[No milestones formally approved yet. Awaiting product decisions.]_
+### M-01 — MVP Athens Launch
+
+| Field | Value |
+|---|---|
+| Status | In Progress |
+| Decision | DEC-008 through DEC-017 |
+| Target area | Athens metropolitan area |
+| Primary persona | P-02 Russian/Ukrainian residents, P-01 Greek locals |
+
+**Goal:** Deploy a production-ready, honest, multilingual beauty directory for Athens that allows real users to discover and contact salons without registration.
+
+**Scope:**
+- Location hierarchy: Country → Region → City → District (replaces flat City filter)
+- Review source labels: "Source: Google Reviews / Imported: Yes / Original: No"
+- Verified badge: replaced with "Information reviewed" / "Owner verified" labels
+- Booking stubs removed: replaced with "Call salon" / "Message on WhatsApp" / "Visit website"
+- GA4 + Search Console installed and verified
+- Athens salon data quality: 100+ listings reviewed
+- All 4 languages functional; el/en/ru QA-reviewed
+
+**Out of scope for M-01:**
+- Online booking
+- Owner claim UI
+- Favorites
+- Geo search
+- Thessaloniki or national focus
+- Any Stripe or monetization exposure
+
+**Success criteria (DEC-008):**
+- 500 verified user interactions (phone/WhatsApp/website click) within 90 days
+- Secondary: 100 Athens salons listed, 30 claimed, 10% visitor→contact conversion
+
+**Pre-launch gate:**
+See `01_PRODUCT/MVP_SCOPE_LOCK.md` — all items in the Pre-MVP Launch Gate must be confirmed before M-01 is declared complete.
 
 ---
 
