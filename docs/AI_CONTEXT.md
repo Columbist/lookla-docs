@@ -1,18 +1,18 @@
 # AI_CONTEXT.md — Lookla Project Context
 **Entry point for AI assistants (Claude, GPT, Copilot, etc.)**
 
-> Read this file first. It gives you the current state of the project in under 2 minutes.
-> After reading this file, read the documents listed in "Where to start."
+> Read this file first. It gives you the current state of the project in under 3 minutes.
+> After reading this file, consult the documents listed in "Where to start."
 
 ---
 
 ## Project
 
-**Name:** Lookla  
-**Type:** Beauty discovery marketplace for Greece  
-**URL:** lookla.gr  
-**Owner:** Andrey (columb@europe.com)  
-**Documentation repo:** github.com/Columbist/lookla-docs (public)  
+**Name:** Lookla
+**Type:** Beauty discovery marketplace for Greece
+**URL:** lookla.gr
+**Owner:** Andrey (columb@europe.com)
+**Documentation repo:** github.com/Columbist/lookla-docs (public)
 **Full monorepo:** github.com/Columbist/lookla-platform (private)
 
 ---
@@ -27,113 +27,197 @@ Current data: ~6300 salons, aggregated from public sources (crawlers). No fake d
 
 ## Current Phase
 
-**M-01 — MVP Athens Launch. In Progress.**
+**Technical Architecture.** M-01 (MVP Athens Launch) is in progress.
 
-Product decisions are approved (DEC-008 to DEC-017). Implementation can begin against the approved scope.
+Product decisions are fully approved (DEC-001 through DEC-017). UX specifications are approved (page specs, UX flows, wireframe requirements). Technical architecture is now approved (backend, frontend, DB schema, API spec, security, performance).
 
-The MVP Definition is approved. The Scope Lock is set. The next step is implementing the pre-launch checklist in `01_PRODUCT/MVP_SCOPE_LOCK.md`.
+**Next:** Development begins. A developer can open `04_ARCHITECTURE/` and write code without asking product questions.
 
 ---
 
 ## What is Approved (source of truth)
 
+### Governance
 | Document | What it defines |
 |---|---|
-| `00_GOVERNANCE/PROJECT_CHARTER.md` | Highest authority. All rules. Read this first. |
+| `00_GOVERNANCE/PROJECT_CHARTER.md` | **Highest authority.** All rules. Read first. |
 | `00_GOVERNANCE/DECISION_LOG.md` | All official decisions (DEC-001 to DEC-017) |
-| `01_PRODUCT/PRODUCT_SCOPE.md` | What Lookla IS and IS NOT |
-| `01_PRODUCT/PRODUCT_VISION.md` | Why Lookla exists, who it's for, differentiators |
-| `01_PRODUCT/PRODUCT_TERMINOLOGY.md` | Official dictionary — use these terms in all documents |
-| `01_PRODUCT/MVP_DEFINITION.md` | Approved MVP scope, decisions, readiness checklist |
-| `01_PRODUCT/MVP_SCOPE_LOCK.md` | Locked boundary — what MVP WILL and WILL NOT have |
-| `04_ARCHITECTURE/AI_STRATEGY.md` | AI features postponed; translation is infrastructure |
-| `06_ENGINEERING/AUDIT.md` | Full technical audit of current implementation |
 
----
-
-## What is Draft (not yet approved)
-
-| Document | Blocking question |
+### Product
+| Document | What it defines |
 |---|---|
-| `01_PRODUCT/PERSONAS.md` | Needs status update to Approved — DEC-009 resolves primary persona |
-| `01_PRODUCT/USER_JOURNEYS.md` | Needs status update to Approved — all blocking decisions are resolved |
-| `03_PAGES/SEARCH.md` | Needs update for DEC-010 location hierarchy |
-| `03_PAGES/SALON.md` | Needs update for DEC-013 reviews, DEC-014 badge, DEC-015 CTA |
-| `02_DESIGN/*` | No design system approved yet |
+| `01_PRODUCT/PRODUCT_SCOPE.md` | What Lookla IS and IS NOT |
+| `01_PRODUCT/PRODUCT_VISION.md` | Why Lookla exists, differentiators |
+| `01_PRODUCT/PRODUCT_TERMINOLOGY.md` | Official dictionary |
+| `01_PRODUCT/MVP_DEFINITION.md` | Approved MVP scope + all Q decisions |
+| `01_PRODUCT/MVP_SCOPE_LOCK.md` | **Locked boundary — WILL HAVE / WILL NOT HAVE** |
+
+### UX / Design
+| Document | What it defines |
+|---|---|
+| `03_PAGES/HOME.md` | Homepage spec (language switcher placement, area grid) |
+| `03_PAGES/SEARCH.md` | Search page spec (area filter, verified label) |
+| `03_PAGES/SALON.md` | Salon detail spec (contact CTAs, review labels, badge) |
+| `03_PAGES/ADMIN.md` | Admin panel spec |
+| `03_PAGES/CONTACT.md` | Contact page spec (new page) |
+| `03_PAGES/ABOUT.md` | About page spec (new page) |
+| `02_DESIGN/UX_FLOWS.md` | 4 MVP user flows with edge cases |
+| `02_DESIGN/WIREFRAME_REQUIREMENTS.md` | 8 wireframe layouts (ASCII) with annotations |
+
+### Technical Architecture
+| Document | What it defines |
+|---|---|
+| `04_ARCHITECTURE/BACKEND_ARCHITECTURE.md` | Service boundaries, layers, modules, job scheduling |
+| `04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md` | Next.js structure, routing, components, hooks, i18n, SEO |
+| `04_ARCHITECTURE/DATABASE_SCHEMA.md` | All entities, attributes, relationships, indexes |
+| `04_ARCHITECTURE/API_SPECIFICATION.md` | Every endpoint: method, route, request, response, errors |
+| `04_ARCHITECTURE/SECURITY.md` | Auth, CSRF, rate limits, bot protection, GDPR |
+| `04_ARCHITECTURE/PERFORMANCE.md` | Core Web Vitals targets, caching, image pipeline |
+| `04_ARCHITECTURE/DATA_FLOW.md` | How data moves: read, write, analytics, translation flows |
+| `04_ARCHITECTURE/AI_STRATEGY.md` | AI features postponed; translation is infrastructure only |
+| `04_ARCHITECTURE/FEATURE_FLAGS.md` | Features in code but hidden from users |
+
+### Engineering
+| Document | What it defines |
+|---|---|
+| `06_ENGINEERING/AUDIT.md` | Full technical audit (§27: implementation readiness) |
+| `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` | Commit format, branching, naming, testing, DoD |
 
 ---
 
 ## All Decisions (DEC-001 to DEC-017)
 
-| ID | Decision | Status |
-|---|---|---|
-| DEC-001 | Private project, no company, no monetization, no advertising | Approved |
-| DEC-002 | Documentation-first: no implementation without approved docs | Approved |
-| DEC-003 | No fake data, reviews, ratings, or activity of any kind | Approved |
-| DEC-004 | Every feature requires evidence of user need before implementation | Approved |
-| DEC-005 | AI product features postponed until measurable user value confirmed | Approved |
-| DEC-006 | Stripe/subscriptions exist in code but must not be user-facing | Approved |
-| DEC-007 | Monorepo: docs live with code in `lookla-platform` | Approved |
-| DEC-008 | MVP success = 500 verified contact interactions in 90 days | Approved |
-| DEC-009 | Primary persona: local residents; P-02 (ru/uk) → P-01 (el) → P-03 (expat); tourists last | Approved |
-| DEC-010 | Location hierarchy: Country → Region → City → District; replace "City" filter label | Approved |
-| DEC-011 | el/en/ru mandatory for MVP; uk optional (ships, lower QA priority) | Approved |
-| DEC-012 | Athens metropolitan area first for MVP validation | Approved |
-| DEC-013 | Keep Google reviews; label: "Source: Google Reviews / Imported: Yes / Original: No" | Approved |
-| DEC-014 | Replace ✓ with "Information reviewed" (admin) or "Owner verified" (claimed); no badge = default | Approved |
-| DEC-015 | Remove booking stubs; replace with "Call salon" / "Message on WhatsApp" / "Visit website" | Approved |
-| DEC-016 | View/call/WhatsApp = anonymous; Save/favorites = registration required | Approved |
-| DEC-017 | GA4 + Search Console required before launch; Clarity/Hotjar optional post-launch | Approved |
+| ID | Decision |
+|---|---|
+| DEC-001 | Private project, no monetization, no advertising |
+| DEC-002 | Documentation-first: no implementation without approved docs |
+| DEC-003 | No fake data, reviews, ratings, or activity |
+| DEC-004 | Every feature requires evidence of user need |
+| DEC-005 | AI product features postponed |
+| DEC-006 | Stripe exists in code; must not be user-facing |
+| DEC-007 | Monorepo: docs live with code |
+| DEC-008 | MVP success = 500 contact interactions in 90 days |
+| DEC-009 | Primary persona: P-02 (ru/uk) → P-01 (el) → P-03 (expat); tourists last |
+| DEC-010 | Location hierarchy: Country→Region→City→District; replace "City" filter |
+| DEC-011 | el/en/ru mandatory for MVP; uk ships at lower QA priority |
+| DEC-012 | Athens metropolitan area first |
+| DEC-013 | Google reviews: label "Source: Google Reviews / Imported: Yes / Original: No" |
+| DEC-014 | Replace ✓ with text: "Information reviewed" (admin) or "Owner verified" (claimed) |
+| DEC-015 | No booking stubs; only real CTAs: "Call salon" / "WhatsApp" / "Visit website" |
+| DEC-016 | View/call/WhatsApp = anonymous; Favorites = registration required |
+| DEC-017 | GA4 + Search Console required before launch |
 
 ---
 
-## Current Product Decisions: All Resolved
+## Current Phase: Technical Architecture
 
-| Question | Decision | Reference | Impact |
-|---|---|---|---|
-| Q-01 — MVP success metric | 500 contact clicks in 90 days | DEC-008 | Defines analytics requirements and launch gate |
-| Q-02 — Primary persona | P-02 (Russian/Ukrainian) first, then P-01 (Greek) | DEC-009 | ru QA priority; WhatsApp prominence; tourist features deferred |
-| Q-03 — City filter | Full area hierarchy; district-level search | DEC-010 | Data reclassification + UI change required |
-| Q-04 — Language priority | el/en/ru mandatory; uk optional | DEC-011 | QA allocation before launch |
-| Q-05 — Geographic focus | Athens first | DEC-012 | Data quality focus; 100 salons reviewed |
-| Q-06 — Review labeling | Show with Google source label | DEC-013 | UI change on salon detail page |
-| Q-07 — Verified badge | Replace ✓ with text label | DEC-014 | UI change + backend `is_verified` clarification |
-| Q-08 — Booking CTA | Remove stubs; real contact CTAs only | DEC-015 | UI change on salon detail page |
-| Q-09 — Registration | Anonymous for discovery; required only for favorites | DEC-016 | Current implementation is correct — confirmed |
-| Q-10 — Analytics | GA4 + Search Console required before launch | DEC-017 | Code change in frontend; privacy policy update |
+All 6 technical architecture documents were approved 2026-07-09. A developer can now write code from these documents without product decisions.
 
-**Status: All 10 questions resolved. No product decisions are currently blocking.**
+### What's been specified
+
+| Layer | Document | Key content |
+|---|---|---|
+| Backend | BACKEND_ARCHITECTURE.md | 13 routers, 4 services, layered architecture, 12 must-not-change items |
+| Frontend | FRONTEND_ARCHITECTURE.md | App Router structure, 15 MVP changes enumerated |
+| Database | DATABASE_SCHEMA.md | 9 entities, indexes, 2 new columns required (DEC-010) |
+| API | API_SPECIFICATION.md | All endpoints: request/response/errors; 1 new endpoint (`GET /api/areas`) |
+| Security | SECURITY.md | Auth flow, bot protection layers, GDPR requirements |
+| Performance | PERFORMANCE.md | Core Web Vitals targets, image pipeline, caching strategy |
+
+### Engineering assumptions made during architecture
+
+1. `address_district` and `address_region` columns must be added to `salons` table (DEC-010)
+2. `GET /api/areas` endpoint does not exist yet — must be created for area filter
+3. Athens district → `address_city` mapping is needed as a backend dict during DEC-010 transition
+4. slowapi rate limits must be connected to Redis (one-line config fix)
+5. `useMe()` hook should be extracted to `hooks/useMe.ts` (replaces 4× inline duplication)
+6. `localePrefix()` utility should be extracted to `lib/locale.ts` (replaces 8× inline duplication)
+7. GA4 tracking ID must be added to `NEXT_PUBLIC_GA4_ID` env var
+8. Privacy Policy page (`/privacy`) must be created before MVP launch (GDPR)
+9. Cookie consent banner required for GDPR when GA4 is active
+10. Hero photo on salon detail must use `next/image` with `priority={true}` for LCP
 
 ---
 
-## Pre-Launch Implementation Blockers
+## Pre-Launch Implementation Checklist
 
-The following implementation tasks must be complete before M-01 can launch:
+**Ordered by dependency (from AUDIT.md §27.5):**
 
-| Item | Decision | Status |
-|---|---|---|
-| Location hierarchy (area/district filter) | DEC-010 | ⬜ Not started |
-| Review source label on salon detail page | DEC-013 | ⬜ Not started |
-| Verified badge → text label | DEC-014 | ⬜ Not started |
-| Booking stubs removed; contact CTAs only | DEC-015 | ⬜ Not started |
-| GA4 installed + contact events tracked | DEC-017 | ⬜ Not started |
-| Search Console verified | DEC-017 | ⬜ Not started |
-| Privacy policy updated | DEC-017 | ⬜ Not started |
-| Athens data quality (100+ salons) | DEC-012 | ⬜ Not started |
-| Russian translation QA (sample) | DEC-011 | ⬜ Not started |
-| /pricing and /plans: not in navigation | DEC-006 | ⬜ Unverified |
+### Step 1 — Data
+- [ ] Define Athens district → `address_city` mapping (backend)
+- [ ] Add `address_district` column to salons table
+- [ ] Update `/api/salons` area filter to use district mapping
+
+### Step 2 — Backend
+- [ ] Add `GET /api/areas` endpoint (district list with salon counts)
+- [ ] Connect slowapi to Redis
+- [ ] Add admin inline salon edit (phone, address) to `PATCH /api/admin/salons/{id}`
+
+### Step 3 — Salon Detail (highest user impact)
+- [ ] Remove booking stubs (DEC-015)
+- [ ] Add contact CTAs: "Call salon", "WhatsApp", "Visit website" (DEC-015)
+- [ ] Replace ✓ badge with text label (DEC-014)
+- [ ] Add review section header: "Source: Google Reviews / Imported: Yes / Original: No" (DEC-013)
+- [ ] Wire GA4 contact click events (DEC-017)
+
+### Step 4 — Search
+- [ ] Update area filter label City → Area in all 4 locales (DEC-010)
+- [ ] Populate area filter with Athens districts
+- [ ] Update verified label on SalonCard
+
+### Step 5 — Homepage
+- [ ] Move LanguageSwitcher to header
+- [ ] Rename CityGrid → AreaGrid with Athens districts (DEC-010)
+
+### Step 6 — Analytics
+- [ ] Create GA4 property; obtain tracking ID
+- [ ] Add GA4 script to root layout
+- [ ] Verify `contact_action` events fire
+- [ ] Verify Google Search Console
+- [ ] Add cookie consent banner
+- [ ] Create `/privacy` page with GA4 disclosure
+
+### Step 7 — New pages
+- [ ] Create `/[locale]/about`
+- [ ] Create `/[locale]/contact`
+- [ ] Add About + Contact links to footer
+
+### Step 8 — Admin
+- [ ] Admin inline edit form for phone/address
+- [ ] Verify admin email excluded from GA4
+
+### Step 9 — Pre-launch gate
+- [ ] `/pricing` not in navigation (DEC-006 compliance)
+- [ ] Manual QA of J-01 and J-02 journeys in production
+- [ ] PageSpeed Insights on salon detail page: LCP < 2.5s
+- [ ] Verify GIN index on salons FTS tsvector
 
 ---
 
 ## Known Mismatches (implementation ≠ documentation)
 
-| Mismatch | Decision that resolves it |
-|---|---|
-| ✓ badge means "admin reviewed" not "owner verified" | DEC-014 — replace with text label |
-| Reviews show without "Source: Google" label | DEC-013 — add source label |
-| City filter says "City" but returns districts | DEC-010 — implement area hierarchy |
-| Booking stub buttons visible on salon page | DEC-015 — remove, replace with contact CTAs |
-| `/pricing` page exists — may be linked (unverified) | DEC-006 — verify and remove from navigation if linked |
+| Mismatch | Decision | Status |
+|---|---|---|
+| ✓ badge means "admin reviewed" not "owner verified" | DEC-014 | ⬜ Fix pending |
+| Reviews show without "Source: Google" label | DEC-013 | ⬜ Fix pending |
+| City filter says "City" but returns districts | DEC-010 | ⬜ Fix pending |
+| Booking stub buttons visible on salon page | DEC-015 | ⬜ Fix pending |
+| `/pricing` page may be linked in navigation | DEC-006 | ⬜ Verify pending |
+| Language switcher in footer only (not header) | HOME.md spec | ⬜ Fix pending |
+
+---
+
+## Technical Risks
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| No database migrations (Alembic) | High | Every schema change is ad-hoc; add before `address_district` column |
+| 10 SQL-only tables without ORM models | Medium | Limits type safety; add ORM models for `reports`, `salon_owners`, `claiming_tokens` |
+| Zero test coverage | High | Add tests for `is_bot()`, `_batch_open_now()`, auth flow before changing them |
+| `SalonDetailClient.tsx` god component | Medium | Split for MVP is recommended; required for future maintainability |
+| slowapi in-process (resets on restart) | Low | Connect to Redis (one-line fix) |
+| Translation call blocks request thread 1–3s | Low | Acceptable for MVP; Celery async for post-MVP |
+| No Privacy Policy page | High (pre-launch) | Required for GDPR + GA4; must be created |
 
 ---
 
@@ -142,36 +226,47 @@ The following implementation tasks must be complete before M-01 can launch:
 - Do not implement features without an approved RFC in `07_RFC/`
 - Do not mark any document `Approved` without Product Owner confirmation
 - Do not resolve mismatches by silently changing code or docs — report them
-- Do not invent personas, journeys, or product decisions
-- Do not expose Stripe, subscriptions, or monetization to users
-- Do not add fake data or fake activity signals
+- Do not expose Stripe, subscriptions, or monetization to users (DEC-006)
+- Do not add fake data or fake activity signals (DEC-003)
 - Do not add geo search "near me" UI (tourists deprioritized per DEC-009)
 - Do not add AI-generated content or AI ranking (DEC-005)
+- Do not change the `is_bot()` regex without a test proving the change doesn't break it
+- Do not change JWT auth mechanism (httpOnly cookies) without a security review
+- Do not commit `.env` files to git
 
 ---
 
 ## Next Milestone
 
-**M-01 — MVP Athens Launch**  
-Status: **In Progress**  
-Reference: `05_ROADMAP/ROADMAP.md`  
+**M-01 — MVP Athens Launch**
+Status: **In Progress — Technical Architecture approved; Development starting**
+Reference: `05_ROADMAP/ROADMAP.md`
 Launch gate: `01_PRODUCT/MVP_SCOPE_LOCK.md`
+Pre-launch checklist: See above (9 steps, 25+ items)
 
-All product decisions are resolved. Implementation of the pre-launch checklist can begin.
-
-After M-01 completes (500 contact interactions measured): plan M-02 based on evidence from M-01.
+After M-01 launches (500 contact interactions measured in 90 days): plan M-02 based on GA4 evidence.
 
 ---
 
 ## Where to Start
 
-For any AI assistant entering this project:
+**For a developer starting implementation:**
+1. `04_ARCHITECTURE/BACKEND_ARCHITECTURE.md` — understand the backend structure
+2. `04_ARCHITECTURE/API_SPECIFICATION.md` — understand every endpoint
+3. `04_ARCHITECTURE/DATABASE_SCHEMA.md` — understand the data model
+4. `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` — how to write code and commits
+5. `06_ENGINEERING/AUDIT.md §27.5` — ordered implementation checklist
 
-1. Read `00_GOVERNANCE/PROJECT_CHARTER.md` — the rules
-2. Read `01_PRODUCT/MVP_SCOPE_LOCK.md` — exactly what MVP includes and excludes
-3. Read `01_PRODUCT/MVP_DEFINITION.md` — the approved decisions with context
-4. Read `00_GOVERNANCE/DECISION_LOG.md` — all formal decisions
-5. Read `06_ENGINEERING/AUDIT.md` — what is actually built (if engineering context is needed)
+**For a product/UX designer:**
+1. `01_PRODUCT/MVP_SCOPE_LOCK.md` — what's in scope
+2. `02_DESIGN/WIREFRAME_REQUIREMENTS.md` — wireframe briefs
+3. `03_PAGES/SALON.md` — the conversion page (most important)
+
+**For any AI assistant entering this project:**
+1. Read this file (done)
+2. Read `00_GOVERNANCE/PROJECT_CHARTER.md` — the rules
+3. Read `01_PRODUCT/MVP_SCOPE_LOCK.md` — the boundary
+4. Read `04_ARCHITECTURE/API_SPECIFICATION.md` — what the API does
 
 ---
 
@@ -180,15 +275,15 @@ For any AI assistant entering this project:
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 14 (App Router), Tailwind CSS, next-intl |
-| Backend | FastAPI (Python 3.12), SQLAlchemy, PostgreSQL 16 |
+| Backend | FastAPI (Python 3.12), SQLAlchemy (sync), PostgreSQL 16 |
 | Infrastructure | Docker Compose, Nginx, Cloudflare, R2 CDN |
-| AI | OpenAI gpt-4o-mini (translation infrastructure only) |
-| Payments | Stripe (configured, not user-facing per DEC-006) |
-| Auth | Cookie-based JWT + Google OAuth |
-
-Full technical detail: `06_ENGINEERING/AUDIT.md`
+| Task queue | Celery + Redis (crawlers only) |
+| AI | OpenAI gpt-4o-mini (translation infrastructure; DEC-005) |
+| Payments | Stripe (configured; not user-facing per DEC-006) |
+| Auth | Cookie-based JWT (HS256) + Google OAuth (RS256) |
+| Analytics | GA4 + Google Search Console (DEC-017; not yet installed) |
 
 ---
 
-*Last updated: 2026-07-09*  
-*Update this file whenever a major decision changes the project state.*
+*Last updated: 2026-07-09*
+*Update this file whenever phase changes or a major decision affects project state.*
