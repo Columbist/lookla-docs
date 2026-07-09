@@ -31,4 +31,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Intentionally unsupported — baseline cannot be rolled back."""
     pass

@@ -2,12 +2,9 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# Import all models so Alembic's autogenerate can see them.
-# Even for the empty baseline, this ensures future --autogenerate
-# commands only diff against ORM-known tables.
-import app.models.salon        # noqa: F401
-import app.models.user         # noqa: F401
-import app.models.professional  # noqa: F401
+# Single import registers all ORM models with Base.metadata.
+# Add new model modules to app/models/__init__.py — not here.
+import app.models  # noqa: F401
 
 from app.core.database import Base
 from app.core.config import get_settings
@@ -27,6 +24,9 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
+        render_as_batch=False,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -42,7 +42,13 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+            render_as_batch=False,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
