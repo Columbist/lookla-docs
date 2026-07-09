@@ -252,16 +252,23 @@ All filter state lives in the URL query string:
 
 ## Analytics Events
 
-| Action | GA4 Event | Parameters |
-|---|---|---|
-| Search submitted | `search_submitted` | `query`, `locale`, `source: header/hero` |
-| Area filter applied | `filter_applied` | `filter_type: area`, `value` |
-| Category filter applied | `filter_applied` | `filter_type: category`, `value` |
-| Rating filter applied | `filter_applied` | `filter_type: rating`, `value` |
-| Map view toggled | `map_toggled` | `to: map/list` |
-| SalonCard clicked | `salon_card_clicked` | `salon_id`, `salon_name`, `position_in_results` |
-| Infinite scroll load | `results_page_loaded` | `page_number`, `query`, `filters` |
-| Empty state shown | `search_empty_state` | `query`, `filters` |
+**MVP Critical (implemented in M-01):**
+
+| Action | GA4 Event | Parameters | Task |
+|---|---|---|---|
+| Search submitted | `search_submitted` | `query`, `locale`, `source: header/hero` | T-034 |
+| SalonCard clicked | `salon_card_clicked` | `salon_id`, `salon_name`, `position_in_results` | T-034 |
+| Contact button clicked | `contact_action` | `action_type`, `salon_id`, `salon_name` | T-015 |
+
+**Post-MVP (tracked in FUTURE_FEATURES.md — not in M-01 scope):**
+
+| Action | GA4 Event |
+|---|---|
+| Area filter applied | `filter_applied` |
+| Category filter applied | `filter_applied` |
+| Map view toggled | `map_toggled` |
+| Infinite scroll load | `results_page_loaded` |
+| Empty state shown | `search_empty_state` |
 
 ---
 
@@ -272,7 +279,7 @@ All filter state lives in the URL query string:
 | Salon list | `GET /api/salons?q=&area=&category=&min_rating=&page=` | Paginated, 24/page |
 | Map data | `GET /api/salons/map?q=&area=&category=` | All results, lat/lng only |
 | Categories | `GET /api/categories` | For filter dropdown; cached |
-| Areas | Derived from DEC-010 hierarchy | Static mapping for MVP |
+| Areas | `GET /api/areas` (T-004) | Cached with `revalidate: 86400`; returns districts with salon counts |
 | Open/closed status | Computed per salon via salon_hours + current Athens time | In API response |
 | Translation | Service name/description translation is not needed on cards | Only on detail page |
 

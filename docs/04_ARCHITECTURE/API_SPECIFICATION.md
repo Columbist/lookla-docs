@@ -65,6 +65,7 @@ implementation_status: Documents current API + MVP-required additions
       "rating_count": 128,
       "price_level": 2,
       "is_verified": true,
+      "is_owner_claimed": false,
       "is_open": true,
       "closes_at": "19:00",
       "min_price": 15.0,

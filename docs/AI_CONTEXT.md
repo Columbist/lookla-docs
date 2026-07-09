@@ -27,20 +27,24 @@ Current data: ~6300 salons, aggregated from public sources (crawlers). No fake d
 
 ## Current Phase
 
-**Engineering Execution.** M-01 (MVP Athens Launch) is fully planned and ready for development.
+**Implementation Freeze v1.0.** All documentation is final. Development begins.
 
-All documentation phases are complete:
+All documentation phases are complete and have passed a consistency audit (2026-07-09):
 - Product decisions approved (DEC-001 through DEC-017)
 - UX specifications approved (page specs, UX flows, wireframe requirements)
 - Technical architecture approved (backend, frontend, DB schema, API spec, security, performance)
-- Engineering execution documentation approved (epics, backlog, milestone, risks, release checklist, testing strategy, architecture review)
+- Engineering execution documentation approved (epics, backlog, milestone, risks, release checklist, testing strategy)
+- Architecture Review completed + consistency audit resolved
+- Backlog finalized: 36 tasks (T-001–T-036), ~40h total
 
-**Next:** Development begins. Start with T-001 (Alembic setup) before any other task.
+**From this point:** Architecture changes require an RFC in `07_RFC/`. No documentation changes without Product Owner approval.
 
-**Critical blockers (must be resolved first):**
-1. CONTRADICTION-01 (`is_verified` ambiguity) — use LEFT JOIN on salon_owners (Option B)
-2. UNDER-01 (no Alembic) — set up before ANY schema change (T-001)
-3. UNDER-04 (no Privacy Policy) — create before GA4 is deployed (T-017)
+**Start development at:** T-001 (Alembic), T-036 (robots.txt), T-033 (Redis rate limits) — these three are independent and can be done in any order.
+
+**Critical blockers (resolve before touching any other code):**
+1. T-001 — Alembic empty baseline + stamp (NOT --autogenerate on existing DB)
+2. T-036 — robots.txt before any SEO traffic
+3. T-033 — slowapi→Redis before any rate limit testing
 
 ---
 
@@ -335,5 +339,5 @@ After M-01 launches (500 contact interactions measured in 90 days): plan M-02 ba
 
 ---
 
-*Last updated: 2026-07-09 (Phase D — Engineering Execution Documentation complete)*
+*Last updated: 2026-07-09 (Implementation Freeze v1.0 — consistency audit complete, 36 tasks finalized)*
 *Update this file whenever phase changes or a major decision affects project state.*

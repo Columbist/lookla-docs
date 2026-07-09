@@ -39,17 +39,23 @@ implementation_status: N/A — planning document; tasks are work to be done
 **Why:** Without Alembic, any schema change is applied ad-hoc and not version-controlled. Recovery from a corrupted DB would lose the new columns. This must be done before ANY schema change (see ARCHITECTURE_REVIEW UNDER-01).
 
 **Steps:**
+
+> **WARNING (C-01):** Do NOT use `--autogenerate` for the baseline on an existing production DB. That compares ORM models (9 tables) against the real DB (~19 tables) and may generate DROP statements for undocumented tables. Use an empty baseline + stamp instead.
+
 1. `pip install alembic` + add to `requirements.txt`
 2. `alembic init alembic` in `/backend`
 3. Configure `alembic.ini`: `sqlalchemy.url = %(DATABASE_URL)s`
 4. Configure `env.py`: `target_metadata = Base.metadata`
-5. `alembic revision --autogenerate -m "baseline"` — captures current state
-6. Commit migration file
+5. Create **empty** baseline revision: `alembic revision -m "baseline"` (leave `upgrade()` and `downgrade()` bodies empty — both `pass`)
+6. Stamp the production DB without running any migration: `alembic stamp head`
+7. Verify: `alembic current` returns the baseline revision hash
+8. Commit migration file
 
 **Acceptance Criteria:**
-- [ ] `alembic upgrade head` runs on a fresh DB (from db/init.sql)
+- [ ] `alembic current` on production DB shows the baseline revision
 - [ ] `alembic history` shows the baseline revision
-- [ ] `alembic downgrade -1` reverts cleanly
+- [ ] `alembic upgrade head` on the ALREADY-RUNNING production DB completes with "Running upgrade -> {hash}, baseline" and makes no schema changes
+- [ ] `alembic downgrade -1` on a test DB does not error
 
 ---
 
@@ -154,11 +160,13 @@ CREATE INDEX idx_salons_fts ON salons
 
 **Acceptance Criteria:**
 - [ ] `GET /api/areas` returns 200 with ≥ 8 areas
-- [ ] Each area includes `slug`, `name_el`, `name_en`, `name_ru`, `salon_count`
+- [ ] Response root key is `"items"` (consistent with all other Lookla endpoints — NOT "areas")
+- [ ] Each area item includes `slug`, `name_el`, `name_en`, `name_ru`, `name_uk`, `salon_count`, `region`
 - [ ] `salon_count` only counts `is_active = true` salons
 - [ ] Empty areas (salon_count = 0) are excluded
 - [ ] Response matches the schema in `API_SPECIFICATION.md`
-- [ ] Endpoint is documented in BACKEND_ARCHITECTURE.md §11
+- [ ] Endpoint added to `categories.py` router
+- [ ] Registered in `main.py` — no changes needed if using existing `categories` router
 
 ---
 
@@ -770,6 +778,124 @@ except Exception as e:
 
 ---
 
+## Implementation Freeze v1.0 Additions (2026-07-09)
+
+*Tasks added after consistency audit. Resolves C-01, M-03, M-01, m-06.*
+
+---
+
+### T-033 — Connect slowapi to Redis
+**Priority:** P1 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Why (M-03):** Without Redis, rate limits reset on every `docker compose restart api`. An attacker can bypass `/api/auth/register` limit (5/min) by forcing a restart.
+
+**Change (single line in `app/main.py`):**
+```python
+# Before:
+limiter = Limiter(key_func=get_remote_address)
+
+# After:
+limiter = Limiter(key_func=get_remote_address, storage_uri="redis://redis:6379")
+```
+
+**Acceptance Criteria:**
+- [ ] `app/main.py` `Limiter()` call includes `storage_uri="redis://redis:6379"`
+- [ ] After `docker compose restart api`: rate limit counters persist (test: send 5 register requests, restart, 6th still blocked)
+- [ ] `docker logs lookla_api` shows no Redis connection errors on startup
+
+---
+
+### T-034 — Search page analytics MVP events
+**Priority:** P1 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-04
+**Dependencies:** T-014 (GA4 script must be loaded first)
+
+**Events to implement (MVP Critical, per SEARCH.md):**
+
+| Event | When | Parameters |
+|---|---|---|
+| `search_submitted` | User submits search bar | `query`, `locale`, `source: 'header' \| 'hero'` |
+| `salon_card_clicked` | User clicks any SalonCard | `salon_id`, `salon_name`, `position_in_results` |
+
+**Implementation:** Extend `useAnalytics()` hook (T-015) with new event types.
+
+```typescript
+// hooks/useAnalytics.ts additions
+const trackSearch = (query: string, locale: string, source: 'header' | 'hero') => {
+  window.gtag?.('event', 'search_submitted', { query, locale, source });
+};
+
+const trackCardClick = (salon_id: number, salon_name: string, position: number) => {
+  window.gtag?.('event', 'salon_card_clicked', { salon_id, salon_name, position_in_results: position });
+};
+```
+
+**Not in MVP:** `filter_applied`, `map_toggled`, `results_page_loaded`, `search_empty_state` — tracked in FUTURE_FEATURES.md.
+
+**Acceptance Criteria:**
+- [ ] Submitting search fires `search_submitted` in GA4 Realtime with `query` and `locale` params
+- [ ] Clicking a SalonCard fires `salon_card_clicked` with `salon_id`, `salon_name`, `position_in_results`
+- [ ] `position_in_results` is 0-indexed integer (first card = 0)
+- [ ] Events only fire if `lookla_consent=1` cookie is present (GA4 consent check)
+
+---
+
+### T-035 — Deprecate GET /api/search
+**Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Description:** Add a deprecation header to `GET /api/search` to prevent new consumers from using it. Keep the endpoint functional (backwards compat). Update `search.py` router.
+
+```python
+# In search.py router
+from fastapi import Response
+
+@router.get("/search")
+def search_salons(..., response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "2027-01-01"
+    response.headers["Link"] = '</api/salons>; rel="successor-version"'
+    # ... existing logic unchanged
+```
+
+**Acceptance Criteria:**
+- [ ] `GET /api/search` response includes `Deprecation: true` header
+- [ ] `GET /api/search` continues to return valid results (not broken)
+- [ ] `search.py` router file has comment: `# DEPRECATED — use /api/salons. Remove post-M-02.`
+
+---
+
+### T-036 — Create public/robots.txt (standalone task)
+**Priority:** P0 | **Owner:** FE | **Estimate:** 0.25h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Description:** `robots.txt` was buried in T-029 acceptance criteria. Extracted as a separate P0 task since it has no dependency on error boundaries and must be live before crawlers discover the admin panel.
+
+**File:** `frontend/public/robots.txt`
+
+```
+User-agent: *
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /account
+Disallow: /api/
+Allow: /
+
+Sitemap: https://lookla.gr/sitemap.xml
+```
+
+**Note:** `sitemap.xml` does not yet exist (post-MVP). The Sitemap directive is forward-compatible — it causes no error if the file is absent.
+
+**Acceptance Criteria:**
+- [ ] `https://lookla.gr/robots.txt` returns 200 with correct content
+- [ ] `Disallow: /admin` present
+- [ ] `Disallow: /api/` present
+- [ ] `User-agent: *` present as first rule
+- [ ] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
+- [ ] Remove `robots.txt` from T-029 acceptance criteria (T-029 is error boundary only)
+
+---
+
 ## Backlog Summary
 
 | Task | Priority | Owner | Hours | Epic | Depends on |
@@ -807,7 +933,11 @@ except Exception as e:
 | T-030 Unit tests for 4 functions | P0 | BE | 3 | EPIC-09 | T-001 |
 | T-031 try/except in translate.py | P1 | BE | 0.5 | EPIC-09 | — |
 | T-032 Russian translation QA | P1 | OPS | 2 | EPIC-10 | T-005 |
-| **Total** | | | **~38h** | | |
+| T-033 slowapi → Redis | P1 | BE | 0.5 | EPIC-09 | — |
+| T-034 Search analytics events | P1 | FE | 1 | EPIC-04 | T-014 |
+| T-035 Deprecate GET /api/search | P2 | BE | 0.5 | EPIC-09 | — |
+| T-036 Create public/robots.txt | P0 | FE | 0.25 | EPIC-09 | — |
+| **Total** | | | **~40.25h** | | |
 
 ---
 

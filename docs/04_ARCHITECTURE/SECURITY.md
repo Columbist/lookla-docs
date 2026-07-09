@@ -113,7 +113,7 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 | GET /api/salons* | None | DEC-016: anonymous access |
 | GET /api/categories | None | |
 | GET /api/areas | None | |
-| POST /api/reports | `get_current_user` | Known friction — consider relaxing (Change Request) |
+| POST /api/reports | `get_current_user` | Deliberate: anonymous reports create spam risk; auth required. Decision: 2026-07-09. |
 | GET /api/auth/me | `get_current_user` | |
 | /api/owner/* | `get_current_user` + `role in [salon_owner, admin]` | Not user-facing in MVP |
 | /api/admin/* | `require_admin` | |
