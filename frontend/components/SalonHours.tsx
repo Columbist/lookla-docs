@@ -2,9 +2,13 @@ import type { SalonHour } from '@/lib/api';
 
 const DAY_EL = ['Δευτ', 'Τρίτ', 'Τετ', 'Πέμπ', 'Παρ', 'Σάβ', 'Κυρ'];
 const DAY_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_RU = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const DAY_UK = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+const CLOSED: Record<string, string> = { el: 'Κλειστό', en: 'Closed', ru: 'Закрыто', uk: 'Зачинено' };
+const DAY_NAMES: Record<string, string[]> = { el: DAY_EL, en: DAY_EN, ru: DAY_RU, uk: DAY_UK };
 
 export default function SalonHours({ hours, locale }: { hours: SalonHour[]; locale: string }) {
-  const names = locale === 'el' ? DAY_EL : DAY_EN;
+  const names = DAY_NAMES[locale] ?? DAY_EN;
   const today = (new Date().getDay() + 6) % 7; // 0=Mon
 
   const sorted = [...hours].sort((a, b) => a.day_of_week - b.day_of_week);
@@ -18,7 +22,7 @@ export default function SalonHours({ hours, locale }: { hours: SalonHour[]; loca
             {names[h.day_of_week]}
           </span>
           <span className={h.is_closed ? 'text-gray-400' : h.day_of_week === today ? 'text-pink-700' : 'text-gray-800'}>
-            {h.is_closed ? (locale === 'el' ? 'Κλειστό' : 'Closed') : `${h.open_time} – ${h.close_time}`}
+            {h.is_closed ? (CLOSED[locale] ?? 'Closed') : `${h.open_time} – ${h.close_time}`}
           </span>
         </div>
       ))}

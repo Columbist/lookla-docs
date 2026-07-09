@@ -10,12 +10,13 @@ interface Props {
 
 export default function ContactButtons({ salon, locale, t_call, t_viber, t_whatsapp, t_website, t_message, t_book, t_request }: Props) {
   const phone = salon.phone_primary?.replace(/\s/g, '');
+  const e164 = phone ? (phone.startsWith('+') ? phone.replace(/\D/g, '') : `30${phone.replace(/\D/g, '')}`) : null;
   const prefix = locale === 'el' ? '' : `/${locale}`;
 
   const viberLink = salon.social_links?.find(sl => sl.platform === 'viber')?.url
-    || (phone ? `viber://chat?number=+30${phone}` : null);
+    || (e164 ? `viber://chat?number=+${e164}` : null);
   const waLink = salon.social_links?.find(sl => sl.platform === 'whatsapp')?.url
-    || (phone ? `https://wa.me/30${phone}` : null);
+    || (e164 ? `https://wa.me/${e164}` : null);
 
   return (
     <div className="space-y-2">

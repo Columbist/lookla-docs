@@ -2,15 +2,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations, useLocale } from 'next-intl';
 
 interface Conv { id: number; other_name: string; last_body?: string; last_message_at?: string; client_unread: number; }
 interface Msg { id: number; body?: string; attachment_url?: string; message_type: string; proposed_slot?: string; sender_user_id: number; sender_name: string; created_at: string; }
 
-export default function MessagesPage({ params }: { params: { locale: string } }) {
-  const locale = (params as any).locale ?? 'el';
+export default function MessagesPage() {
+  const locale = useLocale();
+  const t = useTranslations('messages_page');
   const router = useRouter();
   const sp = useSearchParams();
   const convId = sp ? parseInt(sp.get('conv') || '0') : 0;
+  const prefix = locale === 'el' ? '' : `/${locale}`;
 
   const [me, setMe] = useState<any>(null);
   const [convs, setConvs] = useState<Conv[]>([]);
@@ -18,7 +21,6 @@ export default function MessagesPage({ params }: { params: { locale: string } })
   const [newMsg, setNewMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const prefix = locale === 'el' ? '' : `/${locale}`;
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -33,8 +35,8 @@ export default function MessagesPage({ params }: { params: { locale: string } })
     const load = () => fetch(`/api/chat/conversations/${convId}/messages`, { credentials: 'include' })
       .then(r => r.json()).then(d => { setMessages(d); bottomRef.current?.scrollIntoView(); });
     load();
-    const t = setInterval(load, 8000); // poll every 8s
-    return () => clearInterval(t);
+    const timer = setInterval(load, 8000);
+    return () => clearInterval(timer);
   }, [convId]);
 
   const send = async (e: React.FormEvent) => {
@@ -59,17 +61,17 @@ export default function MessagesPage({ params }: { params: { locale: string } })
       <header className="bg-white border-b px-4 py-3 flex items-center gap-3">
         <Link href={`${prefix}/account`} className="text-gray-400 hover:text-gray-600">←</Link>
         <Link href={`${prefix}/`} className="text-xl font-bold text-pink-600">Lookla</Link>
-        <span className="text-sm text-gray-600">Μηνύματα</span>
+        <span className="text-sm text-gray-600">{t('title')}</span>
       </header>
 
       <div className="flex-1 flex overflow-hidden max-h-[calc(100vh-57px)]">
         {/* Conversations list */}
         <div className={`w-full md:w-72 bg-white border-r overflow-y-auto flex-shrink-0 ${convId ? 'hidden md:block' : ''}`}>
           <div className="p-3 border-b">
-            <h2 className="font-semibold text-sm text-gray-700">Συνομιλίες</h2>
+            <h2 className="font-semibold text-sm text-gray-700">{t('conversations')}</h2>
           </div>
           {convs.length === 0 ? (
-            <p className="p-4 text-sm text-gray-400">Δεν υπάρχουν συνομιλίες</p>
+            <p className="p-4 text-sm text-gray-400">{t('no_conversations')}</p>
           ) : convs.map(c => (
             <Link key={c.id} href={`?conv=${c.id}`}
               className={`flex items-start gap-3 p-3 border-b hover:bg-gray-50 transition-colors ${c.id === convId ? 'bg-pink-50 border-l-2 border-l-pink-500' : ''}`}>
@@ -78,7 +80,7 @@ export default function MessagesPage({ params }: { params: { locale: string } })
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-gray-800 truncate">{c.other_name || 'Σαλόνι'}</p>
+                  <p className="text-sm font-medium text-gray-800 truncate">{c.other_name || t('salon')}</p>
                   {c.client_unread > 0 && (
                     <span className="bg-pink-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">{c.client_unread}</span>
                   )}
@@ -92,16 +94,14 @@ export default function MessagesPage({ params }: { params: { locale: string } })
         {/* Messages area */}
         {convId ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Header */}
             <div className="bg-white border-b px-4 py-3 flex items-center gap-3">
               <Link href="?" className="md:hidden text-gray-400 hover:text-gray-600">←</Link>
               <div className="w-8 h-8 bg-pink-100 rounded-full flex items-center justify-center text-pink-600 font-semibold text-sm">
                 {(selectedConv?.other_name || '?')[0].toUpperCase()}
               </div>
-              <span className="font-medium text-sm text-gray-800">{selectedConv?.other_name || 'Συνομιλία'}</span>
+              <span className="font-medium text-sm text-gray-800">{selectedConv?.other_name || t('salon')}</span>
             </div>
 
-            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map(msg => {
                 const isMe = me && msg.sender_user_id === me.id;
@@ -111,11 +111,11 @@ export default function MessagesPage({ params }: { params: { locale: string } })
                       {msg.body && <p className="leading-relaxed">{msg.body}</p>}
                       {msg.message_type === 'slot_proposal' && msg.proposed_slot && (
                         <div className={`mt-1 text-xs ${isMe ? 'text-pink-200' : 'text-gray-500'}`}>
-                          📅 Προτεινόμενο: {new Date(msg.proposed_slot).toLocaleString('el-GR')}
+                          📅 {t('proposed')}: {new Date(msg.proposed_slot).toLocaleString(locale === 'el' ? 'el-GR' : locale)}
                         </div>
                       )}
                       <p className={`text-xs mt-1 ${isMe ? 'text-pink-200' : 'text-gray-400'}`}>
-                        {new Date(msg.created_at).toLocaleTimeString('el-GR', {hour: '2-digit', minute: '2-digit'})}
+                        {new Date(msg.created_at).toLocaleTimeString(locale === 'el' ? 'el-GR' : locale, {hour: '2-digit', minute: '2-digit'})}
                       </p>
                     </div>
                   </div>
@@ -124,11 +124,10 @@ export default function MessagesPage({ params }: { params: { locale: string } })
               <div ref={bottomRef} />
             </div>
 
-            {/* Input */}
             <form onSubmit={send} className="bg-white border-t px-4 py-3 flex items-center gap-2">
               <input
                 type="text" value={newMsg} onChange={e => setNewMsg(e.target.value)}
-                placeholder="Γράψτε μήνυμα..."
+                placeholder={t('placeholder')}
                 className="flex-1 px-4 py-2 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
               />
               <button type="submit" disabled={loading || !newMsg.trim()}
@@ -141,7 +140,7 @@ export default function MessagesPage({ params }: { params: { locale: string } })
           <div className="flex-1 hidden md:flex items-center justify-center text-gray-400">
             <div className="text-center">
               <p className="text-4xl mb-3">💬</p>
-              <p className="text-sm">Επιλέξτε συνομιλία</p>
+              <p className="text-sm">{t('select_conv')}</p>
             </div>
           </div>
         )}

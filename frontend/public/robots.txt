@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /api/media/photo/
+
+Sitemap: https://lookla.gr/sitemap.xml

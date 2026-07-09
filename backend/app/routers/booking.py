@@ -1,7 +1,7 @@
 """
 Online booking: check slots, create appointment, manage bookings.
 """
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -95,7 +95,7 @@ def get_slots(
     while current + timedelta(minutes=duration) <= end_of_day:
         slot_end = current + timedelta(minutes=duration)
         # Check overlap
-        overlaps = any(s < slot_end and slot_end > s for s, e in booked_ranges)
+        overlaps = any(s < slot_end and e > current for s, e in booked_ranges)
         if not overlaps and current > datetime.now():
             slots.append({"time": current.strftime("%H:%M"), "available": True})
         current += timedelta(minutes=30)
@@ -176,7 +176,7 @@ def cancel_booking(appt_id: int, user: User = Depends(get_current_user), db: Ses
     if appt.client_user_id != user.id:
         raise HTTPException(403)
     # Allow cancellation up to 2h before
-    if appt.starts_at and appt.starts_at < datetime.now() + timedelta(hours=2):
+    if appt.starts_at and appt.starts_at.replace(tzinfo=None) < datetime.now() + timedelta(hours=2):
         raise HTTPException(400, "Cannot cancel less than 2 hours before appointment")
 
     db.execute(text("UPDATE appointments SET status = 'cancelled', updated_at = NOW() WHERE id = :id"),

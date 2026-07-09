@@ -63,10 +63,7 @@ class StripeProvider(PaymentProvider):
         self._stripe = stripe
 
     async def create_checkout(self, user: User, plan_id: int, success_url: str, cancel_url: str) -> PaymentSession:
-        import httpx
-        # Get plan details
-        db = next(iter([]))  # we'll pass db differently
-        raise NotImplementedError("Use create_checkout_session directly")
+        raise NotImplementedError("Use /api/payments/subscribe directly")
 
     async def create_portal(self, customer_id: str, return_url: str) -> str:
         session = self._stripe.billing_portal.Session.create(
@@ -251,10 +248,13 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
 async def billing_portal(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Redirect to Stripe Customer Portal."""
     sub = db.execute(text("""
-        SELECT stripe_customer_id FROM salon_subscriptions
-        WHERE stripe_customer_id IS NOT NULL
-        ORDER BY created_at DESC LIMIT 1
-    """)).first()
+        SELECT ss.stripe_customer_id
+        FROM salon_subscriptions ss
+        JOIN salon_owners so ON so.salon_id = ss.salon_id
+        WHERE so.user_id = :uid
+          AND ss.stripe_customer_id IS NOT NULL
+        ORDER BY ss.created_at DESC LIMIT 1
+    """), {"uid": user.id}).first()
 
     if not sub:
         raise HTTPException(404, "No active subscription found")
@@ -332,14 +332,24 @@ async def cancel_my_subscription(user: User = Depends(get_current_user), db: Ses
 def _activate_subscription(db: Session, user_id: int, salon_id: Optional[int], plan_id: int,
                             stripe_sub_id: Optional[str], stripe_customer_id: Optional[str],
                             status: str):
-    db.execute(text("""
-        INSERT INTO salon_subscriptions
-          (salon_id, plan_id, stripe_subscription_id, stripe_customer_id, status)
-        VALUES (:sid, :pid, :sub_id, :cust_id, :status)
-        ON CONFLICT (stripe_subscription_id)
-        DO UPDATE SET status = :status, updated_at = NOW()
-    """), {
-        "sid": salon_id, "pid": plan_id,
-        "sub_id": stripe_sub_id, "cust_id": stripe_customer_id, "status": status,
-    })
+    if stripe_sub_id:
+        db.execute(text("""
+            INSERT INTO salon_subscriptions
+              (salon_id, plan_id, stripe_subscription_id, stripe_customer_id, status)
+            VALUES (:sid, :pid, :sub_id, :cust_id, :status)
+            ON CONFLICT (stripe_subscription_id)
+            DO UPDATE SET status = :status, updated_at = NOW()
+        """), {
+            "sid": salon_id, "pid": plan_id,
+            "sub_id": stripe_sub_id, "cust_id": stripe_customer_id, "status": status,
+        })
+    else:
+        # Free plan — upsert by salon+plan (no stripe_subscription_id)
+        db.execute(text("""
+            INSERT INTO salon_subscriptions
+              (salon_id, plan_id, stripe_subscription_id, stripe_customer_id, status)
+            VALUES (:sid, :pid, NULL, NULL, :status)
+            ON CONFLICT (salon_id, plan_id) WHERE stripe_subscription_id IS NULL
+            DO UPDATE SET status = :status, updated_at = NOW()
+        """), {"sid": salon_id, "pid": plan_id, "status": status})
     db.commit()
