@@ -1,26 +1,28 @@
 ---
 title: MVP Definition
-status: Draft
-version: 0.1
+status: Approved
+version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
 last_updated: 2026-07-09
 related_documents:
   - 00_GOVERNANCE/PROJECT_CHARTER.md
+  - 00_GOVERNANCE/DECISION_LOG.md
   - 01_PRODUCT/PRODUCT_SCOPE.md
   - 01_PRODUCT/PERSONAS.md
   - 01_PRODUCT/USER_JOURNEYS.md
+  - 01_PRODUCT/MVP_SCOPE_LOCK.md
   - 05_ROADMAP/ROADMAP.md
-implementation_status: Partially implemented — MVP scope not yet formally approved
+implementation_status: Partially implemented — proceed against this document
 ---
 
 # MVP Definition
 **Lookla Beauty Marketplace**
 
-> **DRAFT — not approved. Do not use as implementation reference until status is `Approved`.**
+> **APPROVED — this is the authoritative MVP reference.**
 >
-> This document defines what constitutes the Minimum Viable Product for Lookla.
-> Sections marked **❓ DECISION REQUIRED** cannot be finalized without Product Owner input.
+> All decisions in this document are formally logged in `00_GOVERNANCE/DECISION_LOG.md` (DEC-008 to DEC-017).
+> Implementation may proceed against this document. Any divergence from this document must be reported as a mismatch — not silently resolved.
 
 ---
 
@@ -38,7 +40,7 @@ The MVP is not the finished product. It is the minimum required to test whether 
 
 **Problem:** Finding a beauty service in Greece is unnecessarily difficult for a large segment of the population — especially non-Greek speakers — because existing tools (Google Maps, word of mouth) are fragmented, language-dependent, or unstructured.
 
-**Solution hypothesis:** A structured, multilingual beauty directory with accurate working hours, contact information, and category filtering solves this problem well enough that users choose to return.
+**Solution hypothesis:** A structured, multilingual beauty directory with accurate working hours, contact information, and category filtering solves this problem well enough that users choose to contact a salon they found through Lookla.
 
 **Validation question:** Do real users find Lookla and use it to contact a salon they would not have found otherwise?
 
@@ -48,12 +50,10 @@ The MVP is not the finished product. It is the minimum required to test whether 
 
 ### ✅ In MVP — Implemented and working
 
-The following capabilities are already built and functional:
-
 | Capability | Status |
 |---|---|
 | Search salons by city, category, and text | Implemented |
-| Filter by city, category, minimum rating | Implemented |
+| Filter by area/district, category, minimum rating | Implemented (label update needed per DEC-010) |
 | View salon listing (name, address, hours, photos, contact) | Implemented |
 | Open/closed status based on working hours | Implemented |
 | Minimum price indicator per category | Implemented |
@@ -65,191 +65,132 @@ The following capabilities are already built and functional:
 | Google OAuth | Implemented |
 | Report incorrect information | Implemented |
 
-### ✅ In MVP — Needs decision before it can be called complete
+### ⚠️ In MVP — Requires UI/copy change before MVP can launch
 
-The following exist in code but have known issues that require a product decision before MVP can be considered done:
-
-| Capability | Issue | Decision needed |
+| Capability | Decision | Reference |
 |---|---|---|
-| City/Region filter | Label says "City" but returns districts — misleading for Attica | ❓ See Q-03 below |
-| Review display | Shows Google reviews without labeling the source | ❓ See Q-06 below |
-| Verified badge (✓) | Reflects admin flag, not owner verification — misleading | ❓ See Q-07 below |
-| Booking CTA buttons | Present in UI but non-functional (stubs) | ❓ See Q-08 below |
+| City/Area filter label | Replace "City" with area hierarchy: Country → Region → City → District | DEC-010 |
+| Review display | Add label: "Source: Google Reviews / Imported: Yes / Original: No" | DEC-013 |
+| Verified badge | Replace ✓ with "Information reviewed" or "Owner verified" (context-dependent) | DEC-014 |
+| Booking CTA | Remove stub buttons; replace with "Call salon" / "Message on WhatsApp" / "Visit website" | DEC-015 |
+| Analytics | GA4 tracking required before launch to measure success criteria | DEC-017 |
 
 ### ❌ Explicitly out of MVP scope
-
-The following are built in code but must NOT be user-facing for MVP:
 
 | Capability | Reason |
 |---|---|
 | Stripe / subscription plans | Monetization postponed (DEC-006) |
-| Owner claim and verification | Planned stage, not MVP |
-| Online booking flow | Future stage |
+| Owner claim and verification | Post-MVP stage |
+| Online booking flow | Future stage (DEC-015) |
 | In-app messaging / chat | Future stage |
-| Staff profiles | Data exists; not surfaced |
-| Portfolio for professionals | Backend ready; not surfaced |
-| Favorites / saved listings | Not started |
+| Staff profiles | Backend exists; not surfaced |
+| Portfolio for professionals | Backend exists; not surfaced |
+| Favorites / saved listings | Registration required; builds on confirmed user base |
 | Push notifications | Not started |
+| Geo search "near me" UI | Backend Haversine exists; UI not MVP scope (DEC-009 — tourists deprioritized) |
+| "Staff speaks Russian" filter | Data not in model; post-MVP |
 
 ---
 
 ## MVP Success Criteria
 
-❓ **DECISION REQUIRED (Q-01)**
+**Decision: DEC-008**
 
-> What does MVP success look like? Without agreed criteria, there is no way to know when MVP is validated or when to move to the next stage.
+Primary metric: **500 verified user interactions with salons within the first 90 days of active availability.**
 
-Proposed options for Product Owner to choose from or replace:
+A verified interaction is any of:
+- Click on phone number
+- Click on WhatsApp button
+- Click on website link
 
-**Option A — Traffic signal**
-> _N_ unique visitors per week arrive via organic search (not direct URL), spend more than _N_ seconds on a salon page.
+Secondary metrics (tracked but not blocking):
+- 100 salons listed and data-quality reviewed in Athens focus area
+- 30 salons with claimed profiles
+- 10% visitor → contact conversion rate
 
-**Option B — Contact signal**
-> _N_ click-throughs on phone/WhatsApp/website buttons per week.
-
-**Option C — Return signal**
-> _N_% of visitors return within 30 days without a direct link.
-
-**Option D — Qualitative signal**
-> At least _N_ real users can be interviewed and confirm Lookla solved a real discovery problem.
-
-_Product Owner decision required: which metric, and what threshold constitutes success?_
+The 90-day window starts from the first marketing push, not from deployment date.
+GA4 must be installed before tracking begins (DEC-017).
 
 ---
 
 ## MVP Target User
 
-❓ **DECISION REQUIRED (Q-02)**
+**Decision: DEC-009**
 
-> Which persona is the primary target for MVP validation? The answer determines where to focus limited attention on search quality, UX, and language priority.
+Primary target: **local residents** (not tourists).
 
-Current candidates (see `PERSONAS.md`):
+Priority order for all product decisions:
+1. **P-02** — Russian/Ukrainian-speaking residents (strongest differentiation, underserved)
+2. **P-01** — Greek-speaking residents
+3. **P-03** — English-speaking expats
+4. **P-04** — Salon Owners (post-MVP)
 
-- **P-01** — Greek-speaking local (largest addressable group, highest competition from Google Maps)
-- **P-02** — Russian/Ukrainian-speaking resident (underserved, strong differentiated value, multilingual is key)
-- **P-03** — English-speaking expat / tourist (seasonal, high intent, mobile-first)
-
-_If MVP targets P-02 first, multilingual quality and transliteration accuracy become the top priority. If P-01, then completeness of Athens coverage and search ranking matter most._
-
----
-
-## Open Questions Blocking MVP Approval
-
-Each question below must be answered by the Product Owner before this document can move to `Approved`.
+Tourists (P-03) are explicitly deprioritized for MVP. Features that serve only tourists are deferred.
 
 ---
 
-### ❓ Q-01 — MVP success criteria
-What metric proves MVP is validated? What is the threshold?
+## Approved Decisions (Q-01 through Q-10)
 
----
+### Q-01 — MVP success criteria → DEC-008
+**Approved answer:** 500 verified user interactions (phone/WhatsApp/website click) in 90 days.
+Secondary: 100 salons listed, 30 claimed, 10% visitor→contact conversion.
 
-### ❓ Q-02 — Primary MVP persona
-Which user type is the primary validation target: Greek local, Russian/Ukrainian resident, or English expat/tourist?
+### Q-02 — Primary persona → DEC-009
+**Approved answer:** Local residents. Priority: P-02 (Russian/Ukrainian) → P-01 (Greek) → P-03 (expat) → tourists last.
 
----
+### Q-03 — City filter label → DEC-010
+**Approved answer:** Implement full location hierarchy: Country → Region → City → District. Users search by Kolonaki/Glyfada/Kallithea/Marousi, not "Athens." Replace "City" with "Area" or "Neighbourhood" in all 4 languages. Data reclassification required.
 
-### ❓ Q-03 — City filter label
-The current filter is labeled "City" but returns districts (Kallithea, Glyfada appear separate from Athens). Options:
-- **A)** Rename to "Area" or "Neighbourhood" (requires copy change only)
-- **B)** Group districts under parent cities (requires data restructuring + UI)
-- **C)** Leave as-is for MVP, decide post-MVP
+### Q-04 — Language priority → DEC-011
+**Approved answer:** el/en/ru mandatory for MVP quality. uk ships but is lower QA priority than ru.
 
-_This affects SEARCH.md spec and the filter label in all 4 languages._
+### Q-05 — Geographic focus → DEC-012
+**Approved answer:** Athens metropolitan area first. National data remains accessible but data quality effort focuses on Athens. 100 excellent Athens salons > 5000 thin national listings.
 
----
+### Q-06 — Review source labeling → DEC-013
+**Approved answer:** Keep Google reviews, label clearly: "Source: Google Reviews / Imported: Yes / Original: No."
 
-### ❓ Q-04 — Language priority for MVP
-All 4 languages (el/en/ru/uk) are implemented. For MVP:
-- **A)** All 4 are equal — no priority
-- **B)** Greek + Russian/Ukrainian are primary (target non-Greek speakers first)
-- **C)** Greek + English are primary (tourist/expat focus)
+### Q-07 — Verified badge → DEC-014
+**Approved answer:** Replace ✓ with explicit label. "Information reviewed" when admin-checked. "Owner verified" only after full Claim + Verification process. No badge = default for unclaimed listings.
 
-_This affects copy quality, QA priorities, and marketing channels._
+### Q-08 — Booking CTA → DEC-015
+**Approved answer:** Remove all booking stubs. Replace with real contact CTAs: "Call salon," "Message on WhatsApp," "Visit website." "Request appointment" only when a real flow exists.
 
----
+### Q-09 — Registration requirement → DEC-016
+**Approved answer:** View, call, WhatsApp = no registration required. Save/favorites = registration required. Current anonymous implementation is correct and confirmed.
 
-### ❓ Q-05 — Geographic focus for MVP
-Is MVP national (all of Greece, 6320 salons) or focused on a specific region?
-- **A)** National from day one (already the case technically)
-- **B)** Athens metro area only for MVP validation (higher density, easier to test)
-- **C)** Athens + Thessaloniki
-
-_This affects SEO strategy, data quality focus, and marketing channel choices._
-
----
-
-### ❓ Q-06 — Review source labeling
-Current state: Google reviews are shown without any label indicating they're from Google.
-Options:
-- **A)** Add "Source: Google" label to each review — honest, slightly reduces visual cleanliness
-- **B)** Add a section header "Reviews from Google" — cleaner
-- **C)** Hide reviews entirely for MVP — simplifies trust question
-- **D)** Keep as-is for MVP — decide after seeing user reaction
-
-_Affects SALON.md page spec and the Terminology mismatch flagged in PRODUCT_TERMINOLOGY.md._
-
----
-
-### ❓ Q-07 — Verified badge (✓) meaning
-The ✓ badge currently means "an admin has reviewed this listing," not "the owner has verified this business."
-Options:
-- **A)** Remove badge entirely for MVP — show it only when owner verification exists
-- **B)** Change badge label to "Reviewed" instead of implying owner verification
-- **C)** Keep as-is for MVP — document known mismatch
-
-_This is a trust signal. Getting it wrong can undermine credibility._
-
----
-
-### ❓ Q-08 — Booking CTA in MVP
-Currently there are booking/contact buttons on the salon detail page that are non-functional stubs.
-Options:
-- **A)** Remove booking buttons entirely for MVP — only show real contact options (phone, WhatsApp, website)
-- **B)** Keep stubs but label them "Coming soon"
-- **C)** Keep as-is
-
-_Per Charter §9: stubs are only acceptable if clearly non-functional._
-
----
-
-### ❓ Q-09 — User registration requirement
-Is registration required to contact a salon, or is discovery fully anonymous?
-- **A)** Fully anonymous — no login required for any discovery or contact action (current state)
-- **B)** Login required to reveal phone number (increases registration, reduces friction for discovery)
-- **C)** Login required to see WhatsApp link only
-
-_Affects conversion funnel and how user base is measured._
-
----
-
-### ❓ Q-10 — Analytics for MVP
-Without analytics, there is no way to measure MVP success criteria.
-- **A)** Add Google Analytics 4 or Plausible before MVP launch
-- **B)** Use server-side request logs only (privacy-friendly, less granular)
-- **C)** No analytics for now — validate qualitatively
-
-_Without Q-10 answered, Q-01 (success criteria) cannot be measured._
+### Q-10 — Analytics → DEC-017
+**Approved answer:** GA4 (required before launch) + Google Search Console (required before launch) + Microsoft Clarity or Hotjar (optional, add post-launch).
 
 ---
 
 ## MVP Readiness Checklist
 
-To be completed once open questions are answered:
+### Product decisions (complete)
+- [x] Q-01 answered: success metric defined (DEC-008)
+- [x] Q-02 answered: primary persona identified (DEC-009)
+- [x] Q-03 answered: city/area hierarchy decided (DEC-010)
+- [x] Q-04 answered: language priority set (DEC-011)
+- [x] Q-05 answered: geographic focus set (DEC-012)
+- [x] Q-06 answered: review labeling decided (DEC-013)
+- [x] Q-07 answered: verified badge decided (DEC-014)
+- [x] Q-08 answered: booking CTA decided (DEC-015)
+- [x] Q-09 answered: registration requirement confirmed (DEC-016)
+- [x] Q-10 answered: analytics approved (DEC-017)
+- [x] MVP_DEFINITION.md status changed to `Approved`
+- [x] Decisions logged in DECISION_LOG.md (DEC-008 to DEC-017)
+- [x] Roadmap milestone M-01 created
 
-- [ ] Q-01 answered: success metric defined
-- [ ] Q-02 answered: primary persona identified
-- [ ] Q-03 answered: city filter decision made
-- [ ] Q-04 answered: language priority set
-- [ ] Q-05 answered: geographic focus set
-- [ ] Q-06 answered: review labeling decision made
-- [ ] Q-07 answered: verified badge decision made
-- [ ] Q-08 answered: booking CTA decision made
-- [ ] Q-09 answered: registration requirement set
-- [ ] Q-10 answered: analytics approach decided
-- [ ] MVP_DEFINITION.md status changed to `Approved`
-- [ ] Relevant decisions logged in DECISION_LOG.md (DEC-008+)
-- [ ] Roadmap milestone M-01 created
+### Implementation pre-conditions (required before MVP launch)
+- [ ] Area filter: location hierarchy implemented (DEC-010)
+- [ ] Review labels: "Source: Google Reviews" added to salon detail page (DEC-013)
+- [ ] Verified badge: replaced with explicit label (DEC-014)
+- [ ] Booking stubs: removed, replaced with contact CTAs (DEC-015)
+- [ ] GA4: installed, contact events tracked (DEC-017)
+- [ ] Search Console: property verified (DEC-017)
+- [ ] Privacy policy: updated to reflect GA4 (DEC-017)
+- [ ] Athens data quality: 100 salons reviewed for accuracy (DEC-012)
+- [ ] Russian translation quality: sample reviewed (DEC-011)
 
 ---
 
