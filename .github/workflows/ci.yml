@@ -17,9 +17,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff pytest
-      - run: ruff check . || true
-      - run: pytest --tb=short || true
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Tests
+        # continue-on-error until T-030 (tests) is complete — remove flag after T-030
+        continue-on-error: true
+        run: pytest --tb=short
 
   frontend:
     runs-on: ubuntu-latest
@@ -33,5 +38,9 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci || true
-      - run: npm run build || true
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build

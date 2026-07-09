@@ -46,8 +46,8 @@ implementation_status: N/A — gate document; must be fully checked before produ
 
 ### 1.3 Docker
 - [ ] `docker compose ps` shows all services Up: api, web, db, redis
-- [ ] `docker logs lookla_api --tail=50` shows no ERROR or CRITICAL messages
-- [ ] `docker logs lookla_web --tail=50` shows no NEXT_JS_BUILD_ERROR messages
+- [ ] `docker logs beauty_api --tail=50` shows no ERROR or CRITICAL messages
+- [ ] `docker logs beauty_web --tail=50` shows no NEXT_JS_BUILD_ERROR messages
 - [ ] `docker stats` — no service is exceeding memory limits
 
 ### 1.4 Nginx / DNS
@@ -236,7 +236,7 @@ Complete each journey in production (not localhost):
 
 These items are not launch blockers but must be completed within 7 days of launch:
 
-- [ ] Monitor `docker logs lookla_api` daily for unexpected errors
+- [ ] Monitor `docker logs beauty_api` daily for unexpected errors
 - [ ] Check GA4 Realtime daily for first 7 days
 - [ ] Verify first organic Google sessions arrive via Search Console
 - [ ] First week `contact_action` count: document in GA4 note
