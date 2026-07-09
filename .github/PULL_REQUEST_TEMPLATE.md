@@ -15,6 +15,7 @@ Brief description of what this PR changes and why.
 
 ## Related
 
+- Backlog task: T-NNN (required — see IMPLEMENTATION_BACKLOG.md)
 - Issue: #
 - RFC: `docs/07_RFC/RFC-NNNN-*.md`
 - Decision: DEC-NNN in `docs/00_GOVERNANCE/DECISION_LOG.md`

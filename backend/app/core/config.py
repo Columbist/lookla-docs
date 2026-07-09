@@ -40,9 +40,6 @@ class Settings(BaseSettings):
     resend_sender_email: str = "noreply@lookla.gr"
     resend_sender_name: str = "Lookla"
 
-    # Translations
-    deepl_api_key: str = ""
-
     # Moderation
     openai_api_key: str = ""
     google_vision_api_key: str = ""

@@ -1,0 +1,36 @@
+repos:
+  # ── Universal ────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # ── Python (ruff) ────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  # ── TypeScript / JavaScript ───────────────────────────────────
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        language: system
+        entry: bash -c 'cd frontend && npx eslint --max-warnings=0 "$@"' --
+        files: \.(tsx?|jsx?)$
+        pass_filenames: true
+      - id: prettier
+        name: Prettier
+        language: system
+        entry: bash -c 'cd frontend && npx prettier --write "$@"' --
+        files: \.(tsx?|jsx?|css|json|md)$
+        pass_filenames: true
