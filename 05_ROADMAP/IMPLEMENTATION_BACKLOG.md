@@ -644,7 +644,7 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 - [ ] Save triggers `PATCH /api/admin/salons/{id}` and shows success/error state
 - [ ] Changed values are reflected immediately in the admin list without page reload
 - [ ] Admin can set `is_verified = true` via a "Mark reviewed" button
-- [ ] No SQL errors in `docker logs lookla_api` after save
+- [ ] No SQL errors in `docker logs beauty_api` after save
 
 ---
 
@@ -657,7 +657,7 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 **Cron command:**
 ```bash
 # Add via: crontab -e
-0 3 * * * docker exec lookla_db pg_dump -U postgres lookla | gzip > /opt/backups/lookla_$(date +\%Y\%m\%d).sql.gz
+0 3 * * * docker exec beauty_db pg_dump -U postgres lookla | gzip > /opt/backups/lookla_$(date +\%Y\%m\%d).sql.gz
 0 4 * * * find /opt/backups -name "*.sql.gz" -mtime +7 -delete
 ```
 
@@ -802,7 +802,7 @@ limiter = Limiter(key_func=get_remote_address, storage_uri="redis://redis:6379")
 **Acceptance Criteria:**
 - [ ] `app/main.py` `Limiter()` call includes `storage_uri="redis://redis:6379"`
 - [ ] After `docker compose restart api`: rate limit counters persist (test: send 5 register requests, restart, 6th still blocked)
-- [ ] `docker logs lookla_api` shows no Redis connection errors on startup
+- [ ] `docker logs beauty_api` shows no Redis connection errors on startup
 
 ---
 

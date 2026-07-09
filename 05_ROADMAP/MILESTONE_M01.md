@@ -184,11 +184,11 @@ After all pre-launch gate criteria pass:
 
 ```bash
 # 1. Backup production DB before any change
-docker exec lookla_db pg_dump -U postgres lookla | gzip > /opt/backups/lookla_pre_m01_$(date +%Y%m%d).sql.gz
+docker exec beauty_db pg_dump -U postgres lookla | gzip > /opt/backups/lookla_pre_m01_$(date +%Y%m%d).sql.gz
 
 # 2. Apply database migrations
 cd /root/beauty-gr/backend
-docker exec lookla_api alembic upgrade head
+docker exec beauty_api alembic upgrade head
 
 # 3. Rebuild and redeploy frontend and backend
 docker buildx build -t lookla-api ./backend
