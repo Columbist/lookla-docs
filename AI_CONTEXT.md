@@ -27,11 +27,20 @@ Current data: ~6300 salons, aggregated from public sources (crawlers). No fake d
 
 ## Current Phase
 
-**Technical Architecture.** M-01 (MVP Athens Launch) is in progress.
+**Engineering Execution.** M-01 (MVP Athens Launch) is fully planned and ready for development.
 
-Product decisions are fully approved (DEC-001 through DEC-017). UX specifications are approved (page specs, UX flows, wireframe requirements). Technical architecture is now approved (backend, frontend, DB schema, API spec, security, performance).
+All documentation phases are complete:
+- Product decisions approved (DEC-001 through DEC-017)
+- UX specifications approved (page specs, UX flows, wireframe requirements)
+- Technical architecture approved (backend, frontend, DB schema, API spec, security, performance)
+- Engineering execution documentation approved (epics, backlog, milestone, risks, release checklist, testing strategy, architecture review)
 
-**Next:** Development begins. A developer can open `04_ARCHITECTURE/` and write code without asking product questions.
+**Next:** Development begins. Start with T-001 (Alembic setup) before any other task.
+
+**Critical blockers (must be resolved first):**
+1. CONTRADICTION-01 (`is_verified` ambiguity) — use LEFT JOIN on salon_owners (Option B)
+2. UNDER-01 (no Alembic) — set up before ANY schema change (T-001)
+3. UNDER-04 (no Privacy Policy) — create before GA4 is deployed (T-017)
 
 ---
 
@@ -82,6 +91,21 @@ Product decisions are fully approved (DEC-001 through DEC-017). UX specification
 |---|---|
 | `06_ENGINEERING/AUDIT.md` | Full technical audit (§27: implementation readiness) |
 | `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` | Commit format, branching, naming, testing, DoD |
+| `06_ENGINEERING/RISK_REGISTER.md` | 20 technical/product/legal/infra risks; 2 Critical, 6+ High |
+| `06_ENGINEERING/RELEASE_CHECKLIST.md` | Pre-launch gate with [BLOCKER] items |
+| `06_ENGINEERING/TESTING_STRATEGY.md` | Unit, integration, UI, performance, manual smoke tests |
+
+### Engineering Execution (Roadmap)
+| Document | What it defines |
+|---|---|
+| `05_ROADMAP/EPICS.md` | 10 epics, ~10.5 dev-days total |
+| `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` | 32 tasks (T-001–T-032) with hours, owners, AC |
+| `05_ROADMAP/MILESTONE_M01.md` | M-01 scope, exit criteria, deployment steps |
+
+### Architecture Review
+| Document | What it defines |
+|---|---|
+| `08_REVIEWS/ARCHITECTURE_REVIEW.md` | Cross-doc contradictions, overengineering, underengineering, SPOFs, MVP violations |
 
 ---
 
@@ -109,9 +133,34 @@ Product decisions are fully approved (DEC-001 through DEC-017). UX specification
 
 ---
 
-## Current Phase: Technical Architecture
+## Current Phase: Engineering Execution (Complete)
 
-All 6 technical architecture documents were approved 2026-07-09. A developer can now write code from these documents without product decisions.
+All engineering execution documents were approved 2026-07-09. Development can begin immediately.
+
+### New documents in this phase
+
+| Document | What it defines |
+|---|---|
+| `05_ROADMAP/EPICS.md` | 10 engineering epics; complexity, acceptance criteria, DEC mapping |
+| `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` | 32 tasks (T-001–T-032); priority, owner, hours, acceptance criteria |
+| `05_ROADMAP/MILESTONE_M01.md` | M-01 scope, exit criteria, critical path, deployment steps |
+| `06_ENGINEERING/RISK_REGISTER.md` | 20 risks across 6 categories; Critical/High risks identified |
+| `06_ENGINEERING/RELEASE_CHECKLIST.md` | Pre-launch gate; all [BLOCKER] items must pass |
+| `06_ENGINEERING/TESTING_STRATEGY.md` | Unit, integration, API contract, UI, performance, manual smoke |
+| `08_REVIEWS/ARCHITECTURE_REVIEW.md` | 5 cross-document contradictions; overengineering, SPOFs, 6 MVP violations |
+
+### Architecture Review key findings
+
+| ID | Severity | Finding |
+|---|---|---|
+| CONTRADICTION-01 | BLOCKER | `is_verified` has two meanings; resolve via LEFT JOIN on `salon_owners` |
+| CONTRADICTION-02 | HIGH | `GET /api/areas` not in BACKEND_ARCHITECTURE.md router list |
+| CONTRADICTION-03 | HIGH | No data backfill plan for `address_district` |
+| UNDER-01 | BLOCKER | Alembic missing; required before any schema change |
+| UNDER-04 | BLOCKER | No Privacy Policy; required before GA4 deployment |
+| MVP-V01–V06 | BLOCKER | 6 live violations of approved decisions |
+
+### Phase: Technical Architecture
 
 ### What's been specified
 
@@ -251,11 +300,12 @@ After M-01 launches (500 contact interactions measured in 90 days): plan M-02 ba
 ## Where to Start
 
 **For a developer starting implementation:**
-1. `04_ARCHITECTURE/BACKEND_ARCHITECTURE.md` — understand the backend structure
-2. `04_ARCHITECTURE/API_SPECIFICATION.md` — understand every endpoint
-3. `04_ARCHITECTURE/DATABASE_SCHEMA.md` — understand the data model
-4. `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` — how to write code and commits
-5. `06_ENGINEERING/AUDIT.md §27.5` — ordered implementation checklist
+1. `08_REVIEWS/ARCHITECTURE_REVIEW.md` — read all BLOCKER findings first
+2. `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` — pick up from T-001 (Alembic)
+3. `04_ARCHITECTURE/API_SPECIFICATION.md` — understand every endpoint
+4. `04_ARCHITECTURE/DATABASE_SCHEMA.md` — understand the data model
+5. `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` — how to write code and commits
+6. `06_ENGINEERING/RELEASE_CHECKLIST.md` — know what "done" looks like for launch
 
 **For a product/UX designer:**
 1. `01_PRODUCT/MVP_SCOPE_LOCK.md` — what's in scope
@@ -285,5 +335,5 @@ After M-01 launches (500 contact interactions measured in 90 days): plan M-02 ba
 
 ---
 
-*Last updated: 2026-07-09*
+*Last updated: 2026-07-09 (Phase D — Engineering Execution Documentation complete)*
 *Update this file whenever phase changes or a major decision affects project state.*
