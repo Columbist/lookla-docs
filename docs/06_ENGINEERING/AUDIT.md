@@ -746,3 +746,167 @@ Redesign complexity depends heavily on whether the component boundary changes:
 Lookla is a **working, deployed, multi-language beauty marketplace** with solid foundational architecture: clean REST API, correct auth flow, good bot protection layering, and a visually consistent frontend. The platform's primary structural risk is the absence of database migration tooling and the split between ORM models and raw-SQL tables — this needs to be addressed before the schema evolves further. The booking, chat, and payment systems are backend-complete but frontend-incomplete, offering a clear near-term roadmap for feature completion without architectural change.
 
 The codebase is well-positioned for a frontend redesign: Tailwind CSS and React component boundaries make visual changes low-risk. The highest-value investment is closing the gaps between backend infrastructure and frontend surfaces (booking flow, messaging, subscriptions) rather than redesigning what already works.
+
+---
+
+## 27. Implementation Readiness Assessment
+**Added:** 2026-07-09 — post MVP Scope Lock (see `01_PRODUCT/MVP_SCOPE_LOCK.md`)
+
+This section evaluates readiness across four dimensions before technical implementation of M-01 begins.
+
+---
+
+### 27.1 Product Completeness
+
+| Item | Status | Notes |
+|---|---|---|
+| MVP success metric defined | ✅ Complete | DEC-008: 500 contact actions in 90 days |
+| Primary persona identified | ✅ Complete | DEC-009: P-02 (Russian/Ukrainian) first |
+| MVP scope locked | ✅ Complete | MVP_SCOPE_LOCK.md is Locked |
+| All 10 product questions answered | ✅ Complete | DEC-008 through DEC-017 |
+| Geographic focus set | ✅ Complete | DEC-012: Athens first |
+| Language priority set | ✅ Complete | DEC-011: el/en/ru mandatory, uk optional |
+| Honest UX decisions made | ✅ Complete | Reviews (DEC-013), badge (DEC-014), CTA (DEC-015) |
+| Registration policy confirmed | ✅ Complete | DEC-016: anonymous access |
+| Analytics stack chosen | ✅ Complete | DEC-017: GA4 + Search Console |
+
+**Product completeness: 100% — no open product decisions block implementation.**
+
+---
+
+### 27.2 UX Completeness
+
+| Document | Status | Notes |
+|---|---|---|
+| HOME.md page spec | ✅ Approved v1.0 | Language switcher placement + area labels defined |
+| SEARCH.md page spec | ✅ Approved v1.0 | Area filter (DEC-010) + verified label (DEC-014) |
+| SALON.md page spec | ✅ Approved v1.0 | Contact CTAs, review labels, badge — fully specified |
+| ADMIN.md page spec | ✅ Approved v1.0 | Inline edit gap documented; pre-MVP checklist |
+| CONTACT.md page spec | ✅ Approved v1.0 | New static page; email-only contact |
+| ABOUT.md page spec | ✅ Approved v1.0 | New static page; trust + honesty tone |
+| UX_FLOWS.md | ✅ Approved v1.0 | 4 flows with happy path + edge cases |
+| WIREFRAME_REQUIREMENTS.md | ✅ Approved v1.0 | 8 wireframes described; priority matrix included |
+| PERSONAS.md | ⚠️ Draft | Content complete; status not yet updated to Approved |
+| USER_JOURNEYS.md | ⚠️ Draft | Content complete; status not yet updated to Approved |
+| INFORMATION_ARCHITECTURE.md | ⚠️ Draft | Placeholder only — needs update |
+| Design system (visual) | ❌ Not started | DESIGN_SYSTEM.md is a placeholder |
+| Actual wireframes (Figma/etc.) | ❌ Not produced | WIREFRAME_REQUIREMENTS.md is a brief, not the wireframes |
+
+**UX completeness: Specification complete. Visual design layer (wireframes, design system) not yet produced.**
+
+This is acceptable for starting implementation of the 5 pre-MVP code changes that do not require new visual design. It is NOT sufficient for a full frontend redesign or new page creation.
+
+---
+
+### 27.3 Architecture Completeness
+
+| Item | Status | Notes |
+|---|---|---|
+| Data entities defined | ✅ Complete | DATA_FLOW.md: 7 MVP entities |
+| Data flows documented | ✅ Complete | Read, write, analytics, translation, photo flows |
+| Location hierarchy defined | ✅ Complete | DEC-010: Country → Region → City → District |
+| Analytics event schema defined | ✅ Complete | `contact_action` event with full parameters |
+| API endpoints inventory | ✅ Complete | Section 6 of this audit (13 routers, 50+ endpoints) |
+| Feature flags documented | ✅ Complete | FEATURE_FLAGS.md: 11 hidden capabilities |
+| Database migration tooling | ❌ Missing | No Alembic; highest structural risk (Section 21 Priority 1) |
+| ORM models for SQL-only tables | ❌ Missing | 10 tables with no models |
+| API versioning | ❌ Missing | Breaking changes have no rollback path |
+| Test suite | ❌ Missing | Zero tests across all layers |
+| Admin inline edit | ❌ Missing | `PATCH /api/admin/salons/{id}` exists; frontend form missing |
+| `address_district` DB field | ❌ Missing | Required by DEC-010; not in current schema |
+
+**Architecture completeness: Logical model complete. Implementation infrastructure has critical gaps (migrations, ORM, tests) that are pre-existing debt — none block MVP delivery but all increase risk of schema changes.**
+
+---
+
+### 27.4 Remaining Decisions Before Technical Architecture Can Begin
+
+**No product decisions are blocking.** All 17 decisions (DEC-001 through DEC-017) are approved.
+
+The following are **implementation-level choices** (not product decisions) that engineering must make:
+
+| Question | Impact | Who decides |
+|---|---|---|
+| How to implement area filter before full DEC-010 migration? | Search accuracy for MVP | Engineering (backend mapping table vs. schema migration) |
+| Which GA4 integration pattern for Next.js? (`next/script`, `gtag`, `@next/third-parties`) | Analytics reliability | Engineering |
+| How to split `address_city` into district/city/region? | DEC-010 data migration scope | Engineering + Product Owner (scope of Athens data review) |
+| Should the `address_district` field be added in MVP, or use a mapping table? | DB schema change vs. no schema change | Engineering |
+| How to annotate admin `is_verified` field to distinguish admin-review from owner-claim? | DEC-014 compliance | Engineering |
+| Should anonymous report submission be enabled? | Reduces friction for salon owners in MVP workaround flow | Product Owner — needs a Change Request if yes |
+
+---
+
+### 27.5 Pre-MVP Implementation Checklist (ordered by dependency)
+
+Execute in this order to avoid rework:
+
+**Step 1 — Data (no UI dependency)**
+- [ ] Define and document Athens district → `address_city` mapping (backend)
+- [ ] Add `address_district` column to salons table (or confirm mapping table approach)
+- [ ] Update `GET /api/salons` area filter to use district mapping
+
+**Step 2 — Backend label logic**
+- [ ] Confirm `is_verified` meaning: admin-reviewed vs. owner-claimed
+- [ ] If needed, add `is_owner_verified` column (or derive from `salon_owners` table)
+- [ ] Ensure admin `PATCH /api/admin/salons/{id}` accepts and returns updated `is_verified` cleanly
+
+**Step 3 — Frontend: Salon Detail (highest user impact)**
+- [ ] Remove booking stub buttons (DEC-015)
+- [ ] Add/verify "Call salon", "WhatsApp", "Visit website" CTAs with click handlers
+- [ ] Replace ✓ badge with "Information reviewed" / "Owner verified" text label (DEC-014)
+- [ ] Add review section header: "Source: Google Reviews / Imported: Yes / Original: No" (DEC-013)
+- [ ] Wire GA4 events on contact button clicks (DEC-017 + DEC-008)
+
+**Step 4 — Frontend: Search**
+- [ ] Update area filter label from "City" → "Area" / "Περιοχή" / "Район" in all 4 locales
+- [ ] Populate area filter with Athens districts (not just city names)
+- [ ] Update verified label on SalonCard (text instead of ✓ icon)
+
+**Step 5 — Frontend: Home**
+- [ ] Move language switcher to header (currently footer-only)
+- [ ] Rename "Popular Cities" section to "Popular Areas" / "Δημοφιλείς περιοχές"
+- [ ] Populate areas grid with Athens districts
+
+**Step 6 — Analytics**
+- [ ] Create GA4 property; obtain tracking ID
+- [ ] Add GA4 script to Next.js layout (all locales)
+- [ ] Verify `contact_action` events fire in browser dev tools
+- [ ] Verify Google Search Console property
+- [ ] Update Privacy Policy to reflect GA4 data collection
+
+**Step 7 — New pages**
+- [ ] Create `/[locale]/about` page
+- [ ] Create `/[locale]/contact` page
+- [ ] Add "About" and "Contact" links to footer on all pages
+
+**Step 8 — Admin**
+- [ ] Add inline phone/address edit form in admin salon view
+- [ ] Update admin dashboard to show "Claimed" count (from `salon_owners` table)
+- [ ] Confirm admin email is excluded from GA4 analytics
+
+**Step 9 — Pre-launch gate (from MVP_SCOPE_LOCK.md)**
+- [ ] All WILL HAVE items verified in production
+- [ ] Manual QA of J-01 and J-02 journeys end-to-end in production
+- [ ] /pricing not linked in navigation (DEC-006 compliance)
+
+---
+
+### 27.6 Recommended Next Phase After Implementation Readiness
+
+**Immediate (enables MVP launch):** Steps 1–9 above. No new product decisions required.
+
+**After MVP launches (evidence-first per DEC-004):**
+1. Observe GA4 data for first 4 weeks
+2. Identify top-performing areas, categories, and locales from real traffic
+3. Use data to prioritize: owner claiming flow vs. geo search UI vs. SEO content
+4. File Change Requests only with evidence from production analytics
+
+**Do not begin before MVP launch:**
+- Full visual redesign (post-evidence)
+- Booking flow (post-evidence of contact conversion)
+- Owner self-service claim UI (post-evidence of owner interest)
+- Thessaloniki expansion (post-Athens validation)
+
+---
+
+*Section 27 added: 2026-07-09*
