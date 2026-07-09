@@ -82,6 +82,8 @@ implementation_status: N/A — gate document; must be fully checked before produ
 - [ ] `/api/salons/{id}/reviews` returns reviews with `source: "google"` field
 - [ ] Turnstile verification verified on `/api/auth/register` (send request without token; expect 400 or 422)
 - [ ] `GET /api/salons?city=Glyfada` still works (backwards compat check)
+- [ ] [BLOCKER] slowapi connected to Redis: confirm `app/main.py` Limiter includes `storage_uri="redis://redis:6379"` (T-033)
+- [ ] Rate limit survives restart: send 5 register requests, restart api container, 6th request blocked
 
 ---
 
@@ -145,6 +147,7 @@ implementation_status: N/A — gate document; must be fully checked before produ
 - [ ] GA4 script does NOT fire on pages where consent cookie is absent
 - [ ] `/uk/privacy`, `/en/privacy`, `/ru/privacy` also return 200
 - [ ] No GDPR-sensitive data (IP, exact location, email) is logged in plaintext in application logs
+- [ ] `/[locale]/privacy` mentions account deletion procedure: "email hello@lookla.gr to request account deletion within 30 days"
 
 ---
 
@@ -161,7 +164,7 @@ implementation_status: N/A — gate document; must be fully checked before produ
 
 ## Section 8 — SEO & Crawlability
 
-- [ ] [BLOCKER] `GET https://lookla.gr/robots.txt` returns 200 with Disallow rules for /admin, /api/, /dashboard
+- [ ] [BLOCKER] `GET https://lookla.gr/robots.txt` returns 200 with Disallow rules for /admin, /api/, /dashboard (T-036)
 - [ ] `<meta name="robots" content="noindex">` is NOT present on salon detail pages
 - [ ] `<title>` is set on salon detail pages (SSR metadata)
 - [ ] `<meta name="description">` is set on salon detail pages

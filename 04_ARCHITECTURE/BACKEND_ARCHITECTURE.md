@@ -98,19 +98,20 @@ backend/
     ├── schemas/
     │   └── *.py             # Pydantic v2 request/response schemas per domain
     ├── routers/
-    │   ├── salons.py        # GET /api/salons, /api/salons/{id}, /services, /reviews, /photos
-    │   ├── search.py        # GET /api/search (unified; Haversine geo)
+    │   ├── salons.py        # GET /api/salons, /api/salons/map, /api/salons/{id_or_slug}, /services, /reviews, /photos
+    │   │                    # INVARIANT: /map registered BEFORE /{id_or_slug} — see §13
+    │   ├── search.py        # GET /api/search [DEPRECATED — use /api/salons; kept for backwards compat]
     │   ├── auth.py          # POST register/login/logout/refresh/forgot/reset; Google OAuth
     │   ├── owner.py         # Owner dashboard: claim flow, salon management
     │   ├── professionals.py # GET /api/professionals (list + detail)
     │   ├── masters.py       # PATCH /api/masters/me; portfolio; availability
-    │   ├── bookings.py      # GET slots; POST/GET/PATCH bookings (backend-complete, not user-facing)
-    │   ├── chat.py          # Conversations, messages, availability requests (not user-facing)
-    │   ├── payments.py      # Stripe checkout/portal/webhook/subscription (not user-facing per DEC-006)
+    │   ├── bookings.py      # GET slots; POST/GET/PATCH bookings [NOT USER-FACING — DEC-015]
+    │   ├── chat.py          # Conversations, messages, availability requests [NOT USER-FACING]
+    │   ├── payments.py      # Stripe checkout/portal/webhook/subscription [NOT USER-FACING — DEC-006]
     │   ├── admin.py         # Stats, salon/user/professional management, reports, moderation
-    │   ├── categories.py    # GET /api/categories (category tree with i18n)
+    │   ├── categories.py    # GET /api/categories + GET /api/areas (add for DEC-010 — T-004)
     │   ├── media.py         # GET /api/media/photo/{id} (R2 lazy migration proxy)
-    │   └── reports.py       # POST /api/reports (user abuse reports; requires auth)
+    │   └── reports.py       # POST /api/reports [requires auth — deliberate, spam prevention]
     └── services/
         ├── translate.py     # OpenAI batch translation; bot-check; DB caching
         ├── email.py         # Resend wrappers: verify, reset, claim notification
@@ -397,6 +398,35 @@ Changes needed in the backend specifically for M-01. No new features — complia
 | Add `address_district`, `address_region` columns to salons | DEC-010 | DB migration | Medium |
 | Connect slowapi to Redis (rate limits survive restarts) | Audit §21 | `main.py` | Low |
 | Admin inline salon edit form | Audit §27 | `routers/admin.py` already exists | Low (API exists) |
+
+---
+
+## 13. Route Registration Invariants
+
+FastAPI processes routes in order of declaration within a router. Literal path segments and parameterized path segments can conflict when a literal looks like a valid parameter value.
+
+**Active conflict in salons.py:**
+
+```python
+# WRONG order — /map is treated as {id_or_slug}:
+@router.get("/{id_or_slug}")   # catches /map, /areas, /stats, etc.
+@router.get("/map")            # unreachable
+
+# CORRECT order — literal first:
+@router.get("/map")            # matches /api/salons/map exactly
+@router.get("/{id_or_slug}")   # catches everything else
+```
+
+**Rule:** Any literal sub-path of `/api/salons/` (e.g., `/map`, `/featured`, `/nearby`) MUST be registered in `salons.py` BEFORE the `/{id_or_slug}` parameterized route.
+
+**Affected routes today:** `/api/salons/map`
+
+**Verification:**
+```bash
+# Test: /api/salons/map should return map response, not 404 "Salon not found"
+curl https://lookla.gr/api/salons/map?area=glyfada
+# If response contains "Salon not found" → route ordering bug is active
+```
 
 ---
 
