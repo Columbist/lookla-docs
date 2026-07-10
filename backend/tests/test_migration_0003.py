@@ -1,10 +1,7 @@
 """
-T-003: address_district backfill — tests written BEFORE migration code.
-
-All tests are static (no DB connection). They verify:
-- mapping correctness and completeness
-- migration SQL safety (idempotency, no DDL, no overwrite)
+T-003: address_district backfill — static tests (no DB connection required).
 """
+import ast
 import importlib.util
 import inspect
 from pathlib import Path
@@ -24,21 +21,20 @@ def _load_migration():
     return mod
 
 
-# ── Mapping tests ─────────────────────────────────────────────────────────────
+# ── Runtime mapping tests ─────────────────────────────────────────────────────
 
 def test_mapping_file_exists():
-    assert MAPPING_FILE.exists(), "district_mapping.py must exist before migration"
+    assert MAPPING_FILE.exists()
 
 
 def test_mapping_covers_major_athens_districts():
     from app.data.district_mapping import CITY_TO_DISTRICT
-    required_districts = {
+    required = {
         "Glyfada", "Kifissia", "Marousi", "Piraeus",
         "Chalandri", "Nea Smyrni", "Kallithea",
         "Athens Center", "Peristeri",
     }
-    actual_districts = set(CITY_TO_DISTRICT.values())
-    missing = required_districts - actual_districts
+    missing = required - set(CITY_TO_DISTRICT.values())
     assert not missing, f"Mapping missing required Athens districts: {missing}"
 
 
@@ -55,6 +51,18 @@ def test_mapping_excludes_non_athens_cities():
     assert not overlap, f"Non-Athens cities must not be in mapping: {overlap}"
 
 
+def test_mapping_no_duplicate_keys():
+    """Detect duplicate dict keys via AST — runtime dict silently deduplicates."""
+    tree = ast.parse(MAPPING_FILE.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [ast.literal_eval(k) for k in node.keys if k is not None]
+            seen: set = set()
+            for key in keys:
+                assert key not in seen, f"Duplicate key in district_mapping.py: '{key}'"
+                seen.add(key)
+
+
 def test_city_to_district_function_known_city():
     from app.data.district_mapping import city_to_district
     assert city_to_district("Γλυφάδα") == "Glyfada"
@@ -69,7 +77,7 @@ def test_city_to_district_function_unknown_city():
     assert city_to_district("") is None
 
 
-# ── Migration safety tests ────────────────────────────────────────────────────
+# ── Migration file tests ───────────────────────────────────────────────────────
 
 def test_migration_file_exists():
     assert MIGRATION_FILE.exists()
@@ -81,6 +89,34 @@ def test_revision_chain():
     assert mod.down_revision == "0002"
 
 
+def test_migration_has_frozen_mapping():
+    """Migration must not import from app.data — must be self-contained.
+
+    Checks Python import AST nodes, not raw text, to avoid false positives
+    from comments that mention the module name.
+    """
+    tree = ast.parse(MIGRATION_FILE.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            assert not module.startswith("app.data"), (
+                f"Migration must not import from app.data: 'from {module} import ...'"
+            )
+
+
+def test_frozen_mapping_no_duplicate_keys():
+    """Frozen mapping inside migration must also be free of duplicate keys."""
+    tree = ast.parse(MIGRATION_FILE.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [ast.literal_eval(k) for k in node.keys if k is not None]
+            if len(keys) > 10:  # target the large mapping dict, not revision metadata
+                seen: set = set()
+                for key in keys:
+                    assert key not in seen, f"Duplicate key in frozen migration mapping: '{key}'"
+                    seen.add(key)
+
+
 def test_no_ddl_operations():
     src = inspect.getsource(_load_migration().upgrade)
     forbidden = ["add_column", "drop_column", "create_table", "drop_table",
@@ -90,21 +126,19 @@ def test_no_ddl_operations():
 
 
 def test_upgrade_is_idempotent_by_null_guard():
-    """upgrade() SQL must filter WHERE address_district IS NULL."""
     src = inspect.getsource(_load_migration().upgrade)
-    assert "IS NULL" in src, "Idempotency requires WHERE address_district IS NULL"
-
-
-def test_upgrade_does_not_overwrite_existing():
-    """Same check: IS NULL guard ensures existing values are preserved."""
-    src = inspect.getsource(_load_migration().upgrade)
-    # No unconditional UPDATE (would overwrite everything)
     assert "IS NULL" in src
 
 
-def test_downgrade_sets_to_null():
+def test_upgrade_does_not_overwrite_existing():
+    src = inspect.getsource(_load_migration().upgrade)
+    assert "IS NULL" in src
+
+
+def test_downgrade_is_explicitly_irreversible():
+    """downgrade() must raise RuntimeError — not silently clear data."""
     src = inspect.getsource(_load_migration().downgrade)
-    assert "NULL" in src
+    assert "raise RuntimeError" in src
 
 
 def test_only_one_head():

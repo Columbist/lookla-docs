@@ -69,8 +69,6 @@ CITY_TO_DISTRICT: dict[str, str] = {
     "νέο ψυχικό": "Neo Psychiko",
     "ψυχικό": "Psychiko",
     "φιλοθέη": "Filothei",
-    "κηφισιά": "Kifissia",
-    "αγία παρασκευή": "Agia Paraskevi",
     "μελίσσια": "Melissia",
     "νέα φιλαδέλφεια": "Nea Filadelfia",
 
