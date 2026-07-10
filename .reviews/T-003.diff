@@ -1,6 +1,6 @@
 diff --git a/backend/alembic/versions/0003_backfill_address_district.py b/backend/alembic/versions/0003_backfill_address_district.py
 new file mode 100644
-index 0000000..be2a6f0
+index 0000000..ccb4393
 --- /dev/null
 +++ b/backend/alembic/versions/0003_backfill_address_district.py
 @@ -0,0 +1,166 @@
@@ -32,7 +32,7 @@ index 0000000..be2a6f0
 +from alembic import op
 +from sqlalchemy import text
 +
-+log = logging.getLogger(__name__)
++log = logging.getLogger("alembic.runtime.migration")
 +
 +revision: str = "0003"
 +down_revision: Union[str, None] = "0002"
@@ -283,10 +283,10 @@ index 0000000..61396f8
 +    return CITY_TO_DISTRICT.get(city_name.lower().strip())
 diff --git a/backend/tests/test_migration_0003.py b/backend/tests/test_migration_0003.py
 new file mode 100644
-index 0000000..502382a
+index 0000000..9bfc026
 --- /dev/null
 +++ b/backend/tests/test_migration_0003.py
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,155 @@
 +"""
 +T-003: address_district backfill — static tests (no DB connection required).
 +"""
@@ -381,16 +381,22 @@ index 0000000..502382a
 +def test_migration_has_frozen_mapping():
 +    """Migration must not import from app.data — must be self-contained.
 +
-+    Checks Python import AST nodes, not raw text, to avoid false positives
-+    from comments that mention the module name.
++    Checks both ImportFrom and Import AST nodes to catch:
++      from app.data.district_mapping import X
++      import app.data.district_mapping
 +    """
 +    tree = ast.parse(MIGRATION_FILE.read_text())
 +    for node in ast.walk(tree):
 +        if isinstance(node, ast.ImportFrom):
 +            module = node.module or ""
 +            assert not module.startswith("app.data"), (
-+                f"Migration must not import from app.data: 'from {module} import ...'"
++                f"Migration must not use 'from {module} import ...'"
 +            )
++        if isinstance(node, ast.Import):
++            for alias in node.names:
++                assert not alias.name.startswith("app.data"), (
++                    f"Migration must not use 'import {alias.name}'"
++                )
 +
 +
 +def test_frozen_mapping_no_duplicate_keys():
