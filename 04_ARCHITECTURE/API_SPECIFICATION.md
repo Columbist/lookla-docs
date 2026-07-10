@@ -272,7 +272,11 @@ implementation_status: Documents current API + MVP-required additions
 
 ## Search
 
-### GET /api/search
+### GET /api/search ⚠️ DEPRECATED
+
+**Status:** Legacy — do not build new consumers against this endpoint.
+**Canonical MVP endpoint:** `GET /api/salons`
+**Deprecation task:** T-035 (add `Deprecation` header) → T-037 (removal after migration window)
 
 **Purpose:** Unified search (salons + professionals in future). Supports Haversine geo-distance filtering. Currently returns salons only.
 
@@ -282,14 +286,14 @@ implementation_status: Documents current API + MVP-required additions
 
 | Param | Type | Notes |
 |---|---|---|
-| `q` | string | Text query |
+| `q` | string | Text query. Uses PostgreSQL FTS (`to_tsvector('simple', unaccent(...))`) — different from `/api/salons` ILIKE. |
 | `lat`, `lng`, `radius` | float | Geo-distance filter (backend complete; no UI trigger in MVP per DEC-009) |
 | `category` | string | Category slug |
 
 **Notes:**
-- This endpoint uses a simpler category filter than `/api/salons` (name ILIKE vs keyword dict)
-- Not the primary search endpoint for MVP — Search page uses `/api/salons`
-- Geo params exist but frontend does not send them in MVP (tourists deprioritized per DEC-009)
+- Uses PostgreSQL FTS (`to_tsvector` / `plainto_tsquery` with `unaccent`). No GIN index exists (deferred to T-037).
+- `GET /api/salons` is the canonical MVP search endpoint (used by Search page, map, all frontend).
+- GIN index for this endpoint's FTS expression is blocked by `unaccent(text)` STABLE volatility and was deferred because this endpoint is deprecated. See `docs/.reviews/T-003a-review.md`.
 
 **Response 200:** Same shape as `/api/salons`.
 

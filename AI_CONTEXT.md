@@ -243,7 +243,7 @@ All engineering execution documents were approved 2026-07-09. Development can be
 - [ ] `/pricing` not in navigation (DEC-006 compliance)
 - [ ] Manual QA of J-01 and J-02 journeys in production
 - [ ] PageSpeed Insights on salon detail page: LCP < 2.5s
-- [ ] Verify GIN index on salons FTS tsvector
+- [x] Verify GIN index on salons FTS tsvector — Deferred to T-037 (deprecated endpoint, no M-01 blocker)
 
 ---
 

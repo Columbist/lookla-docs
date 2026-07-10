@@ -443,6 +443,14 @@ Per `06_ENGINEERING/AUDIT.md` Section 20:
 - `unaccent` PostgreSQL extension dependency
 - `db/init.sql` (no in-place edits; use migration scripts)
 
+### Search architecture (canonical endpoint)
+
+`GET /api/salons` is the canonical MVP search endpoint. It uses ILIKE for text matching.
+
+`GET /api/search` is **deprecated** (legacy, kept for backwards compat). It uses PostgreSQL FTS (`to_tsvector('simple', unaccent(...)) @@ plainto_tsquery(...)`). No GIN index exists on this expression. GIN index creation is blocked by `unaccent(text)` STABLE volatility and is deferred to T-037 (post-MVP, search consolidation).
+
+Do not add new consumers of `GET /api/search`. T-035 adds the `Deprecation` header; T-037 removes the endpoint after a migration window.
+
 ---
 
 *Last updated: 2026-07-09*

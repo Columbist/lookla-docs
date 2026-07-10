@@ -118,25 +118,19 @@ CITY_TO_DISTRICT = {
 ---
 
 ### T-003a — Verify GIN index on FTS tsvector
-**Priority:** P0 | **Owner:** DB | **Estimate:** 0.5h | **Epic:** EPIC-01
-**Dependencies:** T-001
+**Priority:** ~~P0~~ **DEFERRED** | **Owner:** DB | **Epic:** EPIC-01
+**Status:** ✅ Verified — Deferred (2026-07-10)
 
-**Verification query:**
-```sql
-SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'salons' AND indexdef LIKE '%GIN%';
-```
+**Findings:**
+- No GIN index exists on `salons` (all 9 indexes are btree).
+- Direct expression index is blocked: `unaccent(text)` is STABLE, not IMMUTABLE. PostgreSQL rejects the index with `ERROR: functions in index expression must be marked IMMUTABLE`.
+- The only endpoint using this FTS expression is `GET /api/search`.
+- `GET /api/search` is a legacy/deprecated endpoint. The MVP frontend uses `GET /api/salons` (ILIKE-based).
+- Creating a GIN index for a deprecated endpoint is technical debt, not MVP value.
+- No database change is required for M-01.
 
-If absent:
-```sql
-CREATE INDEX idx_salons_fts ON salons
-  USING GIN (to_tsvector('simple', unaccent(
-    coalesce(name,'') || ' ' || coalesce(name_el,'') || ' ' || coalesce(address_city,'')
-  )));
-```
-
-**Acceptance Criteria:**
-- [ ] GIN index exists on `salons` table
-- [ ] `EXPLAIN ANALYZE SELECT ... WHERE to_tsvector(...) @@ plainto_tsquery(...)` shows "Bitmap Index Scan on idx_salons_fts"
+**Decision:** GIN index deferred to T-037 (search consolidation, post-MVP).
+See `docs/.reviews/T-003a-review.md` for full investigation results and alternatives considered.
 
 ---
 
@@ -903,7 +897,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-001 Alembic setup | P0 | BE | 3 | EPIC-01 | — |
 | T-002 address_district column | P0 | DB | 1 | EPIC-01 | T-001 |
 | T-003 Backfill address_district | P0 | BE | 2 | EPIC-01 | T-002 |
-| T-003a Verify GIN index | P0 | DB | 0.5 | EPIC-01 | T-001 |
+| T-003a Verify GIN index | ~~P0~~ DEFERRED | DB | — | EPIC-01 | — |
 | T-004 GET /api/areas endpoint | P0 | BE | 2 | EPIC-02 | T-003 |
 | T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-003 |
 | T-006 CITY_SYNONYMS district update | P1 | BE | 1 | EPIC-02 | T-003 |
@@ -937,7 +931,28 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-034 Search analytics events | P1 | FE | 1 | EPIC-04 | T-014 |
 | T-035 Deprecate GET /api/search | P2 | BE | 0.5 | EPIC-09 | — |
 | T-036 Create public/robots.txt | P0 | FE | 0.25 | EPIC-09 | — |
-| **Total** | | | **~40.25h** | | |
+| T-037 Unify salon search (post-MVP) | post-MVP | BE | 4 | EPIC-10 | T-035 |
+| **Total** | | | **~40.25h (M-01)** | | |
+
+---
+
+### T-037 — Unify salon search implementation *(post-MVP)*
+**Priority:** post-MVP | **Owner:** BE | **Estimate:** 4h | **Epic:** EPIC-10
+**Dependencies:** T-035
+
+**Scope:**
+- Select one canonical search endpoint (expected: `/api/salons` with improved FTS).
+- Remove or migrate all consumers of `GET /api/search` after the deprecation window (T-035).
+- Define required search behaviour for `/api/salons` (currently ILIKE).
+- Benchmark: ILIKE vs `pg_trgm` vs PostgreSQL FTS.
+- If FTS is selected: use a dedicated text search configuration with the `unaccent` dictionary, or a trigger-maintained `tsvector` column. Do NOT use an `IMMUTABLE` wrapper over `unaccent()`.
+- Create a GIN index only for the canonical production query.
+- Remove `GET /api/search` after migration window.
+
+**Trigger conditions (when to start T-037):**
+- T-035 (Deprecation header) has been live for ≥ 30 days with no consumer traffic.
+- OR search latency under real traffic exceeds an agreed threshold.
+- OR a third search endpoint is proposed (scope freeze signal).
 
 ---
 
@@ -954,8 +969,9 @@ T-024 → T-011             [API owner_claimed field → badge fix]
 T-012                     [review labels — independent]
 T-026                     [backup cron — independent]
 T-030                     [critical tests — before changing those functions]
-T-003a                    [GIN index verify — independent DB check]
 ```
+
+*T-003a removed from P0 critical path. Status: Verified — Deferred. See T-037 (post-MVP).*
 
 **All P0 tasks complete → Pre-launch gate → Manual QA J-01/J-02/J-03 → M-01 Launch**
 
