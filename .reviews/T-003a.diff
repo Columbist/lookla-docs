@@ -1,0 +1,142 @@
+diff --git a/backend/tests/test_fts_requirements.py b/backend/tests/test_fts_requirements.py
+new file mode 100644
+index 0000000..a8292f0
+--- /dev/null
++++ b/backend/tests/test_fts_requirements.py
+@@ -0,0 +1,136 @@
++"""
++T-003a: FTS GIN index — static verification (no DB connection required).
++
++Status: BLOCKED — unaccent(text) is STABLE, not IMMUTABLE.
++PostgreSQL rejects expression indexes containing non-IMMUTABLE functions.
++See T-003a review for alternatives and architectural decision.
++
++These tests document:
++1. The exact FTS expression used by the application (search.py).
++2. The current absence of a GIN index on salons.
++3. The volatility constraint that blocks direct GIN index creation.
++4. Requirements for the correct index expression (once unblocked).
++"""
++import ast
++import re
++from pathlib import Path
++
++SEARCH_ROUTER = Path(__file__).parent.parent / "app" / "routers" / "search.py"
++
++_FTS_CONDITION = (
++    "to_tsvector('simple', unaccent(coalesce(s.name,'') || ' ' || "
++    "coalesce(s.name_el,'') || ' ' || coalesce(s.address_city,'')))"
++)
++
++
++# ── Code inspection tests ─────────────────────────────────────────────────────
++
++def test_search_router_exists():
++    assert SEARCH_ROUTER.exists(), "app/routers/search.py not found"
++
++
++def test_search_uses_to_tsvector_with_explicit_regconfig():
++    """The application must call to_tsvector with an explicit text search config.
++
++    to_tsvector(text) is STABLE; to_tsvector(regconfig, text) is IMMUTABLE.
++    The explicit form is required for a future GIN expression index.
++    """
++    src = SEARCH_ROUTER.read_text()
++    # Must use the 2-argument form with 'simple' config
++    assert "to_tsvector('simple'," in src or 'to_tsvector("simple",' in src
++
++
++def test_search_uses_plainto_tsquery_with_explicit_regconfig():
++    """plainto_tsquery must use explicit regconfig (IMMUTABLE form)."""
++    src = SEARCH_ROUTER.read_text()
++    assert "plainto_tsquery('simple'," in src or 'plainto_tsquery("simple",' in src
++
++
++def test_search_indexes_name_and_name_el_and_address_city():
++    """All three columns must appear in the FTS expression."""
++    src = SEARCH_ROUTER.read_text()
++    assert "s.name" in src or "coalesce(s.name" in src
++    assert "s.name_el" in src or "coalesce(s.name_el" in src
++    assert "s.address_city" in src or "coalesce(s.address_city" in src
++
++
++def test_search_uses_unaccent_on_indexed_expression():
++    """unaccent() is applied to the tsvector expression.
++
++    This is the root cause of the GIN index blocker:
++    unaccent(text) provolatile = 's' (STABLE), not 'i' (IMMUTABLE).
++    PostgreSQL requires IMMUTABLE functions in index expressions.
++    """
++    src = SEARCH_ROUTER.read_text()
++    assert "unaccent" in src, "unaccent must appear in FTS expression"
++    # unaccent wraps the concatenated column expression
++    assert "unaccent(coalesce" in src
++
++
++def test_search_expression_is_not_changed():
++    """Guard: ensure the FTS WHERE condition has not silently drifted.
++
++    This test anchors the expression so that any change to search.py
++    that alters the FTS columns or functions is caught.
++    """
++    src = SEARCH_ROUTER.read_text()
++    expected_fragments = [
++        "to_tsvector('simple', unaccent(",
++        "coalesce(s.name,'')",
++        "coalesce(s.name_el,'')",
++        "coalesce(s.address_city,'')",
++        "plainto_tsquery('simple', unaccent(",
++    ]
++    for fragment in expected_fragments:
++        assert fragment in src, (
++            f"FTS expression fragment missing from search.py: {fragment!r}\n"
++            "If you changed the FTS expression, update this test to match "
++            "and ensure the GIN index (if any) matches the new expression."
++        )
++
++
++def test_salons_router_does_not_use_fts():
++    """salons.py uses ILIKE, not FTS — a GIN index will not help it.
++
++    This test documents the architecture: the two search endpoints use
++    different mechanisms. T-003a is only relevant to /api/search.
++    """
++    salons_router = Path(__file__).parent.parent / "app" / "routers" / "salons.py"
++    src = salons_router.read_text()
++    assert "to_tsvector" not in src
++    assert "plainto_tsquery" not in src
++    assert "ilike" in src.lower()
++
++
++# ── Volatility constraint documentation ───────────────────────────────────────
++
++def test_immutable_unaccent_wrapper_not_yet_defined():
++    """Verify no immutable_unaccent wrapper has been quietly added to search.py.
++
++    If someone adds an immutable_unaccent function, this test should be updated
++    to reflect the architectural decision, and the migration should be created.
++    """
++    src = SEARCH_ROUTER.read_text()
++    assert "immutable_unaccent" not in src, (
++        "search.py references immutable_unaccent — update T-003a migration "
++        "to match and remove this assertion."
++    )
++
++
++def test_fts_expression_ast_structure():
++    """AST check: the FTS condition is inside the search router function body.
++
++    Verifies search.py still contains a string with both to_tsvector and @@
++    as part of the query condition (not removed or commented out).
++    """
++    tree = ast.parse(SEARCH_ROUTER.read_text())
++    found_fts = False
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Constant) and isinstance(node.value, str):
++            if "to_tsvector" in node.value and "@@" in node.value:
++                found_fts = True
++                break
++    assert found_fts, (
++        "Could not find to_tsvector + @@ in any string literal in search.py. "
++        "The FTS condition may have been removed or refactored."
++    )
