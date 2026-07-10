@@ -38,22 +38,34 @@ def test_upgrade_adds_address_district():
     assert "add_column" in src
 
 
-def test_upgrade_creates_index():
+def test_upgrade_creates_index_with_convention_name():
     src = inspect.getsource(_load_migration().upgrade)
-    assert "idx_salons_address_district" in src
+    # ix_ prefix follows SQLAlchemy naming convention (not idx_)
+    assert "ix_salons_address_district" in src
     assert "create_index" in src
+
+
+def test_index_is_not_unique():
+    src = inspect.getsource(_load_migration().upgrade)
+    assert "unique=False" in src
+
+
+def test_column_nullable():
+    from app.models.salon import Salon
+    col = Salon.__table__.columns.get("address_district")
+    assert col is not None
+    # Nullable until T-003 backfill populates existing rows
+    assert col.nullable is True
 
 
 def test_downgrade_drops_index_before_column():
     src = inspect.getsource(_load_migration().downgrade)
     assert "drop_index" in src
     assert "drop_column" in src
-    # Index must be dropped before column (index depends on column)
     assert src.index("drop_index") < src.index("drop_column")
 
 
 def test_upgrade_no_autogenerate_drops():
-    """Migration must not drop any tables (safe for DB with untracked tables)."""
     src = inspect.getsource(_load_migration().upgrade)
     assert "drop_table" not in src
     assert "drop_column" not in src
@@ -70,4 +82,3 @@ def test_address_district_in_salon_model():
     col = Salon.__table__.columns.get("address_district")
     assert col is not None, "address_district column missing from Salon ORM model"
     assert str(col.type) == "VARCHAR(120)"
-    assert col.nullable is True

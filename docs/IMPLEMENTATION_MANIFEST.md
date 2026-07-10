@@ -215,6 +215,24 @@ If a new requirement is identified during implementation: stop, file it as a not
 ### No architecture changes without RFC
 If the implementation reveals a problem with the architecture (wrong abstraction, missing field, wrong endpoint design): create an RFC in `07_RFC/`, get approval, then change. Do not "fix it" silently.
 
+### Schema migrations and data migrations are separate commits
+
+Never combine a schema change (ADD COLUMN, CREATE INDEX) with a data backfill
+in the same migration file. One migration = one concern.
+
+```
+# Correct:
+0002_add_address_district.py   ← schema only (ADD COLUMN, CREATE INDEX)
+0003_backfill_address_district.py  ← data only (UPDATE salons SET ...)
+
+# Wrong:
+0002_add_and_backfill_address_district.py  ← both in one file
+```
+
+Rationale: schema migrations are fast and safe to run in transactions; data
+migrations on large tables can be slow or lock-heavy and may need to run
+outside a transaction. Mixing them removes that flexibility.
+
 ### Documentation updates follow code — never lead
 Update `API_SPECIFICATION.md`, `DATABASE_SCHEMA.md`, or page specs only after the code change is complete and verified. Pre-emptive documentation changes create drift.
 
