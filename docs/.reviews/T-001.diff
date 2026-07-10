@@ -1,0 +1,281 @@
+diff --git a/backend/alembic.ini b/backend/alembic.ini
+new file mode 100644
+index 0000000..4f379fe
+--- /dev/null
++++ b/backend/alembic.ini
+@@ -0,0 +1,39 @@
++[alembic]
++script_location = alembic
++prepend_sys_path = .
++# DB URL is injected from app.core.config.Settings — sqlalchemy.url is intentionally absent here
++
++# Logging
++[loggers]
++keys = root,sqlalchemy,alembic
++
++[handlers]
++keys = console
++
++[formatters]
++keys = generic
++
++[logger_root]
++level = WARN
++handlers = console
++qualname =
++
++[logger_sqlalchemy]
++level = WARN
++handlers =
++qualname = sqlalchemy.engine
++
++[logger_alembic]
++level = INFO
++handlers =
++qualname = alembic
++
++[handler_console]
++class = StreamHandler
++args = (sys.stderr,)
++level = NOTSET
++formatter = generic
++
++[formatter_generic]
++format = %(levelname)-5.5s [%(name)s] %(message)s
++datefmt = %H:%M:%S
+diff --git a/backend/alembic/env.py b/backend/alembic/env.py
+new file mode 100644
+index 0000000..a67b2bb
+--- /dev/null
++++ b/backend/alembic/env.py
+@@ -0,0 +1,59 @@
++from logging.config import fileConfig
++from sqlalchemy import engine_from_config, pool
++from alembic import context
++
++# Single import registers all ORM models with Base.metadata.
++# Add new model modules to app/models/__init__.py — not here.
++import app.models  # noqa: F401
++
++from app.core.database import Base
++from app.core.config import get_settings
++
++config = context.config
++settings = get_settings()
++
++if config.config_file_name is not None:
++    fileConfig(config.config_file_name)
++
++target_metadata = Base.metadata
++
++
++def run_migrations_offline() -> None:
++    context.configure(
++        url=settings.database_url,
++        target_metadata=target_metadata,
++        literal_binds=True,
++        dialect_opts={"paramstyle": "named"},
++        compare_type=True,
++        compare_server_default=True,
++        render_as_batch=False,
++    )
++    with context.begin_transaction():
++        context.run_migrations()
++
++
++def run_migrations_online() -> None:
++    configuration = config.get_section(config.config_ini_section, {})
++    configuration["sqlalchemy.url"] = settings.database_url
++
++    connectable = engine_from_config(
++        configuration,
++        prefix="sqlalchemy.",
++        poolclass=pool.NullPool,
++    )
++    with connectable.connect() as connection:
++        context.configure(
++            connection=connection,
++            target_metadata=target_metadata,
++            compare_type=True,
++            compare_server_default=True,
++            render_as_batch=False,
++        )
++        with context.begin_transaction():
++            context.run_migrations()
++
++
++if context.is_offline_mode():
++    run_migrations_offline()
++else:
++    run_migrations_online()
+diff --git a/backend/alembic/versions/0001_baseline.py b/backend/alembic/versions/0001_baseline.py
+new file mode 100644
+index 0000000..3f697f1
+--- /dev/null
++++ b/backend/alembic/versions/0001_baseline.py
+@@ -0,0 +1,35 @@
++"""baseline
++
++Revision ID: 0001
++Revises:
++Create Date: 2026-07-09
++
++This is an intentionally empty baseline revision for an existing production
++database. The schema already exists; this revision lets Alembic track future
++migrations without trying to create or drop anything.
++
++Workflow:
++  # Run once on each environment (production, staging, local):
++  alembic stamp head
++  alembic current  # should print: 0001 (head)
++
++  # Only after stamping, create new revisions:
++  alembic revision --autogenerate -m "add address_district column"
++"""
++from typing import Sequence, Union
++from alembic import op  # noqa: F401
++import sqlalchemy as sa  # noqa: F401
++
++revision: str = "0001"
++down_revision: Union[str, None] = None
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    pass
++
++
++def downgrade() -> None:
++    """Intentionally unsupported — baseline cannot be rolled back."""
++    pass
+diff --git a/backend/app/models/__init__.py b/backend/app/models/__init__.py
+index e69de29..45c7780 100644
+--- a/backend/app/models/__init__.py
++++ b/backend/app/models/__init__.py
+@@ -0,0 +1,17 @@
++from app.models.salon import (
++    Salon, SalonHour, Photo, Service, ServiceCategory,
++    SalonCategory, Review, SocialLink, Staff,
++)
++from app.models.user import User, EmailVerification, PasswordReset, RefreshToken
++from app.models.professional import (
++    Professional, ProfessionalPortfolio,
++    ProfessionalAvailability, ProfessionalSocialLink,
++)
++
++__all__ = [
++    "Salon", "SalonHour", "Photo", "Service", "ServiceCategory",
++    "SalonCategory", "Review", "SocialLink", "Staff",
++    "User", "EmailVerification", "PasswordReset", "RefreshToken",
++    "Professional", "ProfessionalPortfolio",
++    "ProfessionalAvailability", "ProfessionalSocialLink",
++]
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 5822d26..6479da6 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -35,3 +35,6 @@ python-dotenv==1.0.1
+ slowapi==0.1.9
+ stripe==11.1.0
+ openai==1.86.0
++
++# Testing
++pytest==8.3.4
+diff --git a/backend/tests/__init__.py b/backend/tests/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/tests/test_alembic_baseline.py b/backend/tests/test_alembic_baseline.py
+new file mode 100644
+index 0000000..1966e9d
+--- /dev/null
++++ b/backend/tests/test_alembic_baseline.py
+@@ -0,0 +1,88 @@
++"""
++T-001: Alembic baseline — static validation (no DB connection required).
++
++All tests either inspect file structure or import app code that doesn't
++need a live Postgres instance.
++"""
++import importlib.util
++import inspect
++from pathlib import Path
++
++MIGRATION_FILE = Path(__file__).parent.parent / "alembic" / "versions" / "0001_baseline.py"
++ENV_FILE = Path(__file__).parent.parent / "alembic" / "env.py"
++
++
++def _load_migration():
++    spec = importlib.util.spec_from_file_location("baseline_migration", MIGRATION_FILE)
++    assert spec is not None, f"Could not create spec from {MIGRATION_FILE}"
++    assert spec.loader is not None, "spec.loader is None — file may be unreadable"
++    mod = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(mod)
++    return mod
++
++
++def test_baseline_file_exists():
++    assert MIGRATION_FILE.exists(), f"Migration file not found: {MIGRATION_FILE}"
++
++
++def test_baseline_revision_importable():
++    assert _load_migration() is not None
++
++
++def test_baseline_revision_id():
++    assert _load_migration().revision == "0001"
++
++
++def test_baseline_has_no_parent():
++    assert _load_migration().down_revision is None
++
++
++def test_baseline_upgrade_is_noop():
++    src = inspect.getsource(_load_migration().upgrade)
++    assert "op." not in src, "Baseline upgrade() must not call any op.* functions"
++
++
++def test_baseline_downgrade_is_noop():
++    src = inspect.getsource(_load_migration().downgrade)
++    assert "op." not in src, "Baseline downgrade() must not call any op.* functions"
++
++
++def test_all_models_registered_in_metadata():
++    """app/models/__init__.py must register all tables in Base.metadata."""
++    import app.models  # noqa: F401
++    from app.core.database import Base
++
++    tables = set(Base.metadata.tables.keys())
++    expected = {
++        "salons", "salon_hours", "photos", "services", "service_categories",
++        "salon_categories", "reviews", "social_links", "staff",
++        "users", "email_verifications", "password_resets", "refresh_tokens",
++        "professionals", "professional_portfolio",
++        "professional_availability", "professional_social_links",
++    }
++    missing = expected - tables
++    assert not missing, f"Tables missing from Base.metadata: {missing}"
++
++
++def test_settings_has_database_url_property():
++    """Settings.database_url must be a @property, not a hardcoded field."""
++    from app.core.config import Settings
++    assert isinstance(Settings.database_url, property)
++
++
++def test_env_no_hardcoded_database_url():
++    """env.py must not contain a hardcoded connection string."""
++    src = ENV_FILE.read_text()
++    assert "postgresql://" not in src
++    assert "postgresql+psycopg2://" not in src
++
++
++def test_only_one_head():
++    """Migration graph must have exactly one head to prevent branch conflicts."""
++    from alembic.config import Config
++    from alembic.script import ScriptDirectory
++
++    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
++    script = ScriptDirectory.from_config(cfg)
++    heads = script.get_heads()
++    assert len(heads) == 1, f"Expected 1 head, got {len(heads)}: {heads}"
