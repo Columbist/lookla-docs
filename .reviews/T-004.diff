@@ -1,0 +1,903 @@
+diff --git a/backend/app/data/area_metadata.py b/backend/app/data/area_metadata.py
+new file mode 100644
+index 0000000..f6e6930
+--- /dev/null
++++ b/backend/app/data/area_metadata.py
+@@ -0,0 +1,572 @@
++"""
++Athens metro area presentation metadata.
++
++Keyed by the canonical address_district value stored by migration 0003.
++Provides stable slugs, localized names, and geo-classification.
++
++Rules:
++- Keys are the exact canonical values in salons.address_district.
++- Slugs are lowercase, hyphen-separated ASCII, stable across deploys.
++- Translations are explicit — no dynamic generation.
++- region/city values come from here, not from unreliable DB address_region.
++- Do not import from migration 0003 (immutable historical artifact).
++- Do not call translation or geocoding services.
++
++Coverage:
++- 46 districts with active salons (as of T-003 backfill, 2026-07-10)
++- 12 additional districts from the address normalization mapping with 0
++  active salons currently — included for future-proofing.
++"""
++
++from typing import TypedDict
++
++
++class AreaMeta(TypedDict):
++    slug: str
++    name_el: str
++    name_en: str
++    name_ru: str
++    name_uk: str
++    region: str
++    city: str
++
++
++AREA_METADATA: dict[str, AreaMeta] = {
++    # ── Central Athens ────────────────────────────────────────────────────────
++    "Athens Center": {
++        "slug": "athens-center",
++        "name_el": "Αθήνα",
++        "name_en": "Athens Center",
++        "name_ru": "Центр Афин",
++        "name_uk": "Центр Афін",
++        "region": "attica",
++        "city": "athens",
++    },
++
++    # ── South Athens (coastal) ────────────────────────────────────────────────
++    "Glyfada": {
++        "slug": "glyfada",
++        "name_el": "Γλυφάδα",
++        "name_en": "Glyfada",
++        "name_ru": "Глифада",
++        "name_uk": "Гліфада",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Palaio Faliro": {
++        "slug": "palaio-faliro",
++        "name_el": "Παλαιό Φάληρο",
++        "name_en": "Palaio Faliro",
++        "name_ru": "Палео-Фалиро",
++        "name_uk": "Палео-Фаліро",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Nea Smyrni": {
++        "slug": "nea-smyrni",
++        "name_el": "Νέα Σμύρνη",
++        "name_en": "Nea Smyrni",
++        "name_ru": "Неа-Смирни",
++        "name_uk": "Неа-Смирні",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Alimos": {
++        "slug": "alimos",
++        "name_el": "Άλιμος",
++        "name_en": "Alimos",
++        "name_ru": "Алимос",
++        "name_uk": "Алімос",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Ilioupoli": {
++        "slug": "ilioupoli",
++        "name_el": "Ηλιούπολη",
++        "name_en": "Ilioupoli",
++        "name_ru": "Илиуполи",
++        "name_uk": "Іліуполі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Agios Dimitrios": {
++        "slug": "agios-dimitrios",
++        "name_el": "Άγιος Δημήτριος",
++        "name_en": "Agios Dimitrios",
++        "name_ru": "Агиос-Димитриос",
++        "name_uk": "Агіос-Димітріос",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Argyroupoli": {
++        "slug": "argyroupoli",
++        "name_el": "Αργυρούπολη",
++        "name_en": "Argyroupoli",
++        "name_ru": "Аргируполи",
++        "name_uk": "Аргіруполі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Elliniko": {
++        "slug": "elliniko",
++        "name_el": "Ελληνικό",
++        "name_en": "Elliniko",
++        "name_ru": "Эллинико",
++        "name_uk": "Еллініко",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Voula": {
++        "slug": "voula",
++        "name_el": "Βούλα",
++        "name_en": "Voula",
++        "name_ru": "Вула",
++        "name_uk": "Вула",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Vouliagmeni": {
++        "slug": "vouliagmeni",
++        "name_el": "Βουλιαγμένη",
++        "name_en": "Vouliagmeni",
++        "name_ru": "Вулиагмени",
++        "name_uk": "Вуліагмені",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Vari": {
++        "slug": "vari",
++        "name_el": "Βάρη",
++        "name_en": "Vari",
++        "name_ru": "Вари",
++        "name_uk": "Варі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Kallithea": {
++        "slug": "kallithea",
++        "name_el": "Καλλιθέα",
++        "name_en": "Kallithea",
++        "name_ru": "Каллифея",
++        "name_uk": "Каллітея",
++        "region": "attica",
++        "city": "athens",
++    },
++
++    # ── Piraeus & port area ───────────────────────────────────────────────────
++    "Piraeus": {
++        "slug": "piraeus",
++        "name_el": "Πειραιάς",
++        "name_en": "Piraeus",
++        "name_ru": "Пирей",
++        "name_uk": "Пірей",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Keratsini": {
++        "slug": "keratsini",
++        "name_el": "Κερατσίνι",
++        "name_en": "Keratsini",
++        "name_ru": "Керацини",
++        "name_uk": "Кератсіні",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Nikaia": {
++        "slug": "nikaia",
++        "name_el": "Νίκαια",
++        "name_en": "Nikaia",
++        "name_ru": "Никея",
++        "name_uk": "Нікея",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Moschato": {
++        "slug": "moschato",
++        "name_el": "Μοσχάτο",
++        "name_en": "Moschato",
++        "name_ru": "Москато",
++        "name_uk": "Москато",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Korydallos": {
++        "slug": "korydallos",
++        "name_el": "Κορυδαλλός",
++        "name_en": "Korydallos",
++        "name_ru": "Корридалос",
++        "name_uk": "Корідаллос",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Perama": {
++        "slug": "perama",
++        "name_el": "Πέραμα",
++        "name_en": "Perama",
++        "name_ru": "Перама",
++        "name_uk": "Перама",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Tavros": {
++        "slug": "tavros",
++        "name_el": "Ταύρος",
++        "name_en": "Tavros",
++        "name_ru": "Таврос",
++        "name_uk": "Таврос",
++        "region": "attica",
++        "city": "piraeus",
++    },
++    "Drapetsona": {
++        "slug": "drapetsona",
++        "name_el": "Δραπετσώνα",
++        "name_en": "Drapetsona",
++        "name_ru": "Драпецона",
++        "name_uk": "Драпецона",
++        "region": "attica",
++        "city": "piraeus",
++    },
++
++    # ── East Athens ───────────────────────────────────────────────────────────
++    "Vyronas": {
++        "slug": "vyronas",
++        "name_el": "Βύρωνας",
++        "name_en": "Vyronas",
++        "name_ru": "Вирон",
++        "name_uk": "Вірон",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Zografou": {
++        "slug": "zografou",
++        "name_el": "Ζωγράφου",
++        "name_en": "Zografou",
++        "name_ru": "Зографу",
++        "name_uk": "Зографу",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Kaisariani": {
++        "slug": "kaisariani",
++        "name_el": "Καισαριανή",
++        "name_en": "Kaisariani",
++        "name_ru": "Кесарьяни",
++        "name_uk": "Кесар'яні",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Dafni": {
++        "slug": "dafni",
++        "name_el": "Δάφνη",
++        "name_en": "Dafni",
++        "name_ru": "Дафни",
++        "name_uk": "Дафні",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Agia Paraskevi": {
++        "slug": "agia-paraskevi",
++        "name_el": "Αγία Παρασκευή",
++        "name_en": "Agia Paraskevi",
++        "name_ru": "Агия-Параскеви",
++        "name_uk": "Агія-Параскеві",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Cholargos": {
++        "slug": "cholargos",
++        "name_el": "Χολαργός",
++        "name_en": "Cholargos",
++        "name_ru": "Холаргос",
++        "name_uk": "Холаргос",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Chalandri": {
++        "slug": "chalandri",
++        "name_el": "Χαλάνδρι",
++        "name_en": "Chalandri",
++        "name_ru": "Халандри",
++        "name_uk": "Халандрі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Pallini": {
++        "slug": "pallini",
++        "name_el": "Παλλήνη",
++        "name_en": "Pallini",
++        "name_ru": "Паллини",
++        "name_uk": "Палліні",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Gerakas": {
++        "slug": "gerakas",
++        "name_el": "Γέρακας",
++        "name_en": "Gerakas",
++        "name_ru": "Геракас",
++        "name_uk": "Геракас",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Anthousa": {
++        "slug": "anthousa",
++        "name_el": "Ανθούσα",
++        "name_en": "Anthousa",
++        "name_ru": "Антуса",
++        "name_uk": "Антуса",
++        "region": "attica",
++        "city": "athens",
++    },
++
++    # ── North Athens ──────────────────────────────────────────────────────────
++    "Marousi": {
++        "slug": "marousi",
++        "name_el": "Μαρούσι",
++        "name_en": "Marousi",
++        "name_ru": "Маруси",
++        "name_uk": "Маруси",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Kifissia": {
++        "slug": "kifissia",
++        "name_el": "Κηφισιά",
++        "name_en": "Kifissia",
++        "name_ru": "Кифисья",
++        "name_uk": "Кіфісья",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Nea Erythraia": {
++        "slug": "nea-erythraia",
++        "name_el": "Νέα Ερυθραία",
++        "name_en": "Nea Erythraia",
++        "name_ru": "Неа-Эрифрея",
++        "name_uk": "Неа-Еріфрея",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Ekali": {
++        "slug": "ekali",
++        "name_el": "Εκάλη",
++        "name_en": "Ekali",
++        "name_ru": "Экали",
++        "name_uk": "Екалі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Metamorfosi": {
++        "slug": "metamorfosi",
++        "name_el": "Μεταμόρφωση",
++        "name_en": "Metamorfosi",
++        "name_ru": "Метаморфосис",
++        "name_uk": "Метаморфосіс",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Nea Ionia": {
++        "slug": "nea-ionia",
++        "name_el": "Νέα Ιωνία",
++        "name_en": "Nea Ionia",
++        "name_ru": "Неа-Иония",
++        "name_uk": "Неа-Іонія",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Galatsi": {
++        "slug": "galatsi",
++        "name_el": "Γαλάτσι",
++        "name_en": "Galatsi",
++        "name_ru": "Галатси",
++        "name_uk": "Галаці",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Vrilissia": {
++        "slug": "vrilissia",
++        "name_el": "Βριλήσσια",
++        "name_en": "Vrilissia",
++        "name_ru": "Врилилия",
++        "name_uk": "Вріліссія",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Penteli": {
++        "slug": "penteli",
++        "name_el": "Πεντέλη",
++        "name_en": "Penteli",
++        "name_ru": "Пентели",
++        "name_uk": "Пентелі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Neo Psychiko": {
++        "slug": "neo-psychiko",
++        "name_el": "Νέο Ψυχικό",
++        "name_en": "Neo Psychiko",
++        "name_ru": "Нео-Психико",
++        "name_uk": "Нео-Психіко",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Psychiko": {
++        "slug": "psychiko",
++        "name_el": "Ψυχικό",
++        "name_en": "Psychiko",
++        "name_ru": "Психико",
++        "name_uk": "Психіко",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Filothei": {
++        "slug": "filothei",
++        "name_el": "Φιλοθέη",
++        "name_en": "Filothei",
++        "name_ru": "Филотеи",
++        "name_uk": "Філотеї",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Melissia": {
++        "slug": "melissia",
++        "name_el": "Μελίσσια",
++        "name_en": "Melissia",
++        "name_ru": "Мелиссия",
++        "name_uk": "Меліссія",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Nea Filadelfia": {
++        "slug": "nea-filadelfia",
++        "name_el": "Νέα Φιλαδέλφεια",
++        "name_en": "Nea Filadelfia",
++        "name_ru": "Неа-Филадельфия",
++        "name_uk": "Неа-Філадельфія",
++        "region": "attica",
++        "city": "athens",
++    },
++
++    # ── West Athens ───────────────────────────────────────────────────────────
++    "Peristeri": {
++        "slug": "peristeri",
++        "name_el": "Περιστέρι",
++        "name_en": "Peristeri",
++        "name_ru": "Перистери",
++        "name_uk": "Перістері",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Ilion": {
++        "slug": "ilion",
++        "name_el": "Ίλιον",
++        "name_en": "Ilion",
++        "name_ru": "Илион",
++        "name_uk": "Іліон",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Aigaleo": {
++        "slug": "aigaleo",
++        "name_el": "Αιγάλεω",
++        "name_en": "Aigaleo",
++        "name_ru": "Эгалео",
++        "name_uk": "Егалео",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Chaidari": {
++        "slug": "chaidari",
++        "name_el": "Χαϊδάρι",
++        "name_en": "Chaidari",
++        "name_ru": "Хайдари",
++        "name_uk": "Хайдарі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Petroupoli": {
++        "slug": "petroupoli",
++        "name_el": "Πετρούπολη",
++        "name_en": "Petroupoli",
++        "name_ru": "Петруполи",
++        "name_uk": "Петруполі",
++        "region": "attica",
++        "city": "athens",
++    },
++    "Agia Varvara": {
++        "slug": "agia-varvara",
++        "name_el": "Αγία Βαρβάρα",
++        "name_en": "Agia Varvara",
++        "name_ru": "Агия-Варвара",
++        "name_uk": "Агія-Варвара",
++        "region": "attica",
++        "city": "athens",
++    },
++
++    # ── East Attica ───────────────────────────────────────────────────────────
++    "Koropi": {
++        "slug": "koropi",
++        "name_el": "Κορωπί",
++        "name_en": "Koropi",
++        "name_ru": "Коропи",
++        "name_uk": "Коропі",
++        "region": "attica",
++        "city": "east_attica",
++    },
++    "Markopoulo": {
++        "slug": "markopoulo",
++        "name_el": "Μαρκόπουλο",
++        "name_en": "Markopoulo",
++        "name_ru": "Маркопуло",
++        "name_uk": "Маркопуло",
++        "region": "attica",
++        "city": "east_attica",
++    },
++    "Paiania": {
++        "slug": "paiania",
++        "name_el": "Παιανία",
++        "name_en": "Paiania",
++        "name_ru": "Пеания",
++        "name_uk": "Пеанія",
++        "region": "attica",
++        "city": "east_attica",
++    },
++    "Spata": {
++        "slug": "spata",
++        "name_el": "Σπάτα",
++        "name_en": "Spata",
++        "name_ru": "Спата",
++        "name_uk": "Спата",
++        "region": "attica",
++        "city": "east_attica",
++    },
++
++    # ── West Attica ───────────────────────────────────────────────────────────
++    "Elefsina": {
++        "slug": "elefsina",
++        "name_el": "Ελευσίνα",
++        "name_en": "Elefsina",
++        "name_ru": "Элефсина",
++        "name_uk": "Елефсіна",
++        "region": "attica",
++        "city": "west_attica",
++    },
++    "Aspropyrgos": {
++        "slug": "aspropyrgos",
++        "name_el": "Ασπρόπυργος",
++        "name_en": "Aspropyrgos",
++        "name_ru": "Аспропиргос",
++        "name_uk": "Аспропіргос",
++        "region": "attica",
++        "city": "west_attica",
++    },
++    "Megara": {
++        "slug": "megara",
++        "name_el": "Μέγαρα",
++        "name_en": "Megara",
++        "name_ru": "Мегара",
++        "name_uk": "Мегара",
++        "region": "attica",
++        "city": "west_attica",
++    },
++}
+diff --git a/backend/app/routers/categories.py b/backend/app/routers/categories.py
+index dc8a636..8e48557 100644
+--- a/backend/app/routers/categories.py
++++ b/backend/app/routers/categories.py
+@@ -4,12 +4,58 @@ from sqlalchemy import text
+ from typing import Optional
+ 
+ from app.core.database import get_db
++from app.data.area_metadata import AREA_METADATA
++from app.schemas.area import AreaItem, AreasResponse
+ 
+ router = APIRouter(tags=["categories"])
+ 
+ LANG_FIELD = {"el": "name_el", "en": "name_en", "ru": "name_en", "uk": "name_en"}
+ 
+ 
++@router.get("/api/areas", response_model=AreasResponse)
++def get_areas(
++    region: Optional[str] = Query(None, description="Filter by region slug (e.g. attica)"),
++    db: Session = Depends(get_db),
++):
++    """Return areas with active salon counts.
++
++    - Zero-count areas are excluded.
++    - Unknown region returns empty items, not 404.
++    - Ordered by salon_count DESC, name_en ASC.
++    """
++    rows = db.execute(text("""
++        SELECT address_district, COUNT(id) AS cnt
++        FROM salons
++        WHERE is_active = true
++          AND address_district IS NOT NULL
++          AND trim(address_district) <> ''
++        GROUP BY address_district
++    """)).fetchall()
++
++    counts: dict[str, int] = {row[0]: row[1] for row in rows}
++
++    items: list[AreaItem] = []
++    for district, meta in AREA_METADATA.items():
++        if region is not None and meta["region"] != region:
++            continue
++        count = counts.get(district, 0)
++        if count == 0:
++            continue
++        items.append(AreaItem(
++            slug=meta["slug"],
++            name_el=meta["name_el"],
++            name_en=meta["name_en"],
++            name_ru=meta["name_ru"],
++            name_uk=meta["name_uk"],
++            salon_count=count,
++            region=meta["region"],
++            city=meta["city"],
++        ))
++
++    items.sort(key=lambda x: (-x.salon_count, x.name_en))
++    return AreasResponse(items=items)
++
++
+ @router.get("/api/categories")
+ def get_categories(lang: str = Query("el"), db: Session = Depends(get_db)):
+     name_col = LANG_FIELD.get(lang, "name_en")
+diff --git a/backend/app/schemas/area.py b/backend/app/schemas/area.py
+new file mode 100644
+index 0000000..27b9643
+--- /dev/null
++++ b/backend/app/schemas/area.py
+@@ -0,0 +1,16 @@
++from pydantic import BaseModel
++
++
++class AreaItem(BaseModel):
++    slug: str
++    name_el: str
++    name_en: str
++    name_ru: str
++    name_uk: str
++    salon_count: int
++    region: str
++    city: str
++
++
++class AreasResponse(BaseModel):
++    items: list[AreaItem]
+diff --git a/backend/tests/test_areas_endpoint.py b/backend/tests/test_areas_endpoint.py
+new file mode 100644
+index 0000000..7cb10f0
+--- /dev/null
++++ b/backend/tests/test_areas_endpoint.py
+@@ -0,0 +1,234 @@
++"""
++T-004: GET /api/areas — behaviour tests.
++
++Uses FastAPI TestClient with SQLite in-memory DB via dependency override.
++No connection to production. No static source-code substring checks for
++behaviour that can be tested end-to-end.
++"""
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, text
++from sqlalchemy.orm import sessionmaker, Session
++from sqlalchemy.pool import StaticPool
++
++from app.main import app
++from app.core.database import get_db
++from app.data.area_metadata import AREA_METADATA
++
++
++# ── Test DB fixture ───────────────────────────────────────────────────────────
++# StaticPool forces all connections to reuse the same underlying DBAPI
++# connection so the table created here is visible during request handling.
++
++TEST_ENGINE = create_engine(
++    "sqlite:///:memory:",
++    connect_args={"check_same_thread": False},
++    poolclass=StaticPool,
++)
++
++with TEST_ENGINE.connect() as conn:
++    conn.execute(text("""
++        CREATE TABLE salons (
++            id       INTEGER PRIMARY KEY AUTOINCREMENT,
++            address_district TEXT,
++            is_active INTEGER NOT NULL DEFAULT 1
++        )
++    """))
++    conn.execute(text("""
++        INSERT INTO salons (address_district, is_active) VALUES
++          ('Glyfada',       1),
++          ('Glyfada',       1),
++          ('Glyfada',       1),
++          ('Kallithea',     1),
++          ('Kallithea',     1),
++          ('Marousi',       1),
++          ('Athens Center', 1),
++          ('Glyfada',       0),  -- inactive: must not be counted
++          (NULL,            1),  -- null district: excluded
++          ('',              1),  -- empty district: excluded
++          ('   ',           1)   -- whitespace-only district: excluded
++    """))
++    conn.commit()
++
++TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
++
++
++def override_get_db():
++    db = TestSessionLocal()
++    try:
++        yield db
++    finally:
++        db.close()
++
++
++app.dependency_overrides[get_db] = override_get_db
++client = TestClient(app)
++
++
++# ── Endpoint behaviour tests ──────────────────────────────────────────────────
++
++def test_areas_returns_200():
++    r = client.get("/api/areas")
++    assert r.status_code == 200
++
++
++def test_areas_root_key_is_items():
++    r = client.get("/api/areas")
++    data = r.json()
++    assert "items" in data
++    assert "areas" not in data
++
++
++def test_areas_item_shape():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    assert len(items) > 0
++    required = {"slug", "name_el", "name_en", "name_ru", "name_uk", "salon_count", "region", "city"}
++    for item in items:
++        assert required == set(item.keys()), f"Item keys mismatch: {set(item.keys())}"
++
++
++def test_areas_counts_only_active_salons():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    glyfada = next((i for i in items if i["slug"] == "glyfada"), None)
++    assert glyfada is not None
++    # 4 rows with Glyfada but 1 is inactive → expect 3
++    assert glyfada["salon_count"] == 3
++
++
++def test_areas_inactive_salons_excluded():
++    # 1 inactive Glyfada row: salon_count must be 3, not 4
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    glyfada = next(i for i in items if i["slug"] == "glyfada")
++    assert glyfada["salon_count"] == 3
++
++
++def test_areas_null_districts_excluded():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    for item in items:
++        assert item["salon_count"] > 0
++
++
++def test_areas_empty_district_excluded():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    # The "" row must not produce an area in the response
++    slugs = [i["slug"] for i in items]
++    # No item should have an empty or whitespace slug (those were excluded from DB query)
++    assert all(s.strip() for s in slugs)
++
++
++def test_areas_whitespace_district_excluded():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    # Only 4 canonical districts have data in test DB
++    assert len(items) == 4
++
++
++def test_areas_zero_count_excluded():
++    # Test DB only has Glyfada, Kallithea, Marousi, Athens Center
++    # All other AREA_METADATA entries should be absent
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    slugs = {i["slug"] for i in items}
++    assert "piraeus" not in slugs  # no Piraeus salons in test DB
++    assert "kifissia" not in slugs
++
++
++def test_areas_grouped_by_canonical_district():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    # Each district appears exactly once
++    slugs = [i["slug"] for i in items]
++    assert len(slugs) == len(set(slugs))
++
++
++def test_areas_region_filter_attica():
++    r = client.get("/api/areas?region=attica")
++    assert r.status_code == 200
++    items = r.json()["items"]
++    assert len(items) > 0
++    for item in items:
++        assert item["region"] == "attica"
++
++
++def test_areas_unknown_region_returns_empty():
++    r = client.get("/api/areas?region=unknown_xyz")
++    assert r.status_code == 200
++    assert r.json() == {"items": []}
++
++
++def test_areas_ordering_deterministic():
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    counts = [i["salon_count"] for i in items]
++    # Primary sort: salon_count descending
++    for i in range(len(counts) - 1):
++        if counts[i] == counts[i + 1]:
++            # Tie-breaker: name_en ascending
++            assert items[i]["name_en"] <= items[i + 1]["name_en"]
++        else:
++            assert counts[i] >= counts[i + 1]
++
++
++def test_areas_no_authentication_required():
++    # No auth headers — must still return 200
++    r = client.get("/api/areas", headers={})
++    assert r.status_code == 200
++
++
++def test_areas_registered_path_is_api_areas():
++    # Verify the route is at /api/areas by inspecting FastAPI's route list
++    paths = [route.path for route in app.routes]
++    assert "/api/areas" in paths
++
++
++def test_areas_not_under_categories_prefix():
++    paths = [route.path for route in app.routes]
++    assert "/api/categories/areas" not in paths
++
++
++def test_areas_no_conflicting_route_registrations():
++    # All /api/areas routes must resolve to the same handler
++    areas_routes = [r for r in app.routes if getattr(r, "path", "") == "/api/areas"]
++    assert len(areas_routes) == 1
++
++
++# ── Metadata integrity tests ──────────────────────────────────────────────────
++
++def test_metadata_slugs_unique():
++    slugs = [meta["slug"] for meta in AREA_METADATA.values()]
++    assert len(slugs) == len(set(slugs)), "Duplicate slugs in AREA_METADATA"
++
++
++def test_metadata_district_keys_unique():
++    keys = list(AREA_METADATA.keys())
++    assert len(keys) == len(set(keys)), "Duplicate keys in AREA_METADATA"
++
++
++def test_metadata_all_localized_names_non_empty():
++    for district, meta in AREA_METADATA.items():
++        for field in ("name_el", "name_en", "name_ru", "name_uk"):
++            assert meta[field].strip(), (
++                f"Empty {field} in AREA_METADATA[{district!r}]"
++            )
++
++
++def test_areas_single_aggregate_query(monkeypatch):
++    """Endpoint must execute one aggregate query, not one per area."""
++    query_count = 0
++    original_execute = Session.execute
++
++    def counting_execute(self, *args, **kwargs):
++        nonlocal query_count
++        query_count += 1
++        return original_execute(self, *args, **kwargs)
++
++    monkeypatch.setattr(Session, "execute", counting_execute)
++    client.get("/api/areas")
++    assert query_count == 1, (
++        f"Expected 1 DB query, got {query_count}. Check for N+1 in /api/areas."
++    )
