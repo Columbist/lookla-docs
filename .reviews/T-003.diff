@@ -1,9 +1,9 @@
 diff --git a/backend/alembic/versions/0003_backfill_address_district.py b/backend/alembic/versions/0003_backfill_address_district.py
 new file mode 100644
-index 0000000..59d42c7
+index 0000000..be2a6f0
 --- /dev/null
 +++ b/backend/alembic/versions/0003_backfill_address_district.py
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,166 @@
 +"""backfill address_district for Athens metro salons
 +
 +Revision ID: 0003
@@ -13,23 +13,24 @@ index 0000000..59d42c7
 +DATA MIGRATION ONLY — no schema changes (DDL-free).
 +
 +Populates address_district for salons whose city name matches the Athens
-+metropolitan area mapping in app/data/district_mapping.py.
++metropolitan area mapping frozen below.
 +
 +Safety:
 +- Idempotent:              Yes — WHERE address_district IS NULL
 +- Changes schema:          No
 +- Overwrites existing:     No — only NULL rows are touched
 +- Uses external services:  No — local mapping only, no API calls
-+- Rollback strategy:       downgrade() sets backfilled districts back to NULL
-+                           (manually-set values outside the mapping are preserved)
++- Rollback strategy:       Irreversible — see downgrade() for explanation
++
++NOTE: The mapping is frozen inside this file intentionally.
++Migrations are immutable historical artifacts. The runtime mapping in
++app/data/district_mapping.py may evolve; this migration must not.
 +"""
 +import logging
 +from typing import Sequence, Union
 +
 +from alembic import op
 +from sqlalchemy import text
-+
-+from app.data.district_mapping import CITY_TO_DISTRICT
 +
 +log = logging.getLogger(__name__)
 +
@@ -38,16 +39,101 @@ index 0000000..59d42c7
 +branch_labels: Union[str, Sequence[str], None] = None
 +depends_on: Union[str, Sequence[str], None] = None
 +
++# Frozen at migration time. This migration is a self-contained historical artifact.
++# Any future changes to the runtime mapping (app/data/district_mapping.py) must NOT
++# affect this migration — do not replace this dict with an import.
++CITY_TO_DISTRICT_0003: dict[str, str] = {
++    # ── Central Athens ────────────────────────────────────────────────────
++    "αθήνα": "Athens Center",
++    "αθηνα": "Athens Center",
++
++    # ── South Athens (coastal) ────────────────────────────────────────────
++    "γλυφάδα": "Glyfada",
++    "παλαιό φάληρο": "Palaio Faliro",
++    "νέα σμύρνη": "Nea Smyrni",
++    "άλιμος": "Alimos",
++    "ηλιούπολη": "Ilioupoli",
++    "άγιος δημήτριος αττικής": "Agios Dimitrios",
++    "άγιος δημήτριος": "Agios Dimitrios",
++    "αργυρούπολη": "Argyroupoli",
++    "ελληνικό": "Elliniko",
++    "ελληνικό-αργυρούπολη": "Elliniko",
++    "βούλα": "Voula",
++    "βουλιαγμένη": "Vouliagmeni",
++    "βάρη": "Vari",
++    "καλλιθέα": "Kallithea",
++
++    # ── Piraeus & port area ───────────────────────────────────────────────
++    "πειραιάς": "Piraeus",
++    "κερατσίνι": "Keratsini",
++    "νίκαια": "Nikaia",
++    "μοσχάτο": "Moschato",
++    "κορυδαλλός": "Korydallos",
++    "πέραμα": "Perama",
++    "ταύρος": "Tavros",
++    "δραπετσώνα": "Drapetsona",
++
++    # ── East Athens ───────────────────────────────────────────────────────
++    "βύρωνας": "Vyronas",
++    "ζωγράφου": "Zografou",
++    "καισαριανή": "Kaisariani",
++    "δάφνη αττικής": "Dafni",
++    "δάφνη": "Dafni",
++    "αγία παρασκευή": "Agia Paraskevi",
++    "χολαργός": "Cholargos",
++    "χαλάνδρι": "Chalandri",
++    "παλλήνη": "Pallini",
++    "γέρακας": "Gerakas",
++    "ανθούσα": "Anthousa",
++
++    # ── North Athens ──────────────────────────────────────────────────────
++    "μαρούσι": "Marousi",
++    "κηφισιά": "Kifissia",
++    "νέα ερυθραία": "Nea Erythraia",
++    "εκάλη": "Ekali",
++    "μεταμόρφωση": "Metamorfosi",
++    "νέα ιωνία": "Nea Ionia",
++    "γαλάτσι": "Galatsi",
++    "βριλήσσια": "Vrilissia",
++    "πεντέλη": "Penteli",
++    "νέο ψυχικό": "Neo Psychiko",
++    "ψυχικό": "Psychiko",
++    "φιλοθέη": "Filothei",
++    "μελίσσια": "Melissia",
++    "νέα φιλαδέλφεια": "Nea Filadelfia",
++
++    # ── West Athens ───────────────────────────────────────────────────────
++    "περιστέρι": "Peristeri",
++    "ίλιον": "Ilion",
++    "αιγάλεω": "Aigaleo",
++    "χαϊδάρι": "Chaidari",
++    "πετρούπολη": "Petroupoli",
++    "αγία βαρβάρα": "Agia Varvara",
++    "περαμα": "Perama",
++
++    # ── East Attica ───────────────────────────────────────────────────────
++    "κορωπί": "Koropi",
++    "μαρκόπουλο μεσογαίας": "Markopoulo",
++    "μαρκόπουλο": "Markopoulo",
++    "παιανία": "Paiania",
++    "σπάτα": "Spata",
++
++    # ── West Attica ───────────────────────────────────────────────────────
++    "ελευσίνα": "Elefsina",
++    "ασπρόπυργος": "Aspropyrgos",
++    "μέγαρα": "Megara",
++}
++
 +
 +def upgrade() -> None:
 +    bind = op.get_bind()
 +
-+    already_set = bind.execute(
++    preexisting_non_null = bind.execute(
 +        text("SELECT COUNT(*) FROM salons WHERE address_district IS NOT NULL")
 +    ).scalar()
 +
 +    updated = 0
-+    for city_lower, district in CITY_TO_DISTRICT.items():
++    for city_lower, district in CITY_TO_DISTRICT_0003.items():
 +        result = bind.execute(
 +            text("""
 +                UPDATE salons
@@ -59,37 +145,40 @@ index 0000000..59d42c7
 +        )
 +        updated += result.rowcount
 +
-+    unknown = bind.execute(
++    active_still_null = bind.execute(
 +        text("SELECT COUNT(*) FROM salons WHERE is_active = true AND address_district IS NULL")
 +    ).scalar()
 +
 +    log.info(
-+        "[T-003 backfill] Updated: %d | Already set (skipped): %d | Active with unknown district: %d",
-+        updated, already_set, unknown,
++        "[T-003 backfill] Updated: %d | Pre-existing non-null (untouched): %d | Active still NULL: %d",
++        updated, preexisting_non_null, active_still_null,
 +    )
 +
 +
 +def downgrade() -> None:
-+    """Set backfilled districts back to NULL.
++    """Irreversible — data backfill cannot be safely undone.
 +
-+    Only values produced by this migration (i.e. values present in
-+    CITY_TO_DISTRICT.values()) are cleared. Districts set manually
-+    that don't appear in the mapping are preserved.
++    This migration cannot distinguish values it populated from values that
++    existed before the migration or were entered manually afterwards.
++    Rolling back by district name would silently delete pre-existing or
++    manually-edited data.
++
++    If rollback is required, restore from the pre-migration database backup.
 +    """
-+    district_values = list(set(CITY_TO_DISTRICT.values()))
-+    op.get_bind().execute(
-+        text("UPDATE salons SET address_district = NULL WHERE address_district = ANY(:districts)"),
-+        {"districts": district_values},
++    raise RuntimeError(
++        "Migration 0003 is irreversible: address_district values cannot be "
++        "safely distinguished from pre-existing or manually-entered data. "
++        "Restore from the pre-migration database backup if rollback is needed."
 +    )
 diff --git a/backend/app/data/__init__.py b/backend/app/data/__init__.py
 new file mode 100644
 index 0000000..e69de29
 diff --git a/backend/app/data/district_mapping.py b/backend/app/data/district_mapping.py
 new file mode 100644
-index 0000000..1556f7e
+index 0000000..61396f8
 --- /dev/null
 +++ b/backend/app/data/district_mapping.py
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,102 @@
 +"""
 +Athens metropolitan area: Greek city name → English district name.
 +
@@ -161,8 +250,6 @@ index 0000000..1556f7e
 +    "νέο ψυχικό": "Neo Psychiko",
 +    "ψυχικό": "Psychiko",
 +    "φιλοθέη": "Filothei",
-+    "κηφισιά": "Kifissia",
-+    "αγία παρασκευή": "Agia Paraskevi",
 +    "μελίσσια": "Melissia",
 +    "νέα φιλαδέλφεια": "Nea Filadelfia",
 +
@@ -196,17 +283,14 @@ index 0000000..1556f7e
 +    return CITY_TO_DISTRICT.get(city_name.lower().strip())
 diff --git a/backend/tests/test_migration_0003.py b/backend/tests/test_migration_0003.py
 new file mode 100644
-index 0000000..18d0603
+index 0000000..502382a
 --- /dev/null
 +++ b/backend/tests/test_migration_0003.py
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,149 @@
 +"""
-+T-003: address_district backfill — tests written BEFORE migration code.
-+
-+All tests are static (no DB connection). They verify:
-+- mapping correctness and completeness
-+- migration SQL safety (idempotency, no DDL, no overwrite)
++T-003: address_district backfill — static tests (no DB connection required).
 +"""
++import ast
 +import importlib.util
 +import inspect
 +from pathlib import Path
@@ -226,21 +310,20 @@ index 0000000..18d0603
 +    return mod
 +
 +
-+# ── Mapping tests ─────────────────────────────────────────────────────────────
++# ── Runtime mapping tests ─────────────────────────────────────────────────────
 +
 +def test_mapping_file_exists():
-+    assert MAPPING_FILE.exists(), "district_mapping.py must exist before migration"
++    assert MAPPING_FILE.exists()
 +
 +
 +def test_mapping_covers_major_athens_districts():
 +    from app.data.district_mapping import CITY_TO_DISTRICT
-+    required_districts = {
++    required = {
 +        "Glyfada", "Kifissia", "Marousi", "Piraeus",
 +        "Chalandri", "Nea Smyrni", "Kallithea",
 +        "Athens Center", "Peristeri",
 +    }
-+    actual_districts = set(CITY_TO_DISTRICT.values())
-+    missing = required_districts - actual_districts
++    missing = required - set(CITY_TO_DISTRICT.values())
 +    assert not missing, f"Mapping missing required Athens districts: {missing}"
 +
 +
@@ -257,6 +340,18 @@ index 0000000..18d0603
 +    assert not overlap, f"Non-Athens cities must not be in mapping: {overlap}"
 +
 +
++def test_mapping_no_duplicate_keys():
++    """Detect duplicate dict keys via AST — runtime dict silently deduplicates."""
++    tree = ast.parse(MAPPING_FILE.read_text())
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Dict):
++            keys = [ast.literal_eval(k) for k in node.keys if k is not None]
++            seen: set = set()
++            for key in keys:
++                assert key not in seen, f"Duplicate key in district_mapping.py: '{key}'"
++                seen.add(key)
++
++
 +def test_city_to_district_function_known_city():
 +    from app.data.district_mapping import city_to_district
 +    assert city_to_district("Γλυφάδα") == "Glyfada"
@@ -271,7 +366,7 @@ index 0000000..18d0603
 +    assert city_to_district("") is None
 +
 +
-+# ── Migration safety tests ────────────────────────────────────────────────────
++# ── Migration file tests ───────────────────────────────────────────────────────
 +
 +def test_migration_file_exists():
 +    assert MIGRATION_FILE.exists()
@@ -283,6 +378,34 @@ index 0000000..18d0603
 +    assert mod.down_revision == "0002"
 +
 +
++def test_migration_has_frozen_mapping():
++    """Migration must not import from app.data — must be self-contained.
++
++    Checks Python import AST nodes, not raw text, to avoid false positives
++    from comments that mention the module name.
++    """
++    tree = ast.parse(MIGRATION_FILE.read_text())
++    for node in ast.walk(tree):
++        if isinstance(node, ast.ImportFrom):
++            module = node.module or ""
++            assert not module.startswith("app.data"), (
++                f"Migration must not import from app.data: 'from {module} import ...'"
++            )
++
++
++def test_frozen_mapping_no_duplicate_keys():
++    """Frozen mapping inside migration must also be free of duplicate keys."""
++    tree = ast.parse(MIGRATION_FILE.read_text())
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Dict):
++            keys = [ast.literal_eval(k) for k in node.keys if k is not None]
++            if len(keys) > 10:  # target the large mapping dict, not revision metadata
++                seen: set = set()
++                for key in keys:
++                    assert key not in seen, f"Duplicate key in frozen migration mapping: '{key}'"
++                    seen.add(key)
++
++
 +def test_no_ddl_operations():
 +    src = inspect.getsource(_load_migration().upgrade)
 +    forbidden = ["add_column", "drop_column", "create_table", "drop_table",
@@ -292,21 +415,19 @@ index 0000000..18d0603
 +
 +
 +def test_upgrade_is_idempotent_by_null_guard():
-+    """upgrade() SQL must filter WHERE address_district IS NULL."""
 +    src = inspect.getsource(_load_migration().upgrade)
-+    assert "IS NULL" in src, "Idempotency requires WHERE address_district IS NULL"
-+
-+
-+def test_upgrade_does_not_overwrite_existing():
-+    """Same check: IS NULL guard ensures existing values are preserved."""
-+    src = inspect.getsource(_load_migration().upgrade)
-+    # No unconditional UPDATE (would overwrite everything)
 +    assert "IS NULL" in src
 +
 +
-+def test_downgrade_sets_to_null():
++def test_upgrade_does_not_overwrite_existing():
++    src = inspect.getsource(_load_migration().upgrade)
++    assert "IS NULL" in src
++
++
++def test_downgrade_is_explicitly_irreversible():
++    """downgrade() must raise RuntimeError — not silently clear data."""
 +    src = inspect.getsource(_load_migration().downgrade)
-+    assert "NULL" in src
++    assert "raise RuntimeError" in src
 +
 +
 +def test_only_one_head():
