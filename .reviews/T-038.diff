@@ -21,7 +21,7 @@ index 46ed576..54e1326 100644
      area: Optional[str] = None,
      city: Optional[str] = None,
 diff --git a/backend/app/schemas/salon.py b/backend/app/schemas/salon.py
-index 2809613..f5f15ff 100644
+index 2809613..c2aa22f 100644
 --- a/backend/app/schemas/salon.py
 +++ b/backend/app/schemas/salon.py
 @@ -107,6 +107,21 @@ class PaginatedSalons(BaseModel):
@@ -39,18 +39,18 @@ index 2809613..f5f15ff 100644
 +    address_city: Optional[str]
 +    phone_primary: Optional[str]
 +    rating_google: Optional[float]
-+    primary_photo: Optional[str] = None
-+    is_open_now: Optional[bool] = None
++    primary_photo: Optional[str]
++    is_open_now: Optional[bool]
 +
 +
  class SearchResult(BaseModel):
      type: str  # "salon" | "professional"
      id: int
 diff --git a/backend/tests/test_salons_endpoint.py b/backend/tests/test_salons_endpoint.py
-index 6be5109..3147f7d 100644
+index 6be5109..e784a0d 100644
 --- a/backend/tests/test_salons_endpoint.py
 +++ b/backend/tests/test_salons_endpoint.py
-@@ -310,6 +310,47 @@ def test_map_category_filter_still_works_without_area(client):
+@@ -310,6 +310,67 @@ def test_map_category_filter_still_works_without_area(client):
      assert "Glyfada Nails" in names
  
  
@@ -89,6 +89,26 @@ index 6be5109..3147f7d 100644
 +        assert set(item.keys()) == expected_fields
 +
 +
++def test_openapi_salon_map_item_schema_has_all_fields_required():
++    # app/main.py only serves /api/openapi.json when ENVIRONMENT != "production"
++    # (this deployment's .env and the Settings default both set/default to
++    # "production"), so the route itself is unreachable in every context this
++    # suite runs in. Generate the schema directly via app.openapi() instead —
++    # same schema-generation code path, independent of that deployment gate.
++    #
++    # All ten SalonMapItem fields must be present (though nullable) in every
++    # item — see test_map_item_has_documented_fields above — so the schema
++    # must list all ten as required, not just the non-Optional ones.
++    schema = app.openapi()
++    salon_map_item = schema["components"]["schemas"]["SalonMapItem"]
++    expected_fields = {
++        "id", "name", "slug", "lat", "lng", "address_city",
++        "phone_primary", "rating_google", "primary_photo", "is_open_now",
++    }
++    assert set(salon_map_item["properties"].keys()) == expected_fields
++    assert set(salon_map_item.get("required", [])) == expected_fields
++
++
 +def test_map_excludes_inactive_salons(client):
 +    resp = client.get("/api/salons/map", params={"area": "glyfada"})
 +    names = {item["name"] for item in resp.json()}
@@ -99,7 +119,7 @@ index 6be5109..3147f7d 100644
      resp = client.get("/api/salons/map", params={"area": "unknown-area", "city": "Glyfada"})
      assert resp.status_code == 200
 diff --git a/docs/04_ARCHITECTURE/API_SPECIFICATION.md b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
-index da56c6f..dbcb533 100644
+index da56c6f..75db9f9 100644
 --- a/docs/04_ARCHITECTURE/API_SPECIFICATION.md
 +++ b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
 @@ -4,7 +4,7 @@ status: Approved
@@ -111,7 +131,7 @@ index da56c6f..dbcb533 100644
  related_documents:
    - 04_ARCHITECTURE/BACKEND_ARCHITECTURE.md
    - 04_ARCHITECTURE/DATABASE_SCHEMA.md
-@@ -93,23 +93,48 @@ implementation_status: Documents current API + MVP-required additions
+@@ -93,23 +93,49 @@ implementation_status: Documents current API + MVP-required additions
  
  ### GET /api/salons/map
  
@@ -150,10 +170,11 @@ index da56c6f..dbcb533 100644
  ```
  
 -**Notes:** No pagination — returns all matching results. Coordinate-only response keeps payload small for map rendering.
-+**Field notes:**
++**Field notes:** all ten keys shown above are always present in every item; the
++fields below may hold `null` — they are never absent:
 +- `rating_google` is `null` if the salon has no Google rating
-+- `primary_photo` is `null` if the salon has no photos
-+- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); may be `null`/absent if hours aren't set for the current day
++- `primary_photo` is `null` when the salon has no photos
++- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); it is `null` when opening-hours data is unavailable for the current day
 +
 +**This is the confirmed, historically-accurate runtime contract (Decision T-038, 2026-07-11) — not an aspirational shape.** An earlier version of this document incorrectly specified `{"items": [...], "total": N}`; the endpoint has never actually returned that shape. Do not "fix" this endpoint to match a `{items, total}` wrapper — see the rationale below.
 +
@@ -170,7 +191,7 @@ index da56c6f..dbcb533 100644
  
  ---
  
-@@ -336,7 +361,7 @@ implementation_status: Documents current API + MVP-required additions
+@@ -336,7 +362,7 @@ implementation_status: Documents current API + MVP-required additions
  
  **Purpose:** Returns the list of Athens districts (and other areas) with salon counts. Used for area filter dropdown and AreaGrid on homepage.
  
