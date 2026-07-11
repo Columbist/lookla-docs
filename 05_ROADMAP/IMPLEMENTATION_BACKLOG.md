@@ -751,6 +751,32 @@ except Exception as e:
 
 ---
 
+### T-039 — Re-enable CodeQL once GitHub Code Security is available
+**Priority:** P2 | **Owner:** OPS | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** None (blocked on an external/account-level condition, not code)
+
+**Description:** `.github/workflows/codeql.yml` was disabled to `workflow_dispatch`-only
+on 2026-07-11 (see `04_ARCHITECTURE/SECURITY.md` §12) because
+`lookla-platform` is a private repository without GitHub Code Security,
+and CodeQL's `analyze` step fails with "Code scanning is not enabled
+for this repository" regardless of workflow permissions. This task is
+to restore automatic scanning once that's no longer true.
+
+**Steps:**
+1. Confirm GitHub Code Security is enabled for `lookla-platform` (or the repo has become public)
+2. Restore `push`/`pull_request`/`schedule` triggers in `codeql.yml` (remove the `workflow_dispatch`-only restriction and the disabled-status comment block)
+3. Trigger a run and confirm both matrix jobs pass
+4. Update `04_ARCHITECTURE/SECURITY.md` §12 status from Disabled to Enabled
+
+**Acceptance Criteria:**
+- [ ] GitHub Code Security enabled for the repository
+- [ ] CodeQL `Analyze (javascript-typescript)` job passes
+- [ ] CodeQL `Analyze (python)` job passes
+- [ ] Automatic pull-request scanning restored (triggers on `push`/`pull_request` again)
+- [ ] Only after this: CodeQL may be added as a required branch-protection check — it is not one today
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
@@ -932,6 +958,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-035 Deprecate GET /api/search | P2 | BE | 0.5 | EPIC-09 | — |
 | T-036 Create public/robots.txt | P0 | FE | 0.25 | EPIC-09 | — |
 | T-037 Unify salon search (post-MVP) | post-MVP | BE | 4 | EPIC-10 | T-035 |
+| T-039 Re-enable CodeQL (blocked on GH Code Security) | P2 | OPS | 0.5 | EPIC-09 | — |
 | **Total** | | | **~40.25h (M-01)** | | |
 
 ---

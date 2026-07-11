@@ -4,12 +4,13 @@ status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
-last_updated: 2026-07-09
+last_updated: 2026-07-11
 related_documents:
   - 04_ARCHITECTURE/BACKEND_ARCHITECTURE.md
   - 04_ARCHITECTURE/API_SPECIFICATION.md
   - 00_GOVERNANCE/DECISION_LOG.md
   - 06_ENGINEERING/AUDIT.md
+  - 05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 implementation_status: Describes current security posture + gaps for MVP
 ---
 
@@ -373,4 +374,34 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
 ---
 
-*Last updated: 2026-07-09*
+## 12. Static Analysis (CodeQL) — Disabled, Platform Limitation
+
+**Status:** Disabled — platform/licensing limitation (2026-07-11)
+
+**Reason:** `lookla-platform` is a private repository. GitHub Code
+Scanning (the CodeQL workflow's upload step) requires GitHub Code
+Security to be enabled on the repository; confirmed via a real run that
+this is not a workflow-permissions issue — `github/codeql-action/analyze`
+returns `Code scanning is not enabled for this repository` even with
+`contents: read`, `actions: read`, and `security-events: write` all
+granted. No workflow change or personal access token can work around a
+missing license.
+
+**Decision:** Not worth making the repository public or purchasing
+GitHub Code Security at the current MVP stage solely to unblock this.
+`.github/workflows/codeql.yml` is kept (not deleted) with only
+`workflow_dispatch` (manual) triggers, so it can be restored by
+re-adding `push`/`pull_request`/`schedule` once Code Security is
+enabled or the repo's visibility policy changes.
+
+**Not an M-01 release blocker.** Backend and frontend CI (lint + build/tests)
+remain the blocking, required checks and are green. CodeQL must not be
+configured as a required branch-protection check while in this state.
+
+**Re-enable condition:** GitHub Code Security becomes available for this
+repository (or it becomes public), tracked as T-039 in
+`05_ROADMAP/IMPLEMENTATION_BACKLOG.md`.
+
+---
+
+*Last updated: 2026-07-11*
