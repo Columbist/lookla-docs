@@ -166,23 +166,43 @@ See `docs/.reviews/T-003a-review.md` for full investigation results and alternat
 
 ### T-005 — Add area param to GET /api/salons
 **Priority:** P0 | **Owner:** BE | **Estimate:** 1.5h | **Epic:** EPIC-02
-**Dependencies:** T-003
+**Dependencies:** T-004
 
-**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works.
+**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works. Applies to both `GET /api/salons` and `GET /api/salons/map`.
 
-**Filter logic:**
+**Filter logic:** `area` is a public district *slug* (e.g. `athens-center`), not
+raw `address_district` text (e.g. `Athens Center`) — a raw `ILIKE` on the slug
+does not work (hyphen vs. space, casing). Resolve the slug through the
+`AREA_METADATA` reverse lookup first, then filter by exact equality on the
+canonical `address_district` value:
+
 ```python
+# app/data/area_metadata.py
+AREA_SLUG_TO_DISTRICT = {meta["slug"]: district for district, meta in AREA_METADATA.items()}
+
+def get_district_by_area_slug(slug: str) -> str | None:
+    return AREA_SLUG_TO_DISTRICT.get(slug.strip().lower()) if slug else None
+
+# app/routers/salons.py
 if area:
-    query = query.filter(Salon.address_district.ilike(f"%{area}%"))
+    district = get_district_by_area_slug(area)
+    query = query.filter(Salon.address_district == district) if district else query.filter(false())
 elif city:  # legacy fallback
     query = query.filter(Salon.address_city.ilike(f"%{city}%"))
 ```
 
+Exact equality (not substring) is used because the input is a controlled
+slug resolved against a controlled canonical value — substring matching
+would risk matching unrelated districts (e.g. "Kallithea" vs. "Nea
+Kallithea") and can't use the `address_district` index as efficiently.
+
 **Acceptance Criteria:**
-- [ ] `GET /api/salons?area=glyfada` filters by `address_district ILIKE '%glyfada%'`
-- [ ] `GET /api/salons?city=Athens` still works (backwards compat)
-- [ ] `GET /api/salons?area=glyfada&city=Athens` — `area` takes precedence
-- [ ] `GET /api/salons?area=nonexistent` returns `{"items": [], "total": 0}`, not 404
+- [x] `GET /api/salons?area=glyfada` filters by `address_district = "Glyfada"` (resolved via `AREA_METADATA`, exact equality)
+- [x] `GET /api/salons?city=Athens` still works (backwards compat)
+- [x] `GET /api/salons?area=glyfada&city=Athens` — `area` takes precedence
+- [x] `GET /api/salons?area=nonexistent` returns `{"items": [], "total": 0}`, not 404 — an unresolvable area does not fall back to `city`
+- [x] `GET /api/salons/map?area=glyfada` supports the same area filter (map accepts the same params as the list endpoint, minus pagination)
+- [x] Legacy `city` param remains available during the transition
 
 ---
 
@@ -199,9 +219,33 @@ elif city:  # legacy fallback
 
 ---
 
+### T-038 — Resolve GET /api/salons/map response shape drift
+**Priority:** P0 | **Owner:** BE/DOCS | **Estimate:** 0.5h | **Epic:** EPIC-02
+**Dependencies:** T-005
+
+**Description:** `API_SPECIFICATION.md` documents `GET /api/salons/map` as
+returning `{"items": [...], "total": N}`. The actual, long-standing runtime
+contract (confirmed unchanged by T-005 — see T-005 review) returns a bare
+list: `[{"id": 1, ...}, ...]`. T-005 deliberately preserved the real runtime
+shape rather than silently redesigning the endpoint. This drift must be
+resolved — one way or the other — before T-007 ships a frontend that
+consumes this endpoint, so the frontend is built against a confirmed
+contract rather than an aspirational one.
+
+**Decision needed (pick one):**
+- [ ] Option A — Update `API_SPECIFICATION.md` to document the real bare-list shape. No backend change.
+- [ ] Option B — Change `GET /api/salons/map` to return `{"items": [...], "total": N}` to match the spec. Backend change + a frontend consumer update wherever `/api/salons/map` is already called.
+
+**Acceptance Criteria:**
+- [ ] Product/eng decision recorded (which option, and why)
+- [ ] `API_SPECIFICATION.md` and the runtime response shape agree
+- [ ] If Option B: existing map callers (if any exist pre-T-007) updated in the same PR
+
+---
+
 ### T-007 — Update SearchFilters.tsx with area dropdown
 **Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-02
-**Dependencies:** T-004 (API endpoint must exist)
+**Dependencies:** T-004 (API endpoint must exist), T-038 (map response shape must be confirmed before the frontend consumes it)
 
 **Description:** Replace the city filter with an area filter. Fetch areas from `/api/areas`. Populate dropdown. Change filter label.
 
@@ -925,9 +969,10 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-003 Backfill address_district | P0 | BE | 2 | EPIC-01 | T-002 |
 | T-003a Verify GIN index | ~~P0~~ DEFERRED | DB | — | EPIC-01 | — |
 | T-004 GET /api/areas endpoint | P0 | BE | 2 | EPIC-02 | T-003 |
-| T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-003 |
+| T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-004 |
 | T-006 CITY_SYNONYMS district update | P1 | BE | 1 | EPIC-02 | T-003 |
-| T-007 SearchFilters area dropdown | P0 | FE | 2 | EPIC-02 | T-004 |
+| T-038 Resolve /api/salons/map response shape drift | P0 | BE/DOCS | 0.5 | EPIC-02 | T-005 |
+| T-007 SearchFilters area dropdown | P0 | FE | 2 | EPIC-02 | T-004, T-038 |
 | T-008 Homepage AreaGrid | P1 | FE | 1.5 | EPIC-02 | T-004 |
 | T-009 Remove booking stubs | P0 | FE | 1 | EPIC-03 | — |
 | T-010 Contact CTAs | P0 | FE | 1.5 | EPIC-03 | T-009 |
@@ -988,6 +1033,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ```
 T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
                          T-004 → T-007  [area filter FE]
+                         T-005 → T-038 → T-007  [map response shape decision, blocks FE]
 T-013 → T-019             [GA4 property + settings]
 T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
 T-016                     [Search Console]
