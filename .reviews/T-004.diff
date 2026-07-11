@@ -1,9 +1,9 @@
 diff --git a/backend/app/data/area_metadata.py b/backend/app/data/area_metadata.py
 new file mode 100644
-index 0000000..f6e6930
+index 0000000..58c9c02
 --- /dev/null
 +++ b/backend/app/data/area_metadata.py
-@@ -0,0 +1,572 @@
+@@ -0,0 +1,579 @@
 +"""
 +Athens metro area presentation metadata.
 +
@@ -15,6 +15,10 @@ index 0000000..f6e6930
 +- Slugs are lowercase, hyphen-separated ASCII, stable across deploys.
 +- Translations are explicit — no dynamic generation.
 +- region/city values come from here, not from unreliable DB address_region.
++- city must be one of VALID_CITY_SLUGS (DEC-010: Country → Region → City →
++  District/Area). East and West Attica districts are classified under
++  city="athens" per DEC-012 (Athens metro is the MVP scope; product owner
++  decision 2026-07-11) — they are not separate City entities.
 +- Do not import from migration 0003 (immutable historical artifact).
 +- Do not call translation or geocoding services.
 +
@@ -35,6 +39,9 @@ index 0000000..f6e6930
 +    name_uk: str
 +    region: str
 +    city: str
++
++
++VALID_CITY_SLUGS: frozenset[str] = frozenset({"athens", "piraeus"})
 +
 +
 +AREA_METADATA: dict[str, AreaMeta] = {
@@ -393,7 +400,7 @@ index 0000000..f6e6930
 +        "slug": "vrilissia",
 +        "name_el": "Βριλήσσια",
 +        "name_en": "Vrilissia",
-+        "name_ru": "Врилилия",
++        "name_ru": "Врилиссия",
 +        "name_uk": "Вріліссія",
 +        "region": "attica",
 +        "city": "athens",
@@ -509,7 +516,7 @@ index 0000000..f6e6930
 +        "city": "athens",
 +    },
 +
-+    # ── East Attica ───────────────────────────────────────────────────────────
++    # ── East Attica (city="athens" — DEC-010/DEC-012: Athens metro MVP scope) ──
 +    "Koropi": {
 +        "slug": "koropi",
 +        "name_el": "Κορωπί",
@@ -517,7 +524,7 @@ index 0000000..f6e6930
 +        "name_ru": "Коропи",
 +        "name_uk": "Коропі",
 +        "region": "attica",
-+        "city": "east_attica",
++        "city": "athens",
 +    },
 +    "Markopoulo": {
 +        "slug": "markopoulo",
@@ -526,7 +533,7 @@ index 0000000..f6e6930
 +        "name_ru": "Маркопуло",
 +        "name_uk": "Маркопуло",
 +        "region": "attica",
-+        "city": "east_attica",
++        "city": "athens",
 +    },
 +    "Paiania": {
 +        "slug": "paiania",
@@ -535,7 +542,7 @@ index 0000000..f6e6930
 +        "name_ru": "Пеания",
 +        "name_uk": "Пеанія",
 +        "region": "attica",
-+        "city": "east_attica",
++        "city": "athens",
 +    },
 +    "Spata": {
 +        "slug": "spata",
@@ -544,10 +551,10 @@ index 0000000..f6e6930
 +        "name_ru": "Спата",
 +        "name_uk": "Спата",
 +        "region": "attica",
-+        "city": "east_attica",
++        "city": "athens",
 +    },
 +
-+    # ── West Attica ───────────────────────────────────────────────────────────
++    # ── West Attica (city="athens" — DEC-010/DEC-012: Athens metro MVP scope) ──
 +    "Elefsina": {
 +        "slug": "elefsina",
 +        "name_el": "Ελευσίνα",
@@ -555,7 +562,7 @@ index 0000000..f6e6930
 +        "name_ru": "Элефсина",
 +        "name_uk": "Елефсіна",
 +        "region": "attica",
-+        "city": "west_attica",
++        "city": "athens",
 +    },
 +    "Aspropyrgos": {
 +        "slug": "aspropyrgos",
@@ -564,7 +571,7 @@ index 0000000..f6e6930
 +        "name_ru": "Аспропиргос",
 +        "name_uk": "Аспропіргос",
 +        "region": "attica",
-+        "city": "west_attica",
++        "city": "athens",
 +    },
 +    "Megara": {
 +        "slug": "megara",
@@ -573,19 +580,20 @@ index 0000000..f6e6930
 +        "name_ru": "Мегара",
 +        "name_uk": "Мегара",
 +        "region": "attica",
-+        "city": "west_attica",
++        "city": "athens",
 +    },
 +}
 diff --git a/backend/app/routers/categories.py b/backend/app/routers/categories.py
-index dc8a636..8e48557 100644
+index dc8a636..4458a10 100644
 --- a/backend/app/routers/categories.py
 +++ b/backend/app/routers/categories.py
-@@ -4,12 +4,58 @@ from sqlalchemy import text
+@@ -4,12 +4,50 @@ from sqlalchemy import text
  from typing import Optional
  
  from app.core.database import get_db
 +from app.data.area_metadata import AREA_METADATA
 +from app.schemas.area import AreaItem, AreasResponse
++from app.services.areas import get_active_salon_counts_by_district
  
  router = APIRouter(tags=["categories"])
  
@@ -603,16 +611,7 @@ index dc8a636..8e48557 100644
 +    - Unknown region returns empty items, not 404.
 +    - Ordered by salon_count DESC, name_en ASC.
 +    """
-+    rows = db.execute(text("""
-+        SELECT address_district, COUNT(id) AS cnt
-+        FROM salons
-+        WHERE is_active = true
-+          AND address_district IS NOT NULL
-+          AND trim(address_district) <> ''
-+        GROUP BY address_district
-+    """)).fetchall()
-+
-+    counts: dict[str, int] = {row[0]: row[1] for row in rows}
++    counts: dict[str, int] = get_active_salon_counts_by_district(db)
 +
 +    items: list[AreaItem] = []
 +    for district, meta in AREA_METADATA.items():
@@ -661,12 +660,36 @@ index 0000000..27b9643
 +
 +class AreasResponse(BaseModel):
 +    items: list[AreaItem]
+diff --git a/backend/app/services/areas.py b/backend/app/services/areas.py
+new file mode 100644
+index 0000000..f1d9a31
+--- /dev/null
++++ b/backend/app/services/areas.py
+@@ -0,0 +1,18 @@
++from sqlalchemy import text
++from sqlalchemy.orm import Session
++
++
++def get_active_salon_counts_by_district(db: Session) -> dict[str, int]:
++    """Active salon counts grouped by address_district.
++
++    Excludes NULL and blank (whitespace-only) districts and inactive salons.
++    """
++    rows = db.execute(text("""
++        SELECT address_district, COUNT(id) AS cnt
++        FROM salons
++        WHERE is_active = true
++          AND address_district IS NOT NULL
++          AND trim(address_district) <> ''
++        GROUP BY address_district
++    """)).fetchall()
++    return {row[0]: row[1] for row in rows}
 diff --git a/backend/tests/test_areas_endpoint.py b/backend/tests/test_areas_endpoint.py
 new file mode 100644
-index 0000000..7cb10f0
+index 0000000..60d0a57
 --- /dev/null
 +++ b/backend/tests/test_areas_endpoint.py
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,357 @@
 +"""
 +T-004: GET /api/areas — behaviour tests.
 +
@@ -674,6 +697,10 @@ index 0000000..7cb10f0
 +No connection to production. No static source-code substring checks for
 +behaviour that can be tested end-to-end.
 +"""
++import ast
++import re
++from pathlib import Path
++
 +import pytest
 +from fastapi.testclient import TestClient
 +from sqlalchemy import create_engine, text
@@ -682,82 +709,104 @@ index 0000000..7cb10f0
 +
 +from app.main import app
 +from app.core.database import get_db
-+from app.data.area_metadata import AREA_METADATA
++from app.data.area_metadata import AREA_METADATA, VALID_CITY_SLUGS
++from app.data.district_mapping import CITY_TO_DISTRICT
++from app.services.areas import get_active_salon_counts_by_district
++
++AREA_METADATA_FILE = Path(__file__).parent.parent / "app" / "data" / "area_metadata.py"
++METADATA_FIELDS = {"slug", "name_el", "name_en", "name_ru", "name_uk", "region", "city"}
++RESPONSE_ITEM_FIELDS = METADATA_FIELDS | {"salon_count"}
++VALID_REGIONS = {"attica"}
++SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 +
 +
 +# ── Test DB fixture ───────────────────────────────────────────────────────────
 +# StaticPool forces all connections to reuse the same underlying DBAPI
 +# connection so the table created here is visible during request handling.
 +
-+TEST_ENGINE = create_engine(
-+    "sqlite:///:memory:",
-+    connect_args={"check_same_thread": False},
-+    poolclass=StaticPool,
-+)
++def _build_test_engine():
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    with engine.connect() as conn:
++        conn.execute(text("""
++            CREATE TABLE salons (
++                id       INTEGER PRIMARY KEY AUTOINCREMENT,
++                address_district TEXT,
++                is_active INTEGER NOT NULL DEFAULT 1
++            )
++        """))
++        conn.execute(text("""
++            INSERT INTO salons (address_district, is_active) VALUES
++              ('Glyfada',       1),
++              ('Glyfada',       1),
++              ('Glyfada',       1),
++              ('Kallithea',     1),
++              ('Kallithea',     1),
++              ('Marousi',       1),
++              ('Athens Center', 1),
++              ('Glyfada',       0),  -- inactive: must not be counted
++              (NULL,            1),  -- null district: excluded
++              ('',              1),  -- empty district: excluded
++              ('   ',           1)   -- whitespace-only district: excluded
++        """))
++        conn.commit()
++    return engine
 +
-+with TEST_ENGINE.connect() as conn:
-+    conn.execute(text("""
-+        CREATE TABLE salons (
-+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-+            address_district TEXT,
-+            is_active INTEGER NOT NULL DEFAULT 1
-+        )
-+    """))
-+    conn.execute(text("""
-+        INSERT INTO salons (address_district, is_active) VALUES
-+          ('Glyfada',       1),
-+          ('Glyfada',       1),
-+          ('Glyfada',       1),
-+          ('Kallithea',     1),
-+          ('Kallithea',     1),
-+          ('Marousi',       1),
-+          ('Athens Center', 1),
-+          ('Glyfada',       0),  -- inactive: must not be counted
-+          (NULL,            1),  -- null district: excluded
-+          ('',              1),  -- empty district: excluded
-+          ('   ',           1)   -- whitespace-only district: excluded
-+    """))
-+    conn.commit()
 +
-+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
++@pytest.fixture(scope="module")
++def client():
++    engine = _build_test_engine()
++    test_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 +
++    def override_get_db():
++        db = test_session_local()
++        try:
++            yield db
++        finally:
++            db.close()
 +
-+def override_get_db():
-+    db = TestSessionLocal()
++    previous_override = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override_get_db
++
++    # No `with` block: TestClient(app) alone does not run the app's lifespan
++    # (see app/main.py check_db() startup check), which would otherwise
++    # require a real database connection unrelated to this endpoint's logic.
 +    try:
-+        yield db
++        yield TestClient(app)
 +    finally:
-+        db.close()
-+
-+
-+app.dependency_overrides[get_db] = override_get_db
-+client = TestClient(app)
++        if previous_override is None:
++            app.dependency_overrides.pop(get_db, None)
++        else:
++            app.dependency_overrides[get_db] = previous_override
++        engine.dispose()
 +
 +
 +# ── Endpoint behaviour tests ──────────────────────────────────────────────────
 +
-+def test_areas_returns_200():
++def test_areas_returns_200(client: TestClient):
 +    r = client.get("/api/areas")
 +    assert r.status_code == 200
 +
 +
-+def test_areas_root_key_is_items():
++def test_areas_root_key_is_items(client: TestClient):
 +    r = client.get("/api/areas")
 +    data = r.json()
 +    assert "items" in data
 +    assert "areas" not in data
 +
 +
-+def test_areas_item_shape():
++def test_areas_item_shape(client: TestClient):
 +    r = client.get("/api/areas")
 +    items = r.json()["items"]
 +    assert len(items) > 0
-+    required = {"slug", "name_el", "name_en", "name_ru", "name_uk", "salon_count", "region", "city"}
 +    for item in items:
-+        assert required == set(item.keys()), f"Item keys mismatch: {set(item.keys())}"
++        assert RESPONSE_ITEM_FIELDS == set(item.keys()), f"Item keys mismatch: {set(item.keys())}"
 +
 +
-+def test_areas_counts_only_active_salons():
++def test_areas_counts_only_active_salons(client: TestClient):
 +    r = client.get("/api/areas")
 +    items = r.json()["items"]
 +    glyfada = next((i for i in items if i["slug"] == "glyfada"), None)
@@ -766,7 +815,7 @@ index 0000000..7cb10f0
 +    assert glyfada["salon_count"] == 3
 +
 +
-+def test_areas_inactive_salons_excluded():
++def test_areas_inactive_salons_excluded(client: TestClient):
 +    # 1 inactive Glyfada row: salon_count must be 3, not 4
 +    r = client.get("/api/areas")
 +    items = r.json()["items"]
@@ -774,30 +823,7 @@ index 0000000..7cb10f0
 +    assert glyfada["salon_count"] == 3
 +
 +
-+def test_areas_null_districts_excluded():
-+    r = client.get("/api/areas")
-+    items = r.json()["items"]
-+    for item in items:
-+        assert item["salon_count"] > 0
-+
-+
-+def test_areas_empty_district_excluded():
-+    r = client.get("/api/areas")
-+    items = r.json()["items"]
-+    # The "" row must not produce an area in the response
-+    slugs = [i["slug"] for i in items]
-+    # No item should have an empty or whitespace slug (those were excluded from DB query)
-+    assert all(s.strip() for s in slugs)
-+
-+
-+def test_areas_whitespace_district_excluded():
-+    r = client.get("/api/areas")
-+    items = r.json()["items"]
-+    # Only 4 canonical districts have data in test DB
-+    assert len(items) == 4
-+
-+
-+def test_areas_zero_count_excluded():
++def test_areas_zero_count_excluded(client: TestClient):
 +    # Test DB only has Glyfada, Kallithea, Marousi, Athens Center
 +    # All other AREA_METADATA entries should be absent
 +    r = client.get("/api/areas")
@@ -807,7 +833,7 @@ index 0000000..7cb10f0
 +    assert "kifissia" not in slugs
 +
 +
-+def test_areas_grouped_by_canonical_district():
++def test_areas_grouped_by_canonical_district(client: TestClient):
 +    r = client.get("/api/areas")
 +    items = r.json()["items"]
 +    # Each district appears exactly once
@@ -815,7 +841,18 @@ index 0000000..7cb10f0
 +    assert len(slugs) == len(set(slugs))
 +
 +
-+def test_areas_region_filter_attica():
++def test_areas_result_matches_expected_district_set(client: TestClient):
++    # End-to-end confirmation that only the 4 canonical test-DB districts
++    # surface, i.e. null/empty/whitespace/inactive rows never reach the
++    # response. The SQL-level guarantee is proven independently by the
++    # get_active_salon_counts_by_district() repository tests below.
++    r = client.get("/api/areas")
++    items = r.json()["items"]
++    assert len(items) == 4
++    assert {i["slug"] for i in items} == {"glyfada", "kallithea", "marousi", "athens-center"}
++
++
++def test_areas_region_filter_attica(client: TestClient):
 +    r = client.get("/api/areas?region=attica")
 +    assert r.status_code == 200
 +    items = r.json()["items"]
@@ -824,13 +861,13 @@ index 0000000..7cb10f0
 +        assert item["region"] == "attica"
 +
 +
-+def test_areas_unknown_region_returns_empty():
++def test_areas_unknown_region_returns_empty(client: TestClient):
 +    r = client.get("/api/areas?region=unknown_xyz")
 +    assert r.status_code == 200
 +    assert r.json() == {"items": []}
 +
 +
-+def test_areas_ordering_deterministic():
++def test_areas_ordering_deterministic(client: TestClient):
 +    r = client.get("/api/areas")
 +    items = r.json()["items"]
 +    counts = [i["salon_count"] for i in items]
@@ -843,50 +880,30 @@ index 0000000..7cb10f0
 +            assert counts[i] >= counts[i + 1]
 +
 +
-+def test_areas_no_authentication_required():
++def test_areas_no_authentication_required(client: TestClient):
 +    # No auth headers — must still return 200
 +    r = client.get("/api/areas", headers={})
 +    assert r.status_code == 200
 +
 +
-+def test_areas_registered_path_is_api_areas():
++def test_areas_registered_path_is_api_areas(client: TestClient):
 +    # Verify the route is at /api/areas by inspecting FastAPI's route list
 +    paths = [route.path for route in app.routes]
 +    assert "/api/areas" in paths
 +
 +
-+def test_areas_not_under_categories_prefix():
++def test_areas_not_under_categories_prefix(client: TestClient):
 +    paths = [route.path for route in app.routes]
 +    assert "/api/categories/areas" not in paths
 +
 +
-+def test_areas_no_conflicting_route_registrations():
++def test_areas_no_conflicting_route_registrations(client: TestClient):
 +    # All /api/areas routes must resolve to the same handler
 +    areas_routes = [r for r in app.routes if getattr(r, "path", "") == "/api/areas"]
 +    assert len(areas_routes) == 1
 +
 +
-+# ── Metadata integrity tests ──────────────────────────────────────────────────
-+
-+def test_metadata_slugs_unique():
-+    slugs = [meta["slug"] for meta in AREA_METADATA.values()]
-+    assert len(slugs) == len(set(slugs)), "Duplicate slugs in AREA_METADATA"
-+
-+
-+def test_metadata_district_keys_unique():
-+    keys = list(AREA_METADATA.keys())
-+    assert len(keys) == len(set(keys)), "Duplicate keys in AREA_METADATA"
-+
-+
-+def test_metadata_all_localized_names_non_empty():
-+    for district, meta in AREA_METADATA.items():
-+        for field in ("name_el", "name_en", "name_ru", "name_uk"):
-+            assert meta[field].strip(), (
-+                f"Empty {field} in AREA_METADATA[{district!r}]"
-+            )
-+
-+
-+def test_areas_single_aggregate_query(monkeypatch):
++def test_areas_single_aggregate_query(client: TestClient, monkeypatch):
 +    """Endpoint must execute one aggregate query, not one per area."""
 +    query_count = 0
 +    original_execute = Session.execute
@@ -901,3 +918,132 @@ index 0000000..7cb10f0
 +    assert query_count == 1, (
 +        f"Expected 1 DB query, got {query_count}. Check for N+1 in /api/areas."
 +    )
++
++
++# ── Repository-level SQL exclusion tests ──────────────────────────────────────
++# get_active_salon_counts_by_district() is tested directly against rows whose
++# district is NOT a key in AREA_METADATA, so these assertions fail if any of
++# the SQL WHERE clauses (IS NOT NULL / trim <> '' / is_active) are removed —
++# they don't rely on AREA_METADATA silently discarding unknown keys.
++
++def _counts_for_rows(rows: list[tuple[str | None, int]]) -> dict[str, int]:
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    try:
++        with engine.connect() as conn:
++            conn.execute(text("""
++                CREATE TABLE salons (
++                    id INTEGER PRIMARY KEY AUTOINCREMENT,
++                    address_district TEXT,
++                    is_active INTEGER NOT NULL DEFAULT 1
++                )
++            """))
++            for district, is_active in rows:
++                conn.execute(
++                    text("INSERT INTO salons (address_district, is_active) VALUES (:d, :a)"),
++                    {"d": district, "a": is_active},
++                )
++            conn.commit()
++        session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++        db = session_local()
++        try:
++            return get_active_salon_counts_by_district(db)
++        finally:
++            db.close()
++    finally:
++        engine.dispose()
++
++
++def test_repo_excludes_null_district():
++    counts = _counts_for_rows([("Unmapped District", 1), (None, 1)])
++    assert None not in counts
++    assert counts == {"Unmapped District": 1}
++
++
++def test_repo_excludes_empty_district():
++    counts = _counts_for_rows([("Unmapped District", 1), ("", 1)])
++    assert "" not in counts
++    assert counts == {"Unmapped District": 1}
++
++
++def test_repo_excludes_whitespace_district():
++    counts = _counts_for_rows([("Unmapped District", 1), ("   ", 1)])
++    assert "   " not in counts
++    assert counts == {"Unmapped District": 1}
++
++
++def test_repo_excludes_inactive_salons():
++    counts = _counts_for_rows([("Unmapped District", 1), ("Unmapped District", 0)])
++    assert counts == {"Unmapped District": 1}
++
++
++# ── Metadata integrity tests ──────────────────────────────────────────────────
++
++def test_metadata_slugs_unique():
++    slugs = [meta["slug"] for meta in AREA_METADATA.values()]
++    assert len(slugs) == len(set(slugs)), "Duplicate slugs in AREA_METADATA"
++
++
++def test_metadata_has_no_duplicate_literal_keys():
++    """Detect duplicate dict keys via AST — runtime dict silently deduplicates."""
++    tree = ast.parse(AREA_METADATA_FILE.read_text())
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Dict):
++            keys = [ast.literal_eval(k) for k in node.keys if k is not None]
++            seen: set = set()
++            for key in keys:
++                assert key not in seen, f"Duplicate key in area_metadata.py: '{key}'"
++                seen.add(key)
++
++
++def test_metadata_all_localized_names_non_empty():
++    for district, meta in AREA_METADATA.items():
++        for field in ("name_el", "name_en", "name_ru", "name_uk"):
++            assert meta[field].strip(), (
++                f"Empty {field} in AREA_METADATA[{district!r}]"
++            )
++
++
++def test_metadata_entries_have_exactly_required_fields():
++    for district, meta in AREA_METADATA.items():
++        assert set(meta.keys()) == METADATA_FIELDS, (
++            f"AREA_METADATA[{district!r}] has unexpected/missing fields: {set(meta.keys())}"
++        )
++
++
++def test_metadata_slugs_match_pattern():
++    for district, meta in AREA_METADATA.items():
++        assert SLUG_RE.match(meta["slug"]), (
++            f"AREA_METADATA[{district!r}] slug {meta['slug']!r} does not match "
++            f"^[a-z0-9]+(?:-[a-z0-9]+)*$"
++        )
++
++
++def test_metadata_region_is_approved():
++    for district, meta in AREA_METADATA.items():
++        assert meta["region"] in VALID_REGIONS, (
++            f"AREA_METADATA[{district!r}] has unapproved region {meta['region']!r}"
++        )
++
++
++def test_metadata_city_is_approved():
++    # DEC-010: City is one level of Country → Region → City → District/Area.
++    # East/West Attica satellite towns are classified under city="athens"
++    # (Athens metro MVP scope, DEC-012; product owner decision 2026-07-11) —
++    # they are not separate City entities.
++    for district, meta in AREA_METADATA.items():
++        assert meta["city"] in VALID_CITY_SLUGS, (
++            f"AREA_METADATA[{district!r}] has unapproved city {meta['city']!r}; "
++            f"approved set is {sorted(VALID_CITY_SLUGS)} (DEC-010)"
++        )
++
++
++def test_metadata_covers_all_canonical_districts():
++    # Every canonical district produced by the address normalization mapping
++    # must have presentation metadata, or /api/areas silently hides it.
++    canonical_districts = set(CITY_TO_DISTRICT.values())
++    missing = canonical_districts - set(AREA_METADATA)
++    assert not missing, f"Districts in CITY_TO_DISTRICT missing from AREA_METADATA: {missing}"
