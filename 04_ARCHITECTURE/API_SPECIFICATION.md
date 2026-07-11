@@ -118,10 +118,11 @@ implementation_status: Documents current API + MVP-required additions
 ]
 ```
 
-**Field notes:**
+**Field notes:** all ten keys shown above are always present in every item; the
+fields below may hold `null` — they are never absent:
 - `rating_google` is `null` if the salon has no Google rating
-- `primary_photo` is `null` if the salon has no photos
-- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); may be `null`/absent if hours aren't set for the current day
+- `primary_photo` is `null` when the salon has no photos
+- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); it is `null` when opening-hours data is unavailable for the current day
 
 **This is the confirmed, historically-accurate runtime contract (Decision T-038, 2026-07-11) — not an aspirational shape.** An earlier version of this document incorrectly specified `{"items": [...], "total": N}`; the endpoint has never actually returned that shape. Do not "fix" this endpoint to match a `{items, total}` wrapper — see the rationale below.
 
