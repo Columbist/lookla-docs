@@ -1,0 +1,241 @@
+diff --git a/backend/app/routers/salons.py b/backend/app/routers/salons.py
+index 46ed576..54e1326 100644
+--- a/backend/app/routers/salons.py
++++ b/backend/app/routers/salons.py
+@@ -10,7 +10,7 @@ from app.services.translate import is_bot, translate_batch
+ from app.data.area_metadata import get_district_by_area_slug
+ from app.core.database import get_db
+ from app.models.salon import Salon
+-from app.schemas.salon import SalonListItem, SalonDetail, PaginatedSalons, PhotoOut
++from app.schemas.salon import SalonListItem, SalonDetail, PaginatedSalons, PhotoOut, SalonMapItem
+ 
+ ATHENS_TZ = ZoneInfo("Europe/Athens")
+ 
+@@ -276,7 +276,7 @@ def _apply_area_filter(query, area: Optional[str], city: Optional[str]):
+     return query
+ 
+ 
+-@router.get("/map")
++@router.get("/map", response_model=list[SalonMapItem])
+ def map_salons(
+     area: Optional[str] = None,
+     city: Optional[str] = None,
+diff --git a/backend/app/schemas/salon.py b/backend/app/schemas/salon.py
+index 2809613..f5f15ff 100644
+--- a/backend/app/schemas/salon.py
++++ b/backend/app/schemas/salon.py
+@@ -107,6 +107,21 @@ class PaginatedSalons(BaseModel):
+     pages: int
+ 
+ 
++class SalonMapItem(BaseModel):
++    """GET /api/salons/map item. Root response is a bare list of these —
++    no pagination wrapper (see API_SPECIFICATION.md, decision T-038)."""
++    id: int
++    name: str
++    slug: Optional[str]
++    lat: float
++    lng: float
++    address_city: Optional[str]
++    phone_primary: Optional[str]
++    rating_google: Optional[float]
++    primary_photo: Optional[str] = None
++    is_open_now: Optional[bool] = None
++
++
+ class SearchResult(BaseModel):
+     type: str  # "salon" | "professional"
+     id: int
+diff --git a/backend/tests/test_salons_endpoint.py b/backend/tests/test_salons_endpoint.py
+index 6be5109..3147f7d 100644
+--- a/backend/tests/test_salons_endpoint.py
++++ b/backend/tests/test_salons_endpoint.py
+@@ -310,6 +310,47 @@ def test_map_category_filter_still_works_without_area(client):
+     assert "Glyfada Nails" in names
+ 
+ 
++def test_map_city_filter_still_works_without_area(client):
++    resp = client.get("/api/salons/map", params={"city": "Glyfada"})
++    items = resp.json()
++    assert len(items) == 2  # active Glyfada salons with coordinates
++    assert all(item["address_city"] == "Glyfada" for item in items)
++
++
++def test_map_min_rating_filter_still_works(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada", "min_rating": 4.6})
++    items = resp.json()
++    assert len(items) == 1
++    assert items[0]["name"] == "Glyfada Nails"
++
++
++def test_map_response_is_bare_array_not_paginated(client):
++    # T-038: the canonical contract is a bare list, not {"items": [...], "total": N}.
++    resp = client.get("/api/salons/map")
++    assert resp.status_code == 200
++    body = resp.json()
++    assert isinstance(body, list)
++    assert not isinstance(body, dict)
++
++
++def test_map_item_has_documented_fields(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    items = resp.json()
++    assert items
++    expected_fields = {
++        "id", "name", "slug", "lat", "lng", "address_city",
++        "phone_primary", "rating_google", "primary_photo", "is_open_now",
++    }
++    for item in items:
++        assert set(item.keys()) == expected_fields
++
++
++def test_map_excludes_inactive_salons(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    names = {item["name"] for item in resp.json()}
++    assert "Glyfada Inactive" not in names
++
++
+ def test_map_unknown_area_does_not_fall_back_to_city(client):
+     resp = client.get("/api/salons/map", params={"area": "unknown-area", "city": "Glyfada"})
+     assert resp.status_code == 200
+diff --git a/docs/04_ARCHITECTURE/API_SPECIFICATION.md b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
+index da56c6f..dbcb533 100644
+--- a/docs/04_ARCHITECTURE/API_SPECIFICATION.md
++++ b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
+@@ -4,7 +4,7 @@ status: Approved
+ version: 1.0
+ owner: Product Owner (columb@europe.com)
+ reviewers: []
+-last_updated: 2026-07-09
++last_updated: 2026-07-11
+ related_documents:
+   - 04_ARCHITECTURE/BACKEND_ARCHITECTURE.md
+   - 04_ARCHITECTURE/DATABASE_SCHEMA.md
+@@ -93,23 +93,48 @@ implementation_status: Documents current API + MVP-required additions
+ 
+ ### GET /api/salons/map
+ 
+-**Purpose:** Returns all matching salons (no pagination) with only location data, for map rendering.
++**Purpose:** Returns all matching salons (no pagination) with only map-relevant fields, for map rendering.
+ 
+ **Authentication:** None (public)
+ 
+-**Query Parameters:** Same as `/api/salons` except no `page`.
++**Query Parameters:** Same as `/api/salons` (including `area`, per DEC-010) except no `page`/`limit` — this endpoint is not paginated.
++
++**Response 200 — canonical contract: a bare JSON array, not `{items, total}`.**
+ 
+-**Response 200:**
+ ```json
+-{
+-  "items": [
+-    { "id": 1234, "slug": "glyfada-nails", "name": "Glyfada Nails", "lat": 37.868, "lng": 23.754, "is_open": true }
+-  ],
+-  "total": 47
+-}
++[
++  {
++    "id": 1234,
++    "name": "Glyfada Nails",
++    "slug": "glyfada-nails",
++    "lat": 37.868,
++    "lng": 23.754,
++    "address_city": "Glyfada",
++    "phone_primary": "+30 210 9641234",
++    "rating_google": 4.7,
++    "primary_photo": "https://cdn.lookla.gr/salons/1234/primary.webp",
++    "is_open_now": true
++  }
++]
+ ```
+ 
+-**Notes:** No pagination — returns all matching results. Coordinate-only response keeps payload small for map rendering.
++**Field notes:**
++- `rating_google` is `null` if the salon has no Google rating
++- `primary_photo` is `null` if the salon has no photos
++- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); may be `null`/absent if hours aren't set for the current day
++
++**This is the confirmed, historically-accurate runtime contract (Decision T-038, 2026-07-11) — not an aspirational shape.** An earlier version of this document incorrectly specified `{"items": [...], "total": N}`; the endpoint has never actually returned that shape. Do not "fix" this endpoint to match a `{items, total}` wrapper — see the rationale below.
++
++**Why a bare array, and not `{items, total}`:**
++- The endpoint returns *all* matching points — there is no pagination to describe via a `total` separate from the payload
++- `total` would be redundant with `response.length`
++- The existing frontend map consumer (`app/[locale]/search/page.tsx`) already consumes this endpoint as a bare array (`Array.isArray(d) ? d : []`) — changing the shape would be a breaking change to a working consumer for no product benefit
++
++**Filtering notes:**
++- Only `is_active = true` salons with **non-null `lat` and `lng`** are returned — a salon can appear in `GET /api/salons` (which has no coordinate requirement) and correctly be absent from this endpoint
++- `?area=glyfada` (and all other `GET /api/salons` filters — `city`, `q`, `category`, `min_rating`, `price_level`) apply identically here; `area` takes precedence over `city` exactly as in `GET /api/salons`
++- An unresolvable `?area=` value returns `[]` with HTTP 200, not 404, and does not fall back to `city` — same contract as the list endpoint
++- No pagination — returns all matching results (capped server-side at 2000 rows). Coordinate-only-plus-basics response keeps payload small for map rendering.
+ 
+ ---
+ 
+@@ -336,7 +361,7 @@ implementation_status: Documents current API + MVP-required additions
+ 
+ **Purpose:** Returns the list of Athens districts (and other areas) with salon counts. Used for area filter dropdown and AreaGrid on homepage.
+ 
+-**Status:** This endpoint does not exist yet. Required for MVP.
++**Status:** Implemented and verified in production (T-004, 2026-07-11).
+ 
+ **Authentication:** None (public)
+ 
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 36071db..6cb5241 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -222,6 +222,7 @@ Kallithea") and can't use the `address_district` index as efficiently.
+ ### T-038 — Resolve GET /api/salons/map response shape drift
+ **Priority:** P0 | **Owner:** BE/DOCS | **Estimate:** 0.5h | **Epic:** EPIC-02
+ **Dependencies:** T-005
++**Status:** ✅ Completed (2026-07-11)
+ 
+ **Description:** `API_SPECIFICATION.md` documents `GET /api/salons/map` as
+ returning `{"items": [...], "total": N}`. The actual, long-standing runtime
+@@ -232,20 +233,31 @@ resolved — one way or the other — before T-007 ships a frontend that
+ consumes this endpoint, so the frontend is built against a confirmed
+ contract rather than an aspirational one.
+ 
+-**Decision needed (pick one):**
+-- [ ] Option A — Update `API_SPECIFICATION.md` to document the real bare-list shape. No backend change.
+-- [ ] Option B — Change `GET /api/salons/map` to return `{"items": [...], "total": N}` to match the spec. Backend change + a frontend consumer update wherever `/api/salons/map` is already called.
++**Decision recorded: Option A** — the runtime bare-list contract is
++canonical; `API_SPECIFICATION.md` was updated to match, not the other
++way around. Rationale: the endpoint has no pagination (`total` would
++just duplicate `response.length`), and the existing frontend map
++consumer (`app/[locale]/search/page.tsx`) already parses the response
++as a bare array (`Array.isArray(d) ? d : []`) — changing to `{items,
++total}` would be a breaking change to a working consumer for no
++product benefit. Option B (redesign the endpoint) was rejected as
++unnecessary migration/regression risk for a shape that was never
++actually broken — only documented incorrectly.
++
++Backend now declares this explicitly via a `response_model` (was
++previously undeclared, returning a raw dict list) — verified
++byte-identical JSON output against production before/after.
+ 
+ **Acceptance Criteria:**
+-- [ ] Product/eng decision recorded (which option, and why)
+-- [ ] `API_SPECIFICATION.md` and the runtime response shape agree
+-- [ ] If Option B: existing map callers (if any exist pre-T-007) updated in the same PR
++- [x] Product/eng decision recorded (which option, and why) — Option A, see above
++- [x] `API_SPECIFICATION.md` and the runtime response shape agree
++- [x] Existing map caller (`app/[locale]/search/page.tsx`) confirmed already compatible — no frontend change needed
+ 
+ ---
+ 
+ ### T-007 — Update SearchFilters.tsx with area dropdown
+ **Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-02
+-**Dependencies:** T-004 (API endpoint must exist), T-038 (map response shape must be confirmed before the frontend consumes it)
++**Dependencies:** T-004 (API endpoint must exist), T-038 ✅ done — map response shape confirmed, unblocked
+ 
+ **Description:** Replace the city filter with an area filter. Fetch areas from `/api/areas`. Populate dropdown. Change filter label.
+ 
+@@ -1063,7 +1075,7 @@ Sitemap: https://lookla.gr/sitemap.xml
+ ```
+ T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
+                          T-004 → T-007  [area filter FE]
+-                         T-005 → T-038 → T-007  [map response shape decision, blocks FE]
++                         T-005 → T-038 ✅ → T-007  [map response shape decision — done, FE unblocked]
+ T-013 → T-019             [GA4 property + settings]
+ T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
+ T-016                     [Search Console]
