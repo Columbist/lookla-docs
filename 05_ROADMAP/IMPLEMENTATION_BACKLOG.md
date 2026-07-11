@@ -222,6 +222,7 @@ Kallithea") and can't use the `address_district` index as efficiently.
 ### T-038 — Resolve GET /api/salons/map response shape drift
 **Priority:** P0 | **Owner:** BE/DOCS | **Estimate:** 0.5h | **Epic:** EPIC-02
 **Dependencies:** T-005
+**Status:** ✅ Completed (2026-07-11)
 
 **Description:** `API_SPECIFICATION.md` documents `GET /api/salons/map` as
 returning `{"items": [...], "total": N}`. The actual, long-standing runtime
@@ -232,20 +233,31 @@ resolved — one way or the other — before T-007 ships a frontend that
 consumes this endpoint, so the frontend is built against a confirmed
 contract rather than an aspirational one.
 
-**Decision needed (pick one):**
-- [ ] Option A — Update `API_SPECIFICATION.md` to document the real bare-list shape. No backend change.
-- [ ] Option B — Change `GET /api/salons/map` to return `{"items": [...], "total": N}` to match the spec. Backend change + a frontend consumer update wherever `/api/salons/map` is already called.
+**Decision recorded: Option A** — the runtime bare-list contract is
+canonical; `API_SPECIFICATION.md` was updated to match, not the other
+way around. Rationale: the endpoint has no pagination (`total` would
+just duplicate `response.length`), and the existing frontend map
+consumer (`app/[locale]/search/page.tsx`) already parses the response
+as a bare array (`Array.isArray(d) ? d : []`) — changing to `{items,
+total}` would be a breaking change to a working consumer for no
+product benefit. Option B (redesign the endpoint) was rejected as
+unnecessary migration/regression risk for a shape that was never
+actually broken — only documented incorrectly.
+
+Backend now declares this explicitly via a `response_model` (was
+previously undeclared, returning a raw dict list) — verified
+byte-identical JSON output against production before/after.
 
 **Acceptance Criteria:**
-- [ ] Product/eng decision recorded (which option, and why)
-- [ ] `API_SPECIFICATION.md` and the runtime response shape agree
-- [ ] If Option B: existing map callers (if any exist pre-T-007) updated in the same PR
+- [x] Product/eng decision recorded (which option, and why) — Option A, see above
+- [x] `API_SPECIFICATION.md` and the runtime response shape agree
+- [x] Existing map caller (`app/[locale]/search/page.tsx`) confirmed already compatible — no frontend change needed
 
 ---
 
 ### T-007 — Update SearchFilters.tsx with area dropdown
 **Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-02
-**Dependencies:** T-004 (API endpoint must exist), T-038 (map response shape must be confirmed before the frontend consumes it)
+**Dependencies:** T-004 (API endpoint must exist), T-038 ✅ done — map response shape confirmed, unblocked
 
 **Description:** Replace the city filter with an area filter. Fetch areas from `/api/areas`. Populate dropdown. Change filter label.
 
@@ -1063,7 +1075,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ```
 T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
                          T-004 → T-007  [area filter FE]
-                         T-005 → T-038 → T-007  [map response shape decision, blocks FE]
+                         T-005 → T-038 ✅ → T-007  [map response shape decision — done, FE unblocked]
 T-013 → T-019             [GA4 property + settings]
 T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
 T-016                     [Search Console]

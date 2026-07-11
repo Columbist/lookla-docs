@@ -4,7 +4,7 @@ status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
-last_updated: 2026-07-09
+last_updated: 2026-07-11
 related_documents:
   - 04_ARCHITECTURE/BACKEND_ARCHITECTURE.md
   - 04_ARCHITECTURE/DATABASE_SCHEMA.md
@@ -93,23 +93,48 @@ implementation_status: Documents current API + MVP-required additions
 
 ### GET /api/salons/map
 
-**Purpose:** Returns all matching salons (no pagination) with only location data, for map rendering.
+**Purpose:** Returns all matching salons (no pagination) with only map-relevant fields, for map rendering.
 
 **Authentication:** None (public)
 
-**Query Parameters:** Same as `/api/salons` except no `page`.
+**Query Parameters:** Same as `/api/salons` (including `area`, per DEC-010) except no `page`/`limit` — this endpoint is not paginated.
 
-**Response 200:**
+**Response 200 — canonical contract: a bare JSON array, not `{items, total}`.**
+
 ```json
-{
-  "items": [
-    { "id": 1234, "slug": "glyfada-nails", "name": "Glyfada Nails", "lat": 37.868, "lng": 23.754, "is_open": true }
-  ],
-  "total": 47
-}
+[
+  {
+    "id": 1234,
+    "name": "Glyfada Nails",
+    "slug": "glyfada-nails",
+    "lat": 37.868,
+    "lng": 23.754,
+    "address_city": "Glyfada",
+    "phone_primary": "+30 210 9641234",
+    "rating_google": 4.7,
+    "primary_photo": "https://cdn.lookla.gr/salons/1234/primary.webp",
+    "is_open_now": true
+  }
+]
 ```
 
-**Notes:** No pagination — returns all matching results. Coordinate-only response keeps payload small for map rendering.
+**Field notes:**
+- `rating_google` is `null` if the salon has no Google rating
+- `primary_photo` is `null` if the salon has no photos
+- `is_open_now` is computed from `salon_hours` at Athens timezone (`Europe/Athens`); may be `null`/absent if hours aren't set for the current day
+
+**This is the confirmed, historically-accurate runtime contract (Decision T-038, 2026-07-11) — not an aspirational shape.** An earlier version of this document incorrectly specified `{"items": [...], "total": N}`; the endpoint has never actually returned that shape. Do not "fix" this endpoint to match a `{items, total}` wrapper — see the rationale below.
+
+**Why a bare array, and not `{items, total}`:**
+- The endpoint returns *all* matching points — there is no pagination to describe via a `total` separate from the payload
+- `total` would be redundant with `response.length`
+- The existing frontend map consumer (`app/[locale]/search/page.tsx`) already consumes this endpoint as a bare array (`Array.isArray(d) ? d : []`) — changing the shape would be a breaking change to a working consumer for no product benefit
+
+**Filtering notes:**
+- Only `is_active = true` salons with **non-null `lat` and `lng`** are returned — a salon can appear in `GET /api/salons` (which has no coordinate requirement) and correctly be absent from this endpoint
+- `?area=glyfada` (and all other `GET /api/salons` filters — `city`, `q`, `category`, `min_rating`, `price_level`) apply identically here; `area` takes precedence over `city` exactly as in `GET /api/salons`
+- An unresolvable `?area=` value returns `[]` with HTTP 200, not 404, and does not fall back to `city` — same contract as the list endpoint
+- No pagination — returns all matching results (capped server-side at 2000 rows). Coordinate-only-plus-basics response keeps payload small for map rendering.
 
 ---
 
@@ -336,7 +361,7 @@ implementation_status: Documents current API + MVP-required additions
 
 **Purpose:** Returns the list of Athens districts (and other areas) with salon counts. Used for area filter dropdown and AreaGrid on homepage.
 
-**Status:** This endpoint does not exist yet. Required for MVP.
+**Status:** Implemented and verified in production (T-004, 2026-07-11).
 
 **Authentication:** None (public)
 
