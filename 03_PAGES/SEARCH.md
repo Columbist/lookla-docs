@@ -4,7 +4,7 @@ status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
-last_updated: 2026-07-09
+last_updated: 2026-07-11
 related_documents:
   - 01_PRODUCT/USER_JOURNEYS.md
   - 01_PRODUCT/MVP_DEFINITION.md
@@ -98,14 +98,25 @@ All personas:
 - Glyfada, Kolonaki, Kallithea, Marousi, Piraeus, Nea Smyrni, Chalandri, Kifissia, Psirri, Exarchia, Pagkrati, etc.
 
 **Behaviour:**
-- Selection sets `area={slug}` in URL
-- API call: filters by `address_district ILIKE` (or by mapped `address_city` values until full hierarchy is implemented)
-- Selecting "Athens" returns all Athens metro area salons (not just central)
+- Selection sets `area={slug}` in URL, where `{slug}` is the stable public
+  slug returned by `GET /api/areas` (e.g. `glyfada`, `athens-center`) — never
+  a localized name or raw database value
+- API call: the slug is resolved server-side through a static
+  `AREA_METADATA` reverse lookup to the canonical `address_district` value,
+  then filtered with **exact equality** (`address_district = "Glyfada"`),
+  not `ILIKE`/substring matching — implemented and verified in production
+  (T-005, T-038)
+- An unresolvable/unknown `area` slug returns an empty result (HTTP 200,
+  not 404) rather than falling back to any other filter
 - Clear filter → remove `area` param, show all results
 
-**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы"
+**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы" / "Усі райони"
 
-**Implementation note:** Until the full location hierarchy migration is complete (DEC-010), the area filter maps user-visible district names to the corresponding `address_city` values in the database. This mapping must be defined in the backend before MVP launch.
+**Legacy `city` parameter:** `?city=` (matching `address_city ILIKE`) is kept
+for backwards-compat with old bookmarked/shared URLs. `area` takes
+precedence over `city` when both are present. The Search page UI offers
+only the Area dropdown — there is no separate City control — but incoming
+URLs with `?city=` alone continue to return results (T-007).
 
 ---
 
@@ -150,7 +161,11 @@ The header search bar persists on the Search page and reflects `?q=` param. Edit
 Each card shows:
 - Primary photo (thumbnail)
 - Salon name (in locale: translated where available)
-- Area/district (from `address_city` until hierarchy is implemented)
+- Area/district: currently shows `address_city` — `SalonCard` has not been
+  migrated to the district-level `AREA_METADATA` data added by T-004/T-005;
+  this is not blocked on any pending hierarchy work (the hierarchy is
+  implemented — see the Area Filter section above), just not yet wired into
+  the card component
 - Category badge(s)
 - Open / Closed badge (computed from working hours + current Athens time)
 - Rating (stars + count): "4.7 ★ (128)"
@@ -288,9 +303,9 @@ All filter state lives in the URL query string:
 ## Implementation Notes
 
 **Changes from current implementation:**
-1. Filter label: "City" → "Area" (copy change in all 4 languages)
-2. Area filter values: must include Athens districts (Glyfada, Kolonaki, etc.) not just "Athens"
-3. Backend: add district-to-city mapping for `address_city` filter until full hierarchy is implemented
+1. ✅ Done (T-007) — Filter label: "City" → "Area" (copy change in all 4 languages)
+2. ✅ Done (T-004/T-005) — Area filter values: districts from `AREA_METADATA` with salon counts, not just "Athens"
+3. ✅ Done (T-005) — Backend resolves the `area` slug to the canonical `address_district` via `AREA_METADATA` and filters with exact equality; no `address_city` mapping workaround was needed in the end (see Area Filter section above)
 4. Verified label on SalonCard: replace ✓ icon with text label per DEC-014
 5. No booking buttons on cards (current state is correct — confirm no stubs present)
 
