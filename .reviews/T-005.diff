@@ -106,10 +106,10 @@ index 4d232fc..cec96e5 100644
          query = query.filter(
 diff --git a/backend/tests/test_salons_endpoint.py b/backend/tests/test_salons_endpoint.py
 new file mode 100644
-index 0000000..6c2bcf2
+index 0000000..6be5109
 --- /dev/null
 +++ b/backend/tests/test_salons_endpoint.py
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,367 @@
 +"""
 +T-005: `?area=` filter on GET /api/salons and GET /api/salons/map.
 +
@@ -174,6 +174,9 @@ index 0000000..6c2bcf2
 +    dict(name="No District Salon", slug="no-district-salon", address_city="Athens",
 +         address_district=None, lat=37.90, lng=23.70, is_active=True,
 +         rating_google=3.5, rating_count=1, description="unmapped district"),
++    dict(name="Glyfada No Coordinates", slug="glyfada-no-coordinates", address_city="Glyfada",
++         address_district="Glyfada", lat=None, lng=None, is_active=True,
++         rating_google=4.1, rating_count=6, description="active but ungeocoded"),
 +]
 +
 +
@@ -293,7 +296,8 @@ index 0000000..6c2bcf2
 +    resp = client.get("/api/salons", params={"area": "glyfada"})
 +    assert resp.status_code == 200
 +    data = resp.json()
-+    assert data["total"] == 2  # Glyfada Nails + Glyfada Hair, inactive excluded
++    # Glyfada Nails + Glyfada Hair + Glyfada No Coordinates; Glyfada Inactive excluded
++    assert data["total"] == 3
 +    assert all(item["address_city"] == "Glyfada" for item in data["items"])
 +
 +
@@ -315,7 +319,7 @@ index 0000000..6c2bcf2
 +
 +def test_list_area_case_insensitive_end_to_end(client):
 +    resp = client.get("/api/salons", params={"area": "GLYFADA"})
-+    assert resp.json()["total"] == 2
++    assert resp.json()["total"] == 3
 +
 +
 +def test_list_unknown_area_returns_empty_not_404(client):
@@ -328,14 +332,14 @@ index 0000000..6c2bcf2
 +def test_list_legacy_city_filter_still_works(client):
 +    resp = client.get("/api/salons", params={"city": "Glyfada"})
 +    data = resp.json()
-+    assert data["total"] == 2
++    assert data["total"] == 3
 +    assert all("Glyfada" in item["address_city"] for item in data["items"])
 +
 +
 +def test_list_area_takes_precedence_over_city(client):
 +    resp = client.get("/api/salons", params={"area": "glyfada", "city": "Athens"})
 +    data = resp.json()
-+    assert data["total"] == 2
++    assert data["total"] == 3
 +    assert all(item["address_city"] == "Glyfada" for item in data["items"])
 +
 +
@@ -349,7 +353,7 @@ index 0000000..6c2bcf2
 +def test_list_blank_area_falls_back_to_city(client):
 +    resp = client.get("/api/salons", params={"area": "   ", "city": "Glyfada"})
 +    data = resp.json()
-+    assert data["total"] == 2
++    assert data["total"] == 3
 +
 +
 +def test_list_area_combines_with_q(client):
@@ -376,9 +380,9 @@ index 0000000..6c2bcf2
 +def test_list_area_pagination_total_reflects_filtered_area(client):
 +    resp = client.get("/api/salons", params={"area": "glyfada", "limit": 1})
 +    data = resp.json()
-+    assert data["total"] == 2
++    assert data["total"] == 3
 +    assert len(data["items"]) == 1
-+    assert data["pages"] == 2
++    assert data["pages"] == 3
 +
 +
 +def test_list_area_excludes_inactive_salons(client):
@@ -418,13 +422,33 @@ index 0000000..6c2bcf2
 +    assert "Glyfada Nails" in names
 +
 +
-+def test_list_and_map_return_same_ids_for_area(client):
++def test_map_unknown_area_does_not_fall_back_to_city(client):
++    resp = client.get("/api/salons/map", params={"area": "unknown-area", "city": "Glyfada"})
++    assert resp.status_code == 200
++    assert resp.json() == []
++
++
++def test_map_ids_are_subset_of_list_ids_for_area(client):
++    # The map endpoint additionally requires lat/lng IS NOT NULL, which the
++    # list endpoint does not — so map_ids must be a strict subset of
++    # list_ids, not equal to it. See test_list_includes_and_map_excludes_
++    # salon_without_coordinates below for the salon that makes this strict.
 +    list_resp = client.get("/api/salons", params={"area": "glyfada", "limit": 100})
 +    map_resp = client.get("/api/salons/map", params={"area": "glyfada"})
 +    list_ids = {item["id"] for item in list_resp.json()["items"]}
 +    map_ids = {item["id"] for item in map_resp.json()}
-+    assert list_ids == map_ids
-+    assert list_ids  # sanity: not both trivially empty
++    assert map_ids.issubset(list_ids)
++    assert map_ids < list_ids
++    assert map_ids  # sanity: not trivially empty
++
++
++def test_list_includes_and_map_excludes_salon_without_coordinates(client):
++    list_resp = client.get("/api/salons", params={"area": "glyfada", "limit": 100})
++    map_resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    list_names = {item["name"] for item in list_resp.json()["items"]}
++    map_names = {item["name"] for item in map_resp.json()}
++    assert "Glyfada No Coordinates" in list_names
++    assert "Glyfada No Coordinates" not in map_names
 +
 +
 +# ── Regression / query quality ────────────────────────────────────────────────
@@ -454,12 +478,15 @@ index 0000000..6c2bcf2
 +    with_area = _query_count(client, "/api/salons/map?area=glyfada")
 +    assert with_area == without_area
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 5f1dc20..65fb707 100644
+index 5f1dc20..af2aaa0 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -168,21 +168,41 @@ See `docs/.reviews/T-003a-review.md` for full investigation results and alternat
+@@ -166,23 +166,43 @@ See `docs/.reviews/T-003a-review.md` for full investigation results and alternat
+ 
+ ### T-005 — Add area param to GET /api/salons
  **Priority:** P0 | **Owner:** BE | **Estimate:** 1.5h | **Epic:** EPIC-02
- **Dependencies:** T-003
+-**Dependencies:** T-003
++**Dependencies:** T-004
  
 -**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works.
 +**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works. Applies to both `GET /api/salons` and `GET /api/salons/map`.
@@ -506,3 +533,59 @@ index 5f1dc20..65fb707 100644
  
  ---
  
+@@ -199,9 +219,33 @@ elif city:  # legacy fallback
+ 
+ ---
+ 
++### T-038 — Resolve GET /api/salons/map response shape drift
++**Priority:** P0 | **Owner:** BE/DOCS | **Estimate:** 0.5h | **Epic:** EPIC-02
++**Dependencies:** T-005
++
++**Description:** `API_SPECIFICATION.md` documents `GET /api/salons/map` as
++returning `{"items": [...], "total": N}`. The actual, long-standing runtime
++contract (confirmed unchanged by T-005 — see T-005 review) returns a bare
++list: `[{"id": 1, ...}, ...]`. T-005 deliberately preserved the real runtime
++shape rather than silently redesigning the endpoint. This drift must be
++resolved — one way or the other — before T-007 ships a frontend that
++consumes this endpoint, so the frontend is built against a confirmed
++contract rather than an aspirational one.
++
++**Decision needed (pick one):**
++- [ ] Option A — Update `API_SPECIFICATION.md` to document the real bare-list shape. No backend change.
++- [ ] Option B — Change `GET /api/salons/map` to return `{"items": [...], "total": N}` to match the spec. Backend change + a frontend consumer update wherever `/api/salons/map` is already called.
++
++**Acceptance Criteria:**
++- [ ] Product/eng decision recorded (which option, and why)
++- [ ] `API_SPECIFICATION.md` and the runtime response shape agree
++- [ ] If Option B: existing map callers (if any exist pre-T-007) updated in the same PR
++
++---
++
+ ### T-007 — Update SearchFilters.tsx with area dropdown
+ **Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-02
+-**Dependencies:** T-004 (API endpoint must exist)
++**Dependencies:** T-004 (API endpoint must exist), T-038 (map response shape must be confirmed before the frontend consumes it)
+ 
+ **Description:** Replace the city filter with an area filter. Fetch areas from `/api/areas`. Populate dropdown. Change filter label.
+ 
+@@ -899,9 +943,10 @@ Sitemap: https://lookla.gr/sitemap.xml
+ | T-003 Backfill address_district | P0 | BE | 2 | EPIC-01 | T-002 |
+ | T-003a Verify GIN index | ~~P0~~ DEFERRED | DB | — | EPIC-01 | — |
+ | T-004 GET /api/areas endpoint | P0 | BE | 2 | EPIC-02 | T-003 |
+-| T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-003 |
++| T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-004 |
+ | T-006 CITY_SYNONYMS district update | P1 | BE | 1 | EPIC-02 | T-003 |
+-| T-007 SearchFilters area dropdown | P0 | FE | 2 | EPIC-02 | T-004 |
++| T-038 Resolve /api/salons/map response shape drift | P0 | BE/DOCS | 0.5 | EPIC-02 | T-005 |
++| T-007 SearchFilters area dropdown | P0 | FE | 2 | EPIC-02 | T-004, T-038 |
+ | T-008 Homepage AreaGrid | P1 | FE | 1.5 | EPIC-02 | T-004 |
+ | T-009 Remove booking stubs | P0 | FE | 1 | EPIC-03 | — |
+ | T-010 Contact CTAs | P0 | FE | 1.5 | EPIC-03 | T-009 |
+@@ -961,6 +1006,7 @@ Sitemap: https://lookla.gr/sitemap.xml
+ ```
+ T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
+                          T-004 → T-007  [area filter FE]
++                         T-005 → T-038 → T-007  [map response shape decision, blocks FE]
+ T-013 → T-019             [GA4 property + settings]
+ T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
+ T-016                     [Search Console]
