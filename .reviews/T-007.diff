@@ -1,0 +1,470 @@
+diff --git a/docs/03_PAGES/SEARCH.md b/docs/03_PAGES/SEARCH.md
+index 6f398aa..9134aad 100644
+--- a/docs/03_PAGES/SEARCH.md
++++ b/docs/03_PAGES/SEARCH.md
+@@ -4,7 +4,7 @@ status: Approved
+ version: 1.0
+ owner: Product Owner (columb@europe.com)
+ reviewers: []
+-last_updated: 2026-07-09
++last_updated: 2026-07-11
+ related_documents:
+   - 01_PRODUCT/USER_JOURNEYS.md
+   - 01_PRODUCT/MVP_DEFINITION.md
+@@ -98,14 +98,25 @@ All personas:
+ - Glyfada, Kolonaki, Kallithea, Marousi, Piraeus, Nea Smyrni, Chalandri, Kifissia, Psirri, Exarchia, Pagkrati, etc.
+ 
+ **Behaviour:**
+-- Selection sets `area={slug}` in URL
+-- API call: filters by `address_district ILIKE` (or by mapped `address_city` values until full hierarchy is implemented)
+-- Selecting "Athens" returns all Athens metro area salons (not just central)
++- Selection sets `area={slug}` in URL, where `{slug}` is the stable public
++  slug returned by `GET /api/areas` (e.g. `glyfada`, `athens-center`) — never
++  a localized name or raw database value
++- API call: the slug is resolved server-side through a static
++  `AREA_METADATA` reverse lookup to the canonical `address_district` value,
++  then filtered with **exact equality** (`address_district = "Glyfada"`),
++  not `ILIKE`/substring matching — implemented and verified in production
++  (T-005, T-038)
++- An unresolvable/unknown `area` slug returns an empty result (HTTP 200,
++  not 404) rather than falling back to any other filter
+ - Clear filter → remove `area` param, show all results
+ 
+-**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы"
++**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы" / "Усі райони"
+ 
+-**Implementation note:** Until the full location hierarchy migration is complete (DEC-010), the area filter maps user-visible district names to the corresponding `address_city` values in the database. This mapping must be defined in the backend before MVP launch.
++**Legacy `city` parameter:** `?city=` (matching `address_city ILIKE`) is kept
++for backwards-compat with old bookmarked/shared URLs. `area` takes
++precedence over `city` when both are present. The Search page UI offers
++only the Area dropdown — there is no separate City control — but incoming
++URLs with `?city=` alone continue to return results (T-007).
+ 
+ ---
+ 
+@@ -150,7 +161,11 @@ The header search bar persists on the Search page and reflects `?q=` param. Edit
+ Each card shows:
+ - Primary photo (thumbnail)
+ - Salon name (in locale: translated where available)
+-- Area/district (from `address_city` until hierarchy is implemented)
++- Area/district: currently shows `address_city` — `SalonCard` has not been
++  migrated to the district-level `AREA_METADATA` data added by T-004/T-005;
++  this is not blocked on any pending hierarchy work (the hierarchy is
++  implemented — see the Area Filter section above), just not yet wired into
++  the card component
+ - Category badge(s)
+ - Open / Closed badge (computed from working hours + current Athens time)
+ - Rating (stars + count): "4.7 ★ (128)"
+@@ -288,9 +303,9 @@ All filter state lives in the URL query string:
+ ## Implementation Notes
+ 
+ **Changes from current implementation:**
+-1. Filter label: "City" → "Area" (copy change in all 4 languages)
+-2. Area filter values: must include Athens districts (Glyfada, Kolonaki, etc.) not just "Athens"
+-3. Backend: add district-to-city mapping for `address_city` filter until full hierarchy is implemented
++1. ✅ Done (T-007) — Filter label: "City" → "Area" (copy change in all 4 languages)
++2. ✅ Done (T-004/T-005) — Area filter values: districts from `AREA_METADATA` with salon counts, not just "Athens"
++3. ✅ Done (T-005) — Backend resolves the `area` slug to the canonical `address_district` via `AREA_METADATA` and filters with exact equality; no `address_city` mapping workaround was needed in the end (see Area Filter section above)
+ 4. Verified label on SalonCard: replace ✓ icon with text label per DEC-014
+ 5. No booking buttons on cards (current state is correct — confirm no stubs present)
+ 
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 1221ca6..3e9b2ef 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -3,7 +3,9 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+-import type { SalonListItem, City, Category } from '@/lib/api';
++import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api';
++import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
++import type { Locale } from '@/i18n/request';
+ import SalonCard from '@/components/SalonCard';
+ import dynamic from 'next/dynamic';
+ 
+@@ -19,6 +21,7 @@ function SearchContent({ locale }: { locale: string }) {
+   const inputRef = useRef<HTMLInputElement>(null);
+   const sentinelRef = useRef<HTMLDivElement>(null);
+ 
++  const area = sp.get('area') || '';
+   const city = sp.get('city') || '';
+   const category = sp.get('category') || '';
+   const q = sp.get('q') || '';
+@@ -26,12 +29,13 @@ function SearchContent({ locale }: { locale: string }) {
+   const minRating = sp.get('min_rating') || '';
+ 
+   const [salons, setSalons] = useState<SalonListItem[]>([]);
+-  const [mapSalons, setMapSalons] = useState<SalonListItem[]>([]);
++  const [mapSalons, setMapSalons] = useState<SalonMapItem[]>([]);
+   const [total, setTotal] = useState(0);
+   const [loading, setLoading] = useState(true);
+   const [loadingMore, setLoadingMore] = useState(false);
+-  const [cities, setCities] = useState<City[]>([]);
+   const [categories, setCategories] = useState<Category[]>([]);
++  const [areas, setAreas] = useState<AreaItem[]>([]);
++  const [areasError, setAreasError] = useState(false);
+   const [mapLoading, setMapLoading] = useState(false);
+   const [filtersOpen, setFiltersOpen] = useState(false);
+   const filtersRef = useRef<HTMLDivElement>(null);
+@@ -42,8 +46,15 @@ function SearchContent({ locale }: { locale: string }) {
+   const busyRef = useRef(false);
+ 
+   useEffect(() => {
+-    fetch(`/api/cities`).then(r => r.json()).then(setCities).catch(() => {});
+     fetch(`/api/categories?lang=${locale}`).then(r => r.json()).then(setCategories).catch(() => {});
++    fetch(`/api/areas`)
++      .then(r => r.json())
++      .then(d => {
++        if (!Array.isArray(d?.items)) throw new Error('malformed /api/areas response');
++        setAreas(d.items);
++        setAreasError(false);
++      })
++      .catch(() => { setAreas([]); setAreasError(true); });
+   }, [locale]);
+ 
+   useEffect(() => {
+@@ -59,12 +70,13 @@ function SearchContent({ locale }: { locale: string }) {
+ 
+   const buildParams = useCallback((page: number) => {
+     const params = new URLSearchParams({ limit: String(LIMIT), page: String(page) });
++    if (area) params.set('area', area);
+     if (city) params.set('city', city);
+     if (q) params.set('q', q);
+     if (category) params.set('category', category);
+     if (minRating) params.set('min_rating', minRating);
+     return params;
+-  }, [city, q, category, minRating]);
++  }, [area, city, q, category, minRating]);
+ 
+   const loadMore = useCallback(async () => {
+     if (busyRef.current || !hasMoreRef.current) return;
+@@ -98,13 +110,14 @@ function SearchContent({ locale }: { locale: string }) {
+       })
+       .catch(() => { setSalons([]); setTotal(0); hasMoreRef.current = false; })
+       .finally(() => setLoading(false));
+-  }, [city, q, category, minRating]); // eslint-disable-line react-hooks/exhaustive-deps
++  }, [area, city, q, category, minRating]); // eslint-disable-line react-hooks/exhaustive-deps
+ 
+   // Map fetch
+   useEffect(() => {
+     if (view !== 'map') return;
+     setMapLoading(true);
+     const params = new URLSearchParams();
++    if (area) params.set('area', area);
+     if (city) params.set('city', city);
+     if (q) params.set('q', q);
+     if (category) params.set('category', category);
+@@ -114,7 +127,7 @@ function SearchContent({ locale }: { locale: string }) {
+       .then(d => setMapSalons(Array.isArray(d) ? d : []))
+       .catch(() => setMapSalons([]))
+       .finally(() => setMapLoading(false));
+-  }, [view, city, q, category, minRating]);
++  }, [view, area, city, q, category, minRating]);
+ 
+   // IntersectionObserver — fires loadMore when sentinel enters viewport
+   useEffect(() => {
+@@ -135,8 +148,21 @@ function SearchContent({ locale }: { locale: string }) {
+     router.push(`${pathname}?${p}`);
+   }, [sp, router, pathname]);
+ 
++  const selectArea = useCallback((slug: string) => {
++    router.push(`${pathname}?${buildAreaUrlParams(sp, slug)}`);
++  }, [sp, router, pathname]);
++
++  const clearFilters = useCallback(() => {
++    const p = new URLSearchParams(sp.toString());
++    ['area', 'city', 'category', 'min_rating'].forEach(k => p.delete(k));
++    p.delete('page');
++    router.push(`${pathname}?${p}`);
++    setFiltersOpen(false);
++  }, [sp, router, pathname]);
++
+   const doSearch = () => update('q', inputRef.current?.value || '');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
++  const activeArea = findAreaBySlug(areas, area);
+ 
+   return (
+     <div className="min-h-screen bg-gray-50">
+@@ -161,7 +187,7 @@ function SearchContent({ locale }: { locale: string }) {
+           {/* Filter button */}
+           <div className="relative" ref={filtersRef}>
+             {(() => {
+-              const activeCount = [city, category, minRating].filter(Boolean).length;
++              const activeCount = [area || city, category, minRating].filter(Boolean).length;
+               return (
+                 <button
+                   onClick={() => setFiltersOpen(o => !o)}
+@@ -182,12 +208,17 @@ function SearchContent({ locale }: { locale: string }) {
+             {filtersOpen && (
+               <div className="absolute top-full right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-50 space-y-3">
+                 <div>
+-                  <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_city')}</label>
+-                  <select value={city} onChange={e => { update('city', e.target.value); }}
+-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200">
+-                    <option value="">{t('all_cities')}</option>
+-                    {cities.slice(0, 30).map(c => <option key={c.city} value={c.city}>{c.city} ({c.count})</option>)}
++                  <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_area')}</label>
++                  <select value={area} disabled={areasError} onChange={e => { selectArea(e.target.value); }}
++                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 disabled:opacity-60">
++                    <option value="">{t('all_areas')}</option>
++                    {areas.map(a => (
++                      <option key={a.slug} value={a.slug}>
++                        {getAreaName(a, locale as Locale)} ({a.salon_count})
++                      </option>
++                    ))}
+                   </select>
++                  {areasError && <p className="text-xs text-red-400 mt-1">{t('areas_load_error')}</p>}
+                 </div>
+                 <div>
+                   <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_category')}</label>
+@@ -207,10 +238,10 @@ function SearchContent({ locale }: { locale: string }) {
+                     <option value="4.5">★ 4.5+</option>
+                   </select>
+                 </div>
+-                {(city || category || minRating) && (
+-                  <button onClick={() => { ['city','category','min_rating'].forEach(k => update(k, '')); setFiltersOpen(false); }}
++                {(area || city || category || minRating) && (
++                  <button onClick={clearFilters}
+                     className="w-full text-xs text-gray-400 hover:text-red-500 pt-1">
+-                    ✕ Εκκαθάριση φίλτρων
++                    ✕ {t('clear_filters')}
+                   </button>
+                 )}
+               </div>
+@@ -233,7 +264,9 @@ function SearchContent({ locale }: { locale: string }) {
+       <div className="max-w-6xl mx-auto px-4 py-6">
+         <p className="text-sm text-gray-500 mb-4">
+           {loading ? '...' : `${total} ${t('results')}`}
+-          {city && <span className="ml-1 font-medium text-gray-700">— {city}</span>}
++          {area
++            ? <span className="ml-1 font-medium text-gray-700">— {activeArea ? getAreaName(activeArea, locale as Locale) : area}</span>
++            : city && <span className="ml-1 font-medium text-gray-700">— {city}</span>}
+           {category && <span className="ml-1 font-medium text-gray-700">— {categories.find(c => c.slug === category)?.name || category}</span>}
+         </p>
+ 
+@@ -250,6 +283,17 @@ function SearchContent({ locale }: { locale: string }) {
+                 ))
+               ) : salons.length > 0 ? (
+                 salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} />)
++              ) : area ? (
++                <div className="col-span-3 text-center py-16 text-gray-400 space-y-3">
++                  <p>
++                    {activeArea
++                      ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
++                      : t('no_salons_in_this_area')}
++                  </p>
++                  <button onClick={clearFilters} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                    {t('clear_filters')}
++                  </button>
++                </div>
+               ) : (
+                 <div className="col-span-3 text-center py-16 text-gray-400">{t('no_results')}</div>
+               )}
+diff --git a/frontend/components/MapView.tsx b/frontend/components/MapView.tsx
+index 75da3f9..68ef248 100644
+--- a/frontend/components/MapView.tsx
++++ b/frontend/components/MapView.tsx
+@@ -1,7 +1,7 @@
+ 'use client';
+ import { useEffect, useRef, useState } from 'react';
+ import { useTranslations } from 'next-intl';
+-import type { SalonListItem } from '@/lib/api';
++import type { SalonMapItem } from '@/lib/api';
+ 
+ const TILES: Record<string, { url: string; attribution: string }> = {
+   el: {
+@@ -32,7 +32,7 @@ const DEFAULT_CENTER: [number, number] = [37.9838, 23.7275];
+ const DEFAULT_ZOOM = 10;
+ 
+ interface Props {
+-  salons: SalonListItem[];
++  salons: SalonMapItem[];
+   locale: string;
+ }
+ 
+@@ -42,7 +42,7 @@ export default function MapView({ salons, locale }: Props) {
+   const layerGroupRef = useRef<any>(null);
+   const leafletRef = useRef<any>(null);
+   const userPosRef = useRef<[number, number] | null>(null);
+-  const [selected, setSelected] = useState<SalonListItem | null>(null);
++  const [selected, setSelected] = useState<SalonMapItem | null>(null);
+   const [locating, setLocating] = useState(true);
+   const t = useTranslations('salon');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+@@ -55,13 +55,13 @@ export default function MapView({ salons, locale }: Props) {
+       iconAnchor: [7, 7],
+     });
+ 
+-  const getVisibleSalons = (all: SalonListItem[]): SalonListItem[] => {
++  const getVisibleSalons = (all: SalonMapItem[]): SalonMapItem[] => {
+     const pos = userPosRef.current;
+     if (!pos) return all;
+     return all.filter(s => s.lat && s.lng && haversineKm(pos[0], pos[1], s.lat!, s.lng!) <= NEARBY_KM);
+   };
+ 
+-  const refreshMarkers = (L: any, visible: SalonListItem[]) => {
++  const refreshMarkers = (L: any, visible: SalonMapItem[]) => {
+     if (!layerGroupRef.current) return;
+     layerGroupRef.current.clearLayers();
+     const icon = buildIcon(L);
+@@ -170,7 +170,7 @@ export default function MapView({ salons, locale }: Props) {
+               <p className="text-xs text-gray-500 mt-0.5">{selected.address_city}</p>
+               {selected.rating_google && (
+                 <p className="text-xs text-yellow-500 mt-1">
+-                  ★ {parseFloat(selected.rating_google).toFixed(1)}
++                  ★ {selected.rating_google.toFixed(1)}
+                 </p>
+               )}
+               <div className="flex gap-2 mt-2">
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index f1c224d..7824213 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -84,3 +84,31 @@ export interface SearchResult {
+ }
+ export interface City { city: string; count: number; }
+ export interface Category { id: number; slug: string; name: string; name_en: string; parent_id?: number; icon?: string; children: Category[]; }
++
++// GET /api/areas (T-004) — district filter options, ordered by salon_count DESC
++export interface AreaItem {
++  slug: string;
++  name_el: string;
++  name_en: string;
++  name_ru: string;
++  name_uk: string;
++  salon_count: number;
++  region: string;
++  city: string;
++}
++export interface AreasResponse { items: AreaItem[]; }
++
++// GET /api/salons/map (T-038) — bare array, not {items, total}. See
++// API_SPECIFICATION.md §GET /api/salons/map for the confirmed contract.
++export interface SalonMapItem {
++  id: number;
++  name: string;
++  slug: string | null;
++  lat: number;
++  lng: number;
++  address_city: string | null;
++  phone_primary: string | null;
++  rating_google: number | null;
++  primary_photo: string | null;
++  is_open_now: boolean | null;
++}
+diff --git a/frontend/lib/areaFilter.ts b/frontend/lib/areaFilter.ts
+new file mode 100644
+index 0000000..82f825f
+--- /dev/null
++++ b/frontend/lib/areaFilter.ts
+@@ -0,0 +1,41 @@
++// Pure helpers for the Search page Area filter (T-007). Kept dependency-free
++// (no React/DOM) so they can run under node:test without a browser/JSDOM.
++import type { Locale } from '@/i18n/request';
++import type { AreaItem } from '@/lib/api';
++
++export function getAreaName(area: AreaItem, locale: Locale): string {
++  switch (locale) {
++    case 'el':
++      return area.name_el;
++    case 'ru':
++      return area.name_ru;
++    case 'uk':
++      return area.name_uk;
++    default:
++      return area.name_en;
++  }
++}
++
++export function findAreaBySlug(areas: AreaItem[], slug: string): AreaItem | undefined {
++  return areas.find(a => a.slug === slug);
++}
++
++/**
++ * Applies the Area-select onChange semantics to a URLSearchParams instance:
++ * selecting a slug sets `area` and drops the legacy `city` param (T-005:
++ * area takes precedence server-side, but the UI only ever has one active
++ * location control at a time); clearing the selection just drops `area`.
++ * Always resets `page` since the result set changes. Returns a new
++ * URLSearchParams — does not mutate the input.
++ */
++export function buildAreaUrlParams(current: URLSearchParams, slug: string): URLSearchParams {
++  const params = new URLSearchParams(current);
++  if (slug) {
++    params.set('area', slug);
++    params.delete('city');
++  } else {
++    params.delete('area');
++  }
++  params.delete('page');
++  return params;
++}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 67f7fb3..3cd6d5b 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -32,6 +32,12 @@
+     "placeholder": "Αναζήτηση...",
+     "results_count": "{count} αποτελέσματα",
+     "filter_city": "Πόλη",
++    "filter_area": "Περιοχή",
++    "all_areas": "Όλες οι περιοχές",
++    "no_salons_in_area": "Δεν βρέθηκαν σαλόνια στην περιοχή {area}",
++    "no_salons_in_this_area": "Δεν βρέθηκαν σαλόνια σε αυτή την περιοχή",
++    "areas_load_error": "Οι περιοχές δεν είναι διαθέσιμες αυτή τη στιγμή",
++    "clear_filters": "Εκκαθάριση φίλτρων",
+     "filter_category": "Κατηγορία",
+     "filter_rating": "Αξιολόγηση",
+     "filter_price": "Τιμή",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 858950d..8f5033e 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -32,6 +32,12 @@
+     "placeholder": "Search...",
+     "results_count": "{count} results",
+     "filter_city": "City",
++    "filter_area": "Area",
++    "all_areas": "All areas",
++    "no_salons_in_area": "No salons found in {area}",
++    "no_salons_in_this_area": "No salons found in this area",
++    "areas_load_error": "Areas are currently unavailable",
++    "clear_filters": "Clear filters",
+     "filter_category": "Category",
+     "filter_rating": "Rating",
+     "filter_price": "Price",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 825a28b..8e27cc3 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -32,6 +32,12 @@
+     "placeholder": "Поиск...",
+     "results_count": "{count} результатов",
+     "filter_city": "Город",
++    "filter_area": "Район",
++    "all_areas": "Все районы",
++    "no_salons_in_area": "Салоны не найдены в районе {area}",
++    "no_salons_in_this_area": "Салоны не найдены в этом районе",
++    "areas_load_error": "Районы временно недоступны",
++    "clear_filters": "Очистить фильтры",
+     "filter_category": "Категория",
+     "filter_rating": "Рейтинг",
+     "filter_price": "Цена",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index b8f3fa6..d4c409e 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -32,6 +32,12 @@
+     "placeholder": "Пошук...",
+     "results_count": "{count} результатів",
+     "filter_city": "Місто",
++    "filter_area": "Район",
++    "all_areas": "Усі райони",
++    "no_salons_in_area": "Салонів не знайдено в районі {area}",
++    "no_salons_in_this_area": "Салонів не знайдено в цьому районі",
++    "areas_load_error": "Райони тимчасово недоступні",
++    "clear_filters": "Очистити фільтри",
+     "filter_category": "Категорія",
+     "filter_rating": "Рейтинг",
+     "filter_price": "Ціна",
