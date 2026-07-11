@@ -1,0 +1,508 @@
+diff --git a/backend/app/data/area_metadata.py b/backend/app/data/area_metadata.py
+index 58c9c02..df09838 100644
+--- a/backend/app/data/area_metadata.py
++++ b/backend/app/data/area_metadata.py
+@@ -577,3 +577,24 @@ AREA_METADATA: dict[str, AreaMeta] = {
+         "city": "athens",
+     },
+ }
++
++
++# Reverse lookup: public area slug -> canonical address_district value.
++# Built once at import time (metadata slugs are static and unique — see
++# test_metadata_slugs_unique in test_areas_endpoint.py).
++AREA_SLUG_TO_DISTRICT: dict[str, str] = {
++    metadata["slug"]: district
++    for district, metadata in AREA_METADATA.items()
++}
++
++
++def get_district_by_area_slug(slug: str) -> str | None:
++    """Resolve a public area slug (e.g. "athens-center") to its canonical
++    address_district value (e.g. "Athens Center"), or None if unknown.
++
++    Case-insensitive, strips surrounding whitespace. Performs no database
++    query and no external calls — pure in-memory lookup.
++    """
++    if not slug:
++        return None
++    return AREA_SLUG_TO_DISTRICT.get(slug.strip().lower())
+diff --git a/backend/app/routers/salons.py b/backend/app/routers/salons.py
+index 4d232fc..cec96e5 100644
+--- a/backend/app/routers/salons.py
++++ b/backend/app/routers/salons.py
+@@ -1,12 +1,13 @@
+ from fastapi import APIRouter, Depends, Query, HTTPException, Request
+ from sqlalchemy.orm import Session
+-from sqlalchemy import func, text, or_
++from sqlalchemy import func, text, or_, false
+ from typing import Optional
+ from datetime import datetime
+ from zoneinfo import ZoneInfo
+ import math
+ 
+ from app.services.translate import is_bot, translate_batch
++from app.data.area_metadata import get_district_by_area_slug
+ 
+ ATHENS_TZ = ZoneInfo("Europe/Athens")
+ 
+@@ -262,8 +263,29 @@ def _batch_primary_photos(salon_ids: list, db: Session) -> dict:
+     return {row.salon_id: _proxy_url_raw(row.id, row.url) for row in rows}
+ 
+ 
++def _apply_area_filter(query, area: Optional[str], city: Optional[str]):
++    """Apply the area (preferred) or legacy city filter to a Salon query.
++
++    `area` is a public district slug (see GET /api/areas) — it is resolved
++    to the canonical `address_district` value via AREA_SLUG_TO_DISTRICT and
++    matched with exact equality, never against raw DB text. `area` takes
++    precedence over `city` whenever it's supplied (including when it fails
++    to resolve — an unknown area does not fall back to city).
++    """
++    area = area.strip() if area else None
++    if area:
++        district = get_district_by_area_slug(area)
++        if district is None:
++            return query.filter(false())
++        return query.filter(Salon.address_district == district)
++    if city:
++        return query.filter(Salon.address_city.ilike(f"%{city}%"))
++    return query
++
++
+ @router.get("/map")
+ def map_salons(
++    area: Optional[str] = None,
+     city: Optional[str] = None,
+     category: Optional[str] = None,
+     q: Optional[str] = None,
+@@ -282,8 +304,7 @@ def map_salons(
+ 
+     query = db.query(Salon).filter(Salon.is_active == True, Salon.lat != None, Salon.lng != None)
+ 
+-    if city:
+-        query = query.filter(Salon.address_city.ilike(f"%{city}%"))
++    query = _apply_area_filter(query, area, city)
+     if q:
+         search = f"%{q}%"
+         query = query.filter(
+@@ -339,6 +360,7 @@ def list_slugs(db: Session = Depends(get_db)):
+ def list_salons(
+     page: int = Query(1, ge=1),
+     limit: int = Query(20, ge=1, le=100),
++    area: Optional[str] = None,
+     city: Optional[str] = None,
+     category: Optional[str] = None,
+     q: Optional[str] = None,
+@@ -358,8 +380,7 @@ def list_salons(
+ 
+     query = db.query(Salon).filter(Salon.is_active == True)
+ 
+-    if city:
+-        query = query.filter(Salon.address_city.ilike(f"%{city}%"))
++    query = _apply_area_filter(query, area, city)
+     if q:
+         search = f"%{q}%"
+         query = query.filter(
+diff --git a/backend/tests/test_salons_endpoint.py b/backend/tests/test_salons_endpoint.py
+new file mode 100644
+index 0000000..6c2bcf2
+--- /dev/null
++++ b/backend/tests/test_salons_endpoint.py
+@@ -0,0 +1,343 @@
++"""
++T-005: `?area=` filter on GET /api/salons and GET /api/salons/map.
++
++Uses FastAPI TestClient with SQLite in-memory DB via dependency override.
++No connection to production. Behaviour is tested through the API and query
++results, not via source-code substring inspection.
++"""
++import inspect
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, event
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from app.main import app
++from app.core.database import get_db, Base
++from app.models.salon import Salon
++from app.data.area_metadata import AREA_METADATA, AREA_SLUG_TO_DISTRICT, get_district_by_area_slug
++import app.routers.salons as salons_module
++
++
++# ── Test DB fixture ───────────────────────────────────────────────────────────
++# StaticPool forces all connections to reuse the same underlying DBAPI
++# connection so the tables created here are visible during request handling.
++# Base.metadata.create_all mirrors the real schema exactly (salons, photos,
++# services, salon_hours, ...) since app.models.salon registers every table
++# on import — avoids drift between a hand-written test schema and the ORM.
++
++def _build_test_engine():
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    Base.metadata.create_all(engine)
++    return engine
++
++
++# Seed data. "Nea Kallithea" is deliberately a superstring of the "Kallithea"
++# district to prove area filtering uses exact equality, not substring/ILIKE
++# matching, on the resolved canonical district.
++SEED_SALONS = [
++    dict(name="Glyfada Nails", slug="glyfada-nails", address_city="Glyfada",
++         address_district="Glyfada", lat=37.86, lng=23.75, is_active=True,
++         rating_google=4.7, rating_count=10, description="best nail salon"),
++    dict(name="Glyfada Hair", slug="glyfada-hair", address_city="Glyfada",
++         address_district="Glyfada", lat=37.87, lng=23.76, is_active=True,
++         rating_google=4.5, rating_count=20, description="great hair salon"),
++    dict(name="Glyfada Inactive", slug="glyfada-inactive", address_city="Glyfada",
++         address_district="Glyfada", lat=37.88, lng=23.77, is_active=False,
++         rating_google=4.9, rating_count=5, description="closed down"),
++    dict(name="Athens Center Nails", slug="athens-center-nails", address_city="Athens",
++         address_district="Athens Center", lat=37.98, lng=23.73, is_active=True,
++         rating_google=4.2, rating_count=8, description="nail bar in the center"),
++    dict(name="Kallithea Barber", slug="kallithea-barber", address_city="Kallithea",
++         address_district="Kallithea", lat=37.95, lng=23.70, is_active=True,
++         rating_google=4.0, rating_count=3, description="barbershop"),
++    dict(name="Nea Kallithea Salon", slug="nea-kallithea-salon", address_city="Kallithea",
++         address_district="Nea Kallithea", lat=37.94, lng=23.69, is_active=True,
++         rating_google=4.8, rating_count=2, description="unrelated district"),
++    dict(name="No District Salon", slug="no-district-salon", address_city="Athens",
++         address_district=None, lat=37.90, lng=23.70, is_active=True,
++         rating_google=3.5, rating_count=1, description="unmapped district"),
++]
++
++
++@pytest.fixture(scope="module")
++def client():
++    engine = _build_test_engine()
++    test_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    session = test_session_local()
++    for row in SEED_SALONS:
++        session.add(Salon(**row))
++    session.commit()
++    session.close()
++
++    def override_get_db():
++        db = test_session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    previous_override = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override_get_db
++
++    # _batch_primary_photos / _batch_min_prices / _batch_open_now issue raw
++    # Postgres-only SQL (DISTINCT ON, = ANY(...)) that SQLite can't execute.
++    # They're pre-existing, unrelated to the T-005 area filter under test, so
++    # they're stubbed out here rather than pulled into scope for this PR.
++    original_photos = salons_module._batch_primary_photos
++    original_prices = salons_module._batch_min_prices
++    original_open = salons_module._batch_open_now
++    salons_module._batch_primary_photos = lambda salon_ids, db: {}
++    salons_module._batch_min_prices = lambda salon_ids, db, name_keywords=None: {}
++    salons_module._batch_open_now = lambda salon_ids, db: {}
++
++    # No `with` block: TestClient(app) alone does not run the app's lifespan
++    # (see app/main.py check_db() startup check), which would otherwise
++    # require a real database connection unrelated to this endpoint's logic.
++    test_client = TestClient(app)
++    test_client.engine = engine  # exposed for query-count assertions below
++    try:
++        yield test_client
++    finally:
++        test_client.close()
++        salons_module._batch_primary_photos = original_photos
++        salons_module._batch_min_prices = original_prices
++        salons_module._batch_open_now = original_open
++        if previous_override is None:
++            app.dependency_overrides.pop(get_db, None)
++        else:
++            app.dependency_overrides[get_db] = previous_override
++        engine.dispose()
++
++
++def _query_count(client: TestClient, url: str) -> int:
++    statements = []
++
++    def _log(conn, cursor, statement, parameters, context, executemany):
++        statements.append(statement)
++
++    event.listen(client.engine, "before_cursor_execute", _log)
++    try:
++        resp = client.get(url)
++    finally:
++        event.remove(client.engine, "before_cursor_execute", _log)
++    assert resp.status_code == 200
++    return len(statements)
++
++
++# ── Slug resolution (pure function, no client) ────────────────────────────────
++
++def test_resolve_glyfada():
++    assert get_district_by_area_slug("glyfada") == "Glyfada"
++
++
++def test_resolve_athens_center():
++    assert get_district_by_area_slug("athens-center") == "Athens Center"
++
++
++def test_resolve_case_insensitive():
++    assert get_district_by_area_slug("GLYFADA") == "Glyfada"
++    assert get_district_by_area_slug("Glyfada") == "Glyfada"
++
++
++def test_resolve_surrounding_whitespace():
++    assert get_district_by_area_slug("  glyfada  ") == "Glyfada"
++
++
++def test_resolve_unknown_slug_returns_none():
++    assert get_district_by_area_slug("nonexistent-area") is None
++
++
++def test_resolve_empty_string_returns_none():
++    assert get_district_by_area_slug("") is None
++    assert get_district_by_area_slug("   ") is None
++
++
++def test_every_metadata_slug_resolves_back_to_its_district():
++    for district, meta in AREA_METADATA.items():
++        assert get_district_by_area_slug(meta["slug"]) == district
++
++
++def test_reverse_lookup_same_length_as_metadata():
++    assert len(AREA_SLUG_TO_DISTRICT) == len(AREA_METADATA)
++
++
++def test_resolver_takes_no_db_argument():
++    # Architectural guarantee: resolution must be a pure in-memory lookup,
++    # not something that could accidentally grow a DB round-trip later.
++    params = inspect.signature(get_district_by_area_slug).parameters
++    assert list(params) == ["slug"]
++
++
++# ── List endpoint: area filter ────────────────────────────────────────────────
++
++def test_list_area_filters_exact_district(client):
++    resp = client.get("/api/salons", params={"area": "glyfada"})
++    assert resp.status_code == 200
++    data = resp.json()
++    assert data["total"] == 2  # Glyfada Nails + Glyfada Hair, inactive excluded
++    assert all(item["address_city"] == "Glyfada" for item in data["items"])
++
++
++def test_list_area_no_partial_district_match(client):
++    resp = client.get("/api/salons", params={"area": "kallithea"})
++    data = resp.json()
++    assert data["total"] == 1
++    names = {item["name"] for item in data["items"]}
++    assert names == {"Kallithea Barber"}
++    assert "Nea Kallithea Salon" not in names
++
++
++def test_list_area_athens_center_slug_hyphen_vs_db_space(client):
++    resp = client.get("/api/salons", params={"area": "athens-center"})
++    data = resp.json()
++    assert data["total"] == 1
++    assert data["items"][0]["name"] == "Athens Center Nails"
++
++
++def test_list_area_case_insensitive_end_to_end(client):
++    resp = client.get("/api/salons", params={"area": "GLYFADA"})
++    assert resp.json()["total"] == 2
++
++
++def test_list_unknown_area_returns_empty_not_404(client):
++    resp = client.get("/api/salons", params={"area": "unknown-area"})
++    assert resp.status_code == 200
++    assert resp.json()["items"] == []
++    assert resp.json()["total"] == 0
++
++
++def test_list_legacy_city_filter_still_works(client):
++    resp = client.get("/api/salons", params={"city": "Glyfada"})
++    data = resp.json()
++    assert data["total"] == 2
++    assert all("Glyfada" in item["address_city"] for item in data["items"])
++
++
++def test_list_area_takes_precedence_over_city(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "city": "Athens"})
++    data = resp.json()
++    assert data["total"] == 2
++    assert all(item["address_city"] == "Glyfada" for item in data["items"])
++
++
++def test_list_unknown_area_plus_valid_city_still_empty(client):
++    resp = client.get("/api/salons", params={"area": "unknown-area", "city": "Athens"})
++    data = resp.json()
++    assert data["items"] == []
++    assert data["total"] == 0
++
++
++def test_list_blank_area_falls_back_to_city(client):
++    resp = client.get("/api/salons", params={"area": "   ", "city": "Glyfada"})
++    data = resp.json()
++    assert data["total"] == 2
++
++
++def test_list_area_combines_with_q(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "q": "nail"})
++    data = resp.json()
++    assert data["total"] == 1
++    assert data["items"][0]["name"] == "Glyfada Nails"
++
++
++def test_list_area_combines_with_category(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "category": "nails"})
++    data = resp.json()
++    assert data["total"] == 1
++    assert data["items"][0]["name"] == "Glyfada Nails"
++
++
++def test_list_area_combines_with_min_rating(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "min_rating": 4.6})
++    data = resp.json()
++    assert data["total"] == 1
++    assert data["items"][0]["name"] == "Glyfada Nails"
++
++
++def test_list_area_pagination_total_reflects_filtered_area(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "limit": 1})
++    data = resp.json()
++    assert data["total"] == 2
++    assert len(data["items"]) == 1
++    assert data["pages"] == 2
++
++
++def test_list_area_excludes_inactive_salons(client):
++    resp = client.get("/api/salons", params={"area": "glyfada", "limit": 100})
++    names = {item["name"] for item in resp.json()["items"]}
++    assert "Glyfada Inactive" not in names
++
++
++# ── Map endpoint: area filter ─────────────────────────────────────────────────
++
++def test_map_area_filters_exact_district(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    assert resp.status_code == 200
++    items = resp.json()
++    assert isinstance(items, list)  # existing map contract: bare list, unchanged by T-005
++    assert len(items) == 2
++    assert all(item["address_city"] == "Glyfada" for item in items)
++
++
++def test_map_unknown_area_returns_empty_list_not_404(client):
++    resp = client.get("/api/salons/map", params={"area": "unknown-area"})
++    assert resp.status_code == 200
++    assert resp.json() == []
++
++
++def test_map_area_takes_precedence_over_city(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada", "city": "Athens"})
++    items = resp.json()
++    assert len(items) == 2
++    assert all(item["address_city"] == "Glyfada" for item in items)
++
++
++def test_map_category_filter_still_works_without_area(client):
++    resp = client.get("/api/salons/map", params={"category": "nails"})
++    names = {item["name"] for item in resp.json()}
++    assert "Kallithea Barber" not in names
++    assert "Glyfada Nails" in names
++
++
++def test_list_and_map_return_same_ids_for_area(client):
++    list_resp = client.get("/api/salons", params={"area": "glyfada", "limit": 100})
++    map_resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    list_ids = {item["id"] for item in list_resp.json()["items"]}
++    map_ids = {item["id"] for item in map_resp.json()}
++    assert list_ids == map_ids
++    assert list_ids  # sanity: not both trivially empty
++
++
++# ── Regression / query quality ────────────────────────────────────────────────
++
++def test_list_endpoint_is_public_no_auth_required(client):
++    resp = client.get("/api/salons", params={"area": "glyfada"})
++    assert resp.status_code == 200
++
++
++def test_map_endpoint_is_public_no_auth_required(client):
++    resp = client.get("/api/salons/map", params={"area": "glyfada"})
++    assert resp.status_code == 200
++
++
++def test_area_filter_adds_no_extra_query(client):
++    # Area resolution is a pure in-memory dict lookup (see
++    # test_resolver_takes_no_db_argument); the SQL query count with an area
++    # filter must equal the count without one — no extra round-trip to
++    # resolve the slug, and no N+1 introduced by the new filter branch.
++    without_area = _query_count(client, "/api/salons")
++    with_area = _query_count(client, "/api/salons?area=glyfada")
++    assert with_area == without_area
++
++
++def test_map_area_filter_adds_no_extra_query(client):
++    without_area = _query_count(client, "/api/salons/map")
++    with_area = _query_count(client, "/api/salons/map?area=glyfada")
++    assert with_area == without_area
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 5f1dc20..65fb707 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -168,21 +168,41 @@ See `docs/.reviews/T-003a-review.md` for full investigation results and alternat
+ **Priority:** P0 | **Owner:** BE | **Estimate:** 1.5h | **Epic:** EPIC-02
+ **Dependencies:** T-003
+ 
+-**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works.
++**Description:** Add `?area=` query parameter that filters on `address_district`. Backwards-compatible: `?city=` still works. Applies to both `GET /api/salons` and `GET /api/salons/map`.
++
++**Filter logic:** `area` is a public district *slug* (e.g. `athens-center`), not
++raw `address_district` text (e.g. `Athens Center`) — a raw `ILIKE` on the slug
++does not work (hyphen vs. space, casing). Resolve the slug through the
++`AREA_METADATA` reverse lookup first, then filter by exact equality on the
++canonical `address_district` value:
+ 
+-**Filter logic:**
+ ```python
++# app/data/area_metadata.py
++AREA_SLUG_TO_DISTRICT = {meta["slug"]: district for district, meta in AREA_METADATA.items()}
++
++def get_district_by_area_slug(slug: str) -> str | None:
++    return AREA_SLUG_TO_DISTRICT.get(slug.strip().lower()) if slug else None
++
++# app/routers/salons.py
+ if area:
+-    query = query.filter(Salon.address_district.ilike(f"%{area}%"))
++    district = get_district_by_area_slug(area)
++    query = query.filter(Salon.address_district == district) if district else query.filter(false())
+ elif city:  # legacy fallback
+     query = query.filter(Salon.address_city.ilike(f"%{city}%"))
+ ```
+ 
++Exact equality (not substring) is used because the input is a controlled
++slug resolved against a controlled canonical value — substring matching
++would risk matching unrelated districts (e.g. "Kallithea" vs. "Nea
++Kallithea") and can't use the `address_district` index as efficiently.
++
+ **Acceptance Criteria:**
+-- [ ] `GET /api/salons?area=glyfada` filters by `address_district ILIKE '%glyfada%'`
+-- [ ] `GET /api/salons?city=Athens` still works (backwards compat)
+-- [ ] `GET /api/salons?area=glyfada&city=Athens` — `area` takes precedence
+-- [ ] `GET /api/salons?area=nonexistent` returns `{"items": [], "total": 0}`, not 404
++- [x] `GET /api/salons?area=glyfada` filters by `address_district = "Glyfada"` (resolved via `AREA_METADATA`, exact equality)
++- [x] `GET /api/salons?city=Athens` still works (backwards compat)
++- [x] `GET /api/salons?area=glyfada&city=Athens` — `area` takes precedence
++- [x] `GET /api/salons?area=nonexistent` returns `{"items": [], "total": 0}`, not 404 — an unresolvable area does not fall back to `city`
++- [x] `GET /api/salons/map?area=glyfada` supports the same area filter (map accepts the same params as the list endpoint, minus pagination)
++- [x] Legacy `city` param remains available during the transition
+ 
+ ---
+ 
