@@ -1,0 +1,616 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 7260b50..8bf59c8 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -22,7 +22,10 @@ jobs:
+       - name: Install dependencies
+         run: pip install -r requirements.txt
+       - name: Lint (ruff)
+-        run: ruff check .
++        uses: astral-sh/ruff-action@v3
++        with:
++          version: "0.12.3"
++          src: "backend"
+       - name: Tests
+         # continue-on-error until T-030 (tests) is complete — remove flag after T-030
+         continue-on-error: true
+diff --git a/.github/workflows/codeql.yml b/.github/workflows/codeql.yml
+index 72f13c7..148d8df 100644
+--- a/.github/workflows/codeql.yml
++++ b/.github/workflows/codeql.yml
+@@ -1,12 +1,21 @@
+ name: CodeQL
+ 
++# DISABLED (2026-07-11): lookla-platform is a private repository and GitHub
++# Code Scanning is not enabled for it. Private-repo CodeQL requires GitHub
++# Code Security, which this repo does not currently have — no workflow
++# permission or PAT can work around that (confirmed: "Code scanning is not
++# enabled for this repository" from github/codeql-action/analyze even with
++# contents:read + actions:read + security-events:write all granted).
++#
++# Automatic triggers are removed so this doesn't sit as a permanently red,
++# noise-generating required-looking check. The job definition is kept as-is
++# (not deleted) so it can be re-enabled by restoring the `push`/
++# `pull_request`/`schedule` triggers below once GitHub Code Security is
++# enabled for this repo (or its visibility policy changes). Until then this
++# is workflow_dispatch-only (manual) and is NOT an M-01 release blocker —
++# see docs/06_ENGINEERING/AUDIT.md and IMPLEMENTATION_BACKLOG.md T-039.
+ on:
+-  push:
+-    branches: [main]
+-  pull_request:
+-    branches: [main]
+-  schedule:
+-    - cron: "0 3 * * 1"  # weekly, Monday 03:00 UTC
++  workflow_dispatch:
+ 
+ jobs:
+   analyze:
+@@ -15,6 +24,7 @@ jobs:
+     permissions:
+       security-events: write
+       contents: read
++      actions: read
+ 
+     strategy:
+       fail-fast: false
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 116bf7c..2ec4406 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -1,6 +1,15 @@
++from pathlib import Path
++
+ from pydantic_settings import BaseSettings
+ from functools import lru_cache
+ 
++# Repo root .env (docker-compose.yml's env_file: .env lives here too).
++# Must be resolved relative to this file, not hardcoded to one deployment's
++# absolute path — a hardcoded /root/... path broke test collection anywhere
++# else (e.g. CI runners, where /root is owned by a different, inaccessible
++# user) with a confusing PermissionError.
++_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
++
+ 
+ class Settings(BaseSettings):
+     # App
+@@ -64,7 +73,7 @@ class Settings(BaseSettings):
+     refresh_token_expire_days: int = 30
+ 
+     class Config:
+-        env_file = "/root/beauty-gr/.env"
++        env_file = str(_ENV_FILE)
+         extra = "ignore"
+ 
+ 
+diff --git a/backend/app/core/deps.py b/backend/app/core/deps.py
+index c995c21..5f997ba 100644
+--- a/backend/app/core/deps.py
++++ b/backend/app/core/deps.py
+@@ -1,4 +1,4 @@
+-from fastapi import Depends, HTTPException, Cookie, Header
++from fastapi import Depends, HTTPException, Cookie
+ from sqlalchemy.orm import Session
+ from typing import Optional
+ from app.core.database import get_db
+@@ -15,7 +15,7 @@ def get_current_user(
+     payload = decode_token(access_token)
+     if not payload or payload.get("type") != "access":
+         raise HTTPException(401, "Invalid token")
+-    user = db.query(User).filter(User.id == int(payload["sub"]), User.is_active == True).first()
++    user = db.query(User).filter(User.id == int(payload["sub"]), User.is_active).first()
+     if not user:
+         raise HTTPException(401, "User not found")
+     return user
+@@ -30,7 +30,7 @@ def get_current_user_optional(
+     payload = decode_token(access_token)
+     if not payload or payload.get("type") != "access":
+         return None
+-    return db.query(User).filter(User.id == int(payload["sub"]), User.is_active == True).first()
++    return db.query(User).filter(User.id == int(payload["sub"]), User.is_active).first()
+ 
+ 
+ def require_admin(user: User = Depends(get_current_user)) -> User:
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 257a5a6..5839632 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -1,5 +1,5 @@
+ import sentry_sdk
+-from fastapi import FastAPI, Request
++from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
+ from contextlib import asynccontextmanager
+ from slowapi import Limiter, _rate_limit_exceeded_handler
+diff --git a/backend/app/models/user.py b/backend/app/models/user.py
+index 9950e98..6fe1674 100644
+--- a/backend/app/models/user.py
++++ b/backend/app/models/user.py
+@@ -1,5 +1,5 @@
+ from datetime import datetime
+-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
++from sqlalchemy import Column, Integer, String, Boolean, DateTime
+ from app.core.database import Base
+ 
+ 
+diff --git a/backend/app/routers/admin.py b/backend/app/routers/admin.py
+index 53902d5..d5cc9b7 100644
+--- a/backend/app/routers/admin.py
++++ b/backend/app/routers/admin.py
+@@ -42,11 +42,14 @@ def list_salons(
+     where = "1=1"
+     params: dict = {"limit": limit, "offset": (page-1)*limit}
+     if needs_review is not None:
+-        where += " AND needs_review = :nr"; params["nr"] = needs_review
++        where += " AND needs_review = :nr"
++        params["nr"] = needs_review
+     if verified is not None:
+-        where += " AND is_verified = :v"; params["v"] = verified
++        where += " AND is_verified = :v"
++        params["v"] = verified
+     if q:
+-        where += " AND (name ILIKE :q OR address_city ILIKE :q)"; params["q"] = f"%{q}%"
++        where += " AND (name ILIKE :q OR address_city ILIKE :q)"
++        params["q"] = f"%{q}%"
+ 
+     rows = db.execute(text(f"""
+         SELECT id, name, address_city, is_verified, is_active, needs_review, data_verified_at, rating_google
+@@ -159,7 +162,8 @@ def list_users(page: int = 1, limit: int = 20, q: Optional[str] = None, user: Us
+     where = "1=1"
+     params: dict = {"limit": limit, "offset": (page-1)*limit}
+     if q:
+-        where += " AND (email ILIKE :q OR name ILIKE :q)"; params["q"] = f"%{q}%"
++        where += " AND (email ILIKE :q OR name ILIKE :q)"
++        params["q"] = f"%{q}%"
+     rows = db.execute(text(f"""
+         SELECT id, email, name, role, is_active, is_email_verified, preferred_language, created_at
+         FROM users WHERE {where}
+diff --git a/backend/app/routers/auth.py b/backend/app/routers/auth.py
+index 8161c1d..5477f38 100644
+--- a/backend/app/routers/auth.py
++++ b/backend/app/routers/auth.py
+@@ -17,7 +17,7 @@ from app.core.security import (
+     generate_readable_password,
+ )
+ from app.core.config import get_settings
+-from app.models.user import User, EmailVerification, RefreshToken
++from app.models.user import User, EmailVerification
+ from app.services.email import send_email
+ from app.services.moderation import is_disposable_email
+ 
+@@ -41,8 +41,7 @@ def _verify_google_id_token(id_token: str, audience: str) -> dict:
+     Raises on any verification failure — caller should treat as auth error.
+     """
+     import httpx
+-    from jose import jwt as jose_jwt, jwk, JWTError
+-    from jose.utils import base64url_decode
++    from jose import jwt as jose_jwt, jwk
+     import json as _json
+ 
+     if not id_token:
+@@ -189,7 +188,7 @@ def gen_password():
+ def verify_email(token: str, db: Session = Depends(get_db)):
+     ev = db.query(EmailVerification).filter(
+         EmailVerification.token == token,
+-        EmailVerification.used_at == None,
++        EmailVerification.used_at.is_(None),
+         EmailVerification.expires_at > datetime.now(timezone.utc),
+     ).first()
+     if not ev:
+@@ -203,7 +202,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
+ 
+ @router.post("/login")
+ def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+-    user = db.query(User).filter(User.email == body.email, User.is_active == True).first()
++    user = db.query(User).filter(User.email == body.email, User.is_active).first()
+     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
+         raise HTTPException(401, "Invalid credentials")
+ 
+@@ -270,12 +269,11 @@ def get_me(access_token: Optional[str] = Cookie(None), db: Session = Depends(get
+ async def forgot_password(request: Request, body: ForgotPasswordIn, db: Session = Depends(get_db)):
+     user = None
+     if body.email:
+-        user = db.query(User).filter(User.email == body.email, User.is_active == True).first()
++        user = db.query(User).filter(User.email == body.email, User.is_active).first()
+     if not user:
+         # Don't reveal if email exists
+         return {"status": "ok", "message": "If this account exists, you will receive a reset link"}
+ 
+-    code = secrets.token_hex(3).upper()  # 6-char hex code e.g. "A3F9C1"
+     token = secrets.token_urlsafe(32)
+ 
+     db.execute(text("""
+diff --git a/backend/app/routers/booking.py b/backend/app/routers/booking.py
+index 8ddf317..2232ba4 100644
+--- a/backend/app/routers/booking.py
++++ b/backend/app/routers/booking.py
+@@ -1,8 +1,8 @@
+ """
+ Online booking: check slots, create appointment, manage bookings.
+ """
+-from datetime import datetime, timedelta, date, timezone
+-from typing import Optional, List
++from datetime import datetime, timedelta
++from typing import Optional
+ from fastapi import APIRouter, Depends, HTTPException
+ from sqlalchemy.orm import Session
+ from sqlalchemy import text
+diff --git a/backend/app/routers/categories.py b/backend/app/routers/categories.py
+index 4458a10..bb9b71c 100644
+--- a/backend/app/routers/categories.py
++++ b/backend/app/routers/categories.py
+@@ -59,7 +59,6 @@ def get_categories(lang: str = Query("el"), db: Session = Depends(get_db)):
+ 
+     # Build tree: top-level + children
+     top = [dict(r) | {"children": []} for r in rows if r["parent_id"] is None]
+-    by_id = {r["id"]: next((t for t in top if t["id"] == r["id"]), None) for r in rows}
+ 
+     for r in rows:
+         if r["parent_id"] is not None:
+diff --git a/backend/app/routers/chat.py b/backend/app/routers/chat.py
+index 01b984e..f1fec58 100644
+--- a/backend/app/routers/chat.py
++++ b/backend/app/routers/chat.py
+@@ -2,7 +2,7 @@
+ In-app messaging: conversations between clients and salons/professionals.
+ Also handles availability requests (soft booking inquiry → confirmed slot).
+ """
+-from datetime import datetime, timezone
++from datetime import datetime
+ from typing import Optional
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Query
+diff --git a/backend/app/routers/masters.py b/backend/app/routers/masters.py
+index 0707246..47bd331 100644
+--- a/backend/app/routers/masters.py
++++ b/backend/app/routers/masters.py
+@@ -12,7 +12,7 @@ from pydantic import BaseModel
+ from app.core.database import get_db
+ from app.core.deps import get_current_user
+ from app.models.user import User
+-from app.models.professional import Professional, ProfessionalAvailability, ProfessionalSocialLink
++from app.models.professional import Professional
+ 
+ router = APIRouter(prefix="/api/masters", tags=["masters"])
+ 
+diff --git a/backend/app/routers/owner.py b/backend/app/routers/owner.py
+index 52ec0a0..72ec074 100644
+--- a/backend/app/routers/owner.py
++++ b/backend/app/routers/owner.py
+@@ -5,7 +5,7 @@ import secrets
+ from datetime import datetime, timedelta, timezone
+ from typing import Optional
+ 
+-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
++from fastapi import APIRouter, Depends, HTTPException
+ from sqlalchemy.orm import Session
+ from sqlalchemy import text
+ from pydantic import BaseModel
+@@ -13,7 +13,7 @@ from pydantic import BaseModel
+ from app.core.database import get_db
+ from app.core.deps import get_current_user
+ from app.models.user import User
+-from app.models.salon import Salon, Service, SalonHour, SocialLink
++from app.models.salon import Salon, Service
+ from app.services.email import send_email
+ 
+ router = APIRouter(prefix="/api/owner", tags=["owner"])
+diff --git a/backend/app/routers/payments.py b/backend/app/routers/payments.py
+index e7fc9b2..0ea35bd 100644
+--- a/backend/app/routers/payments.py
++++ b/backend/app/routers/payments.py
+@@ -2,9 +2,6 @@
+ Stripe payments: subscriptions for salon owners and professionals.
+ Pluggable PaymentProvider interface — Stripe is first implementation.
+ """
+-import json
+-import hashlib
+-from datetime import datetime, timezone
+ from typing import Optional
+ from abc import ABC, abstractmethod
+ 
+diff --git a/backend/app/routers/professionals.py b/backend/app/routers/professionals.py
+index 2474116..7ca2c58 100644
+--- a/backend/app/routers/professionals.py
++++ b/backend/app/routers/professionals.py
+@@ -1,6 +1,5 @@
+ from fastapi import APIRouter, Depends, Query, HTTPException
+ from sqlalchemy.orm import Session
+-from sqlalchemy import text
+ from typing import Optional
+ import math
+ from pydantic import BaseModel, ConfigDict
+@@ -94,7 +93,7 @@ def list_professionals(
+     radius_km: float = Query(10.0),
+     db: Session = Depends(get_db),
+ ):
+-    q = db.query(Professional).filter(Professional.is_active == True)
++    q = db.query(Professional).filter(Professional.is_active)
+ 
+     if city:
+         q = q.filter(Professional.base_city.ilike(f"%{city}%"))
+@@ -126,9 +125,9 @@ def list_professionals(
+ @router.get("/{pro_id}", response_model=ProfessionalDetail)
+ def get_professional(pro_id: int | str, db: Session = Depends(get_db)):
+     if isinstance(pro_id, str) and not pro_id.isdigit():
+-        pro = db.query(Professional).filter(Professional.slug == pro_id, Professional.is_active == True).first()
++        pro = db.query(Professional).filter(Professional.slug == pro_id, Professional.is_active).first()
+     else:
+-        pro = db.query(Professional).filter(Professional.id == int(pro_id), Professional.is_active == True).first()
++        pro = db.query(Professional).filter(Professional.id == int(pro_id), Professional.is_active).first()
+ 
+     if not pro:
+         raise HTTPException(status_code=404, detail="Professional not found")
+diff --git a/backend/app/routers/salons.py b/backend/app/routers/salons.py
+index 4d232fc..3af9ac1 100644
+--- a/backend/app/routers/salons.py
++++ b/backend/app/routers/salons.py
+@@ -1,19 +1,18 @@
+ from fastapi import APIRouter, Depends, Query, HTTPException, Request
+ from sqlalchemy.orm import Session
+-from sqlalchemy import func, text, or_
++from sqlalchemy import text, or_
+ from typing import Optional
+ from datetime import datetime
+ from zoneinfo import ZoneInfo
+ import math
+ 
+ from app.services.translate import is_bot, translate_batch
+-
+-ATHENS_TZ = ZoneInfo("Europe/Athens")
+-
+ from app.core.database import get_db
+-from app.models.salon import Salon, SalonHour, Photo, Service, Review, SocialLink, SalonCategory, ServiceCategory
++from app.models.salon import Salon
+ from app.schemas.salon import SalonListItem, SalonDetail, PaginatedSalons, PhotoOut
+ 
++ATHENS_TZ = ZoneInfo("Europe/Athens")
++
+ router = APIRouter(prefix="/salons", tags=["salons"])
+ 
+ DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+@@ -48,18 +47,15 @@ CITY_SYNONYMS: dict[str, str] = {
+     'агия-парасевки': 'Αγία Παρασκευή',
+     'илион': 'Ίλιον',
+     # UK
++    # 'корфу'/'волос'/'лариса'/'кавала'/'маруси' are spelled identically in
++    # RU and share the same value — already covered by the RU block above.
+     'афіни': 'Αθήνα',
+     'салоніки': 'Θεσσαλονίκη', 'фессалоніки': 'Θεσσαλονίκη',
+     'пірей': 'Πειραιάς',
+     'іракліон': 'Ηράκλειο',
+     'патри': 'Πάτρα',
+-    'корфу': 'Κέρκυρα',
+-    'волос': 'Βόλος',
+-    'лариса': 'Λάρισα',
+     'яніна': 'Ιωάννινα',
+-    'кавала': 'Καβάλα',
+     'гліфада': 'Γλυφάδα',
+-    'маруси': 'Μαρούσι',
+     'перістері': 'Περιστέρι',
+     'кіфісья': 'Κηφισιά',
+     # EN
+@@ -117,27 +113,24 @@ SERVICE_SYNONYMS: dict[str, str] = {
+     'уход за лицом': 'facial',
+     'красота': 'beauty', 'красоты': 'beauty',
+     # UK — services
++    # 'педикюр'/'гель'/'акрил'/'стрижка'/'стрижки'/'балаяж'/'кератин'/'брови'/
++    # 'спа'/'барбер'/'барбершоп'/'тату'/'лазер'/'косметолог' are spelled
++    # identically in RU and share the same value — already covered above.
+     'нігті': 'nail', 'нігтів': 'nail', 'ніготь': 'nail',
+-    'манікюр': 'manicure', 'педикюр': 'pedicure',
+-    'гель': 'gel', 'акрил': 'acrylic',
++    'манікюр': 'manicure',
+     'волосся': 'hair', 'зачіска': 'hair', 'зачісок': 'hair',
+-    'стрижка': 'hair', 'стрижки': 'hair',
+     'фарбування': 'color', 'фарба': 'color',
+-    'балаяж': 'balayage', 'мелірування': 'highlight',
+-    'кератин': 'keratin',
++    'мелірування': 'highlight',
+     'нарощування': 'extension',
+     'перукарня': 'hair', 'перукар': 'hair', 'перукарні': 'hair',
+-    'брови': 'brow', 'брів': 'brow', 'мікроблейдинг': 'brow',
++    'брів': 'brow', 'мікроблейдинг': 'brow',
+     'вії': 'lash', 'вій': 'lash',
+     'макіяж': 'makeup', 'візаж': 'makeup',
+     'масаж': 'massage',
+-    'спа': 'spa',
+     'епіляція': 'wax', 'шугарінг': 'wax', 'депіляція': 'wax',
+-    'барбер': 'barber', 'барбершоп': 'barber',
+-    'тату': 'tattoo', 'татуювання': 'tattoo',
++    'татуювання': 'tattoo',
+     'пірсинг': 'piercing',
+-    'лазер': 'laser',
+-    'косметолог': 'facial', 'косметологія': 'facial',
++    'косметологія': 'facial',
+     'краса': 'beauty', 'краси': 'beauty',
+     # EN plurals / variants
+     'nails': 'nail', 'manicures': 'manicure', 'pedicures': 'pedicure',
+@@ -280,7 +273,7 @@ def map_salons(
+         else:
+             q = translated_q
+ 
+-    query = db.query(Salon).filter(Salon.is_active == True, Salon.lat != None, Salon.lng != None)
++    query = db.query(Salon).filter(Salon.is_active, Salon.lat.is_not(None), Salon.lng.is_not(None))
+ 
+     if city:
+         query = query.filter(Salon.address_city.ilike(f"%{city}%"))
+@@ -356,7 +349,7 @@ def list_salons(
+         else:
+             q = translated_q
+ 
+-    query = db.query(Salon).filter(Salon.is_active == True)
++    query = db.query(Salon).filter(Salon.is_active)
+ 
+     if city:
+         query = query.filter(Salon.address_city.ilike(f"%{city}%"))
+@@ -384,7 +377,7 @@ def list_salons(
+     if price_level:
+         query = query.filter(Salon.price_level == price_level)
+     if verified_only:
+-        query = query.filter(Salon.is_verified == True)
++        query = query.filter(Salon.is_verified)
+ 
+     total = query.count()
+     salons = (
+@@ -418,16 +411,16 @@ def list_salons(
+ 
+ def _resolve(salon_id: int | str, db: Session):
+     if isinstance(salon_id, str) and not salon_id.isdigit():
+-        return db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active == True).first()
+-    return db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active == True).first()
++        return db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active).first()
++    return db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active).first()
+ 
+ 
+ @router.get("/{salon_id}", response_model=SalonDetail)
+ def get_salon(salon_id: int | str, db: Session = Depends(get_db)):
+     if isinstance(salon_id, str) and not salon_id.isdigit():
+-        salon = db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active == True).first()
++        salon = db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active).first()
+     else:
+-        salon = db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active == True).first()
++        salon = db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active).first()
+ 
+     if not salon:
+         raise HTTPException(status_code=404, detail="Salon not found")
+@@ -447,7 +440,7 @@ def get_salon(salon_id: int | str, db: Session = Depends(get_db)):
+ 
+ @router.get("/{salon_id}/photos", response_model=list[PhotoOut])
+ def get_photos(salon_id: int, db: Session = Depends(get_db)):
+-    salon = db.query(Salon).filter(Salon.id == salon_id, Salon.is_active == True).first()
++    salon = db.query(Salon).filter(Salon.id == salon_id, Salon.is_active).first()
+     if not salon:
+         raise HTTPException(status_code=404, detail="Salon not found")
+     photos = [PhotoOut.model_validate(p) for p in salon.photos]
+diff --git a/docs/04_ARCHITECTURE/SECURITY.md b/docs/04_ARCHITECTURE/SECURITY.md
+index 38c35c8..5e14509 100644
+--- a/docs/04_ARCHITECTURE/SECURITY.md
++++ b/docs/04_ARCHITECTURE/SECURITY.md
+@@ -4,12 +4,13 @@ status: Approved
+ version: 1.0
+ owner: Product Owner (columb@europe.com)
+ reviewers: []
+-last_updated: 2026-07-09
++last_updated: 2026-07-11
+ related_documents:
+   - 04_ARCHITECTURE/BACKEND_ARCHITECTURE.md
+   - 04_ARCHITECTURE/API_SPECIFICATION.md
+   - 00_GOVERNANCE/DECISION_LOG.md
+   - 06_ENGINEERING/AUDIT.md
++  - 05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+ implementation_status: Describes current security posture + gaps for MVP
+ ---
+ 
+@@ -373,4 +374,34 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+ 
+ ---
+ 
+-*Last updated: 2026-07-09*
++## 12. Static Analysis (CodeQL) — Disabled, Platform Limitation
++
++**Status:** Disabled — platform/licensing limitation (2026-07-11)
++
++**Reason:** `lookla-platform` is a private repository. GitHub Code
++Scanning (the CodeQL workflow's upload step) requires GitHub Code
++Security to be enabled on the repository; confirmed via a real run that
++this is not a workflow-permissions issue — `github/codeql-action/analyze`
++returns `Code scanning is not enabled for this repository` even with
++`contents: read`, `actions: read`, and `security-events: write` all
++granted. No workflow change or personal access token can work around a
++missing license.
++
++**Decision:** Not worth making the repository public or purchasing
++GitHub Code Security at the current MVP stage solely to unblock this.
++`.github/workflows/codeql.yml` is kept (not deleted) with only
++`workflow_dispatch` (manual) triggers, so it can be restored by
++re-adding `push`/`pull_request`/`schedule` once Code Security is
++enabled or the repo's visibility policy changes.
++
++**Not an M-01 release blocker.** Backend and frontend CI (lint + build/tests)
++remain the blocking, required checks and are green. CodeQL must not be
++configured as a required branch-protection check while in this state.
++
++**Re-enable condition:** GitHub Code Security becomes available for this
++repository (or it becomes public), tracked as T-039 in
++`05_ROADMAP/IMPLEMENTATION_BACKLOG.md`.
++
++---
++
++*Last updated: 2026-07-11*
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 5f1dc20..a133cb7 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -751,6 +751,32 @@ except Exception as e:
+ 
+ ---
+ 
++### T-039 — Re-enable CodeQL once GitHub Code Security is available
++**Priority:** P2 | **Owner:** OPS | **Estimate:** 0.5h | **Epic:** EPIC-09
++**Dependencies:** None (blocked on an external/account-level condition, not code)
++
++**Description:** `.github/workflows/codeql.yml` was disabled to `workflow_dispatch`-only
++on 2026-07-11 (see `04_ARCHITECTURE/SECURITY.md` §12) because
++`lookla-platform` is a private repository without GitHub Code Security,
++and CodeQL's `analyze` step fails with "Code scanning is not enabled
++for this repository" regardless of workflow permissions. This task is
++to restore automatic scanning once that's no longer true.
++
++**Steps:**
++1. Confirm GitHub Code Security is enabled for `lookla-platform` (or the repo has become public)
++2. Restore `push`/`pull_request`/`schedule` triggers in `codeql.yml` (remove the `workflow_dispatch`-only restriction and the disabled-status comment block)
++3. Trigger a run and confirm both matrix jobs pass
++4. Update `04_ARCHITECTURE/SECURITY.md` §12 status from Disabled to Enabled
++
++**Acceptance Criteria:**
++- [ ] GitHub Code Security enabled for the repository
++- [ ] CodeQL `Analyze (javascript-typescript)` job passes
++- [ ] CodeQL `Analyze (python)` job passes
++- [ ] Automatic pull-request scanning restored (triggers on `push`/`pull_request` again)
++- [ ] Only after this: CodeQL may be added as a required branch-protection check — it is not one today
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+@@ -932,6 +958,7 @@ Sitemap: https://lookla.gr/sitemap.xml
+ | T-035 Deprecate GET /api/search | P2 | BE | 0.5 | EPIC-09 | — |
+ | T-036 Create public/robots.txt | P0 | FE | 0.25 | EPIC-09 | — |
+ | T-037 Unify salon search (post-MVP) | post-MVP | BE | 4 | EPIC-10 | T-035 |
++| T-039 Re-enable CodeQL (blocked on GH Code Security) | P2 | OPS | 0.5 | EPIC-09 | — |
+ | **Total** | | | **~40.25h (M-01)** | | |
+ 
+ ---
+diff --git a/frontend/.eslintrc.json b/frontend/.eslintrc.json
+new file mode 100644
+index 0000000..bffb357
+--- /dev/null
++++ b/frontend/.eslintrc.json
+@@ -0,0 +1,3 @@
++{
++  "extends": "next/core-web-vitals"
++}
+diff --git a/frontend/package.json b/frontend/package.json
+index 054efae..1c94068 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -16,7 +16,7 @@
+     "react": "^18",
+     "react-dom": "^18",
+     "react-hook-form": "^7.79.0",
+-    "react-leaflet": "^5.0.0",
++    "react-leaflet": "4.2.1",
+     "zod": "^4.4.3",
+     "zustand": "^5.0.14"
+   },
+@@ -25,6 +25,8 @@
+     "@types/node": "^20",
+     "@types/react": "^18",
+     "@types/react-dom": "^18",
++    "eslint": "^8",
++    "eslint-config-next": "14.2.35",
+     "postcss": "^8",
+     "tailwindcss": "^3.4.1",
+     "typescript": "^5"
