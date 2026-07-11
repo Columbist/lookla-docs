@@ -34,3 +34,51 @@ index bc3e5e9..6d6dfea 100644
      runs-on: ubuntu-latest
      steps:
        - name: Deploy via SSH
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -821,6 +821,35 @@
+ 
+ ---
+ 
++### T-040 — Harden production deployment
++**Priority:** P1 | **Owner:** OPS | **Estimate:** 2h | **Epic:** EPIC-09
++**Dependencies:** None
++
++**Description:** `.github/workflows/deploy.yml` was switched to
++`workflow_dispatch`-only with a typed `DEPLOY` confirmation input on
++2026-07-11, since a push-triggered deploy would auto-deploy production
++the instant `DEPLOY_SSH_KEY` is ever added as a secret, with no
++review/approval gate — and GitHub's "required reviewers" environment
++protection isn't available on this private repo's current plan. The
++manual-dispatch + typed-confirmation gate is a stopgap, not a
++production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
++
++**Steps:**
++1. Deploy the exact commit SHA that was reviewed/merged, not a moving `git pull origin main` (avoid deploying commits landed after the deploy was triggered)
++2. Pre-deploy backup (at minimum: `pg_dump`, or confirm the existing backup cadence covers this window)
++3. Post-deploy health check (e.g. `GET /api/areas` returns 200 with the expected item count) before considering the deploy successful
++4. Rollback path (previous image tag or commit SHA) if the health check fails
++5. Deployment log (what SHA, when, by whom/what triggered it — at minimum the GitHub Actions run itself, ideally also a persisted log)
++
++**Acceptance Criteria:**
++- [ ] Deploy step pins to `github.sha` (or an explicit input), not a floating branch pull
++- [ ] Pre-deploy backup step exists or is confirmed covered elsewhere
++- [ ] Automated post-deploy health check gates "success"
++- [ ] Rollback procedure documented (manual is acceptable, but must exist)
++- [ ] `DEPLOY_SSH_KEY` is not added as a secret until this task is done
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+@@ -1004,7 +1033,8 @@
+ | T-036 Create public/robots.txt | P0 | FE | 0.25 | EPIC-09 | — |
+ | T-037 Unify salon search (post-MVP) | post-MVP | BE | 4 | EPIC-10 | T-035 |
+ | T-039 Re-enable CodeQL (blocked on GH Code Security) | P2 | OPS | 0.5 | EPIC-09 | — |
+-| **Total** | | | **~40.25h (M-01)** | | |
++| T-040 Harden production deployment | P1 | OPS | 2 | EPIC-09 | — |
++| **Total** | | | **~42.25h (M-01)** | | |
+ 
+ ---
+ 
