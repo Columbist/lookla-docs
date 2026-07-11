@@ -686,10 +686,10 @@ index 0000000..f1d9a31
 +    return {row[0]: row[1] for row in rows}
 diff --git a/backend/tests/test_areas_endpoint.py b/backend/tests/test_areas_endpoint.py
 new file mode 100644
-index 0000000..60d0a57
+index 0000000..dcee218
 --- /dev/null
 +++ b/backend/tests/test_areas_endpoint.py
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,359 @@
 +"""
 +T-004: GET /api/areas — behaviour tests.
 +
@@ -774,9 +774,11 @@ index 0000000..60d0a57
 +    # No `with` block: TestClient(app) alone does not run the app's lifespan
 +    # (see app/main.py check_db() startup check), which would otherwise
 +    # require a real database connection unrelated to this endpoint's logic.
++    test_client = TestClient(app)
 +    try:
-+        yield TestClient(app)
++        yield test_client
 +    finally:
++        test_client.close()
 +        if previous_override is None:
 +            app.dependency_overrides.pop(get_db, None)
 +        else:
