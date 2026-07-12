@@ -1,0 +1,1090 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 8bf59c8..2dd4fb2 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -47,5 +47,7 @@ jobs:
+         run: npm ci
+       - name: Lint
+         run: npm run lint
++      - name: Test
++        run: npm test
+       - name: Build
+         run: npm run build
+diff --git a/docs/03_PAGES/HOME.md b/docs/03_PAGES/HOME.md
+index 2bad442..14d6ca7 100644
+--- a/docs/03_PAGES/HOME.md
++++ b/docs/03_PAGES/HOME.md
+@@ -136,18 +136,18 @@ The value proposition must be legible to P-02 within the first viewport without
+ 
+ **Purpose:** Let users who know their area jump directly to filtered results.
+ 
+-**Constraint per DEC-010:** These are not "Cities" — they are districts/areas of Athens (Glyfada, Kolonaki, Kallithea, Marousi, etc.) plus city-level entries for Thessaloniki and other regions. The section label must say "Popular Areas" or "Αναζήτηση κατά περιοχή" — not "Cities."
++**Constraint per DEC-010:** These are not "Cities" — they are districts/areas of Athens (Glyfada, Athens Center, Kallithea, Marousi, etc.) plus city-level entries for Thessaloniki and other regions. The section label must say "Popular Areas" or "Αναζήτηση κατά περιοχή" — not "Cities."
+ 
+ **Content:**
+-- 6–8 area tiles with name and photo or illustration
++- Top 8 active Attica areas by salon count (at least 6 shown when the API returns sufficient data)
+ - Athens districts take priority (DEC-012 — Athens focus)
+-- Each tile links to `/search?area={slug}` or `/search?district={slug}` per the agreed location param structure
++- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (implemented T-008; `?district=` was never built, do not use it)
+ 
+-**Data:** From `/api/cities` initially; to be replaced when location hierarchy (DEC-010) is implemented. During transition: show districts that have ≥10 salons in Athens
++**Data:** From `GET /api/areas?region=attica` (T-004), ordered by `salon_count` descending with the stable slug as a deterministic tie-breaker. **Caching:** SSR, `revalidate: 86400` (24h) — see Data Requirements below. Localized area names come from `name_el`/`name_en`/`name_ru`/`name_uk` on each item; stable slug URLs, never localized names or raw `address_district` values, appear in the link.
+ 
+-**Empty state:** Show static fallback of known Athens districts (Glyfada, Kolonaki, Marousi, Kallithea, Piraeus, Nea Smyrni, Chalandri, Kifissia)
++**Empty state:** On `/api/areas` failure, an invalid/empty payload, or zero areas with `salon_count > 0`, silently render a static fallback of known Athens districts (Glyfada, Athens Center, Piraeus, Marousi, Kallithea, Nea Smyrni, Chalandri, Kifissia) — no invented salon counts, no error shown to the user.
+ 
+-**Mobile:** 2-column or 3-column grid depending on screen width
++**Mobile:** 2-column grid
+ 
+ ---
+ 
+@@ -181,7 +181,7 @@ The value proposition must be legible to P-02 within the first viewport without
+ | Data | Source | Caching |
+ |---|---|---|
+ | Category grid | `/api/categories` | SSR; can be cached aggressively |
+-| Popular areas | `/api/cities` + manual curation for now | SSR |
++| Popular areas | `/api/areas?region=attica` | SSR, `revalidate: 86400` |
+ | User locale | `next-intl` routing | URL-based |
+ | Auth state | `/api/auth/me` | Client-side hydration |
+ 
+@@ -236,7 +236,7 @@ The value proposition must be legible to P-02 within the first viewport without
+ 
+ **Changes from current implementation:**
+ 1. Language switcher moved to header (currently footer-only — gap identified in J-02)
+-2. "Popular Cities" section renamed to "Popular Areas" and populated with Athens districts (DEC-010)
++2. ✅ Done (T-008): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010)
+ 3. "How it works" step 3 must mention no registration required (DEC-016 compliance)
+ 4. Navigation: remove any link to `/pricing` if present (DEC-006 compliance check)
+ 
+diff --git a/frontend/app/[locale]/page.tsx b/frontend/app/[locale]/page.tsx
+index 289b7a4..57b4d2f 100644
+--- a/frontend/app/[locale]/page.tsx
++++ b/frontend/app/[locale]/page.tsx
+@@ -1,8 +1,9 @@
+ import { getTranslations, setRequestLocale } from 'next-intl/server';
+-import { api } from '@/lib/api';
++import { api, getHomepageAreas } from '@/lib/api';
++import { resolveHomepageAreas } from '@/lib/areaGrid';
+ import SearchBar from '@/components/SearchBar';
+ import CategoryGrid from '@/components/CategoryGrid';
+-import CityGrid from '@/components/CityGrid';
++import AreaGrid from '@/components/AreaGrid';
+ import LanguageSwitcher from '@/components/LanguageSwitcher';
+ import Header from '@/components/Header';
+ 
+@@ -15,12 +16,12 @@ export default async function HomePage({
+   setRequestLocale(locale);
+   const t = await getTranslations({ locale, namespace: 'home' });
+ 
+-  const [cities, categories] = await Promise.all([
+-    api.cities().catch(() => []),
++  const [areaItems, categories] = await Promise.all([
++    getHomepageAreas().catch(() => null),
+     api.categories(locale).catch(() => []),
+   ]);
+ 
+-  const topCities = cities.slice(0, 12);
++  const areas = resolveHomepageAreas(areaItems);
+ 
+   return (
+     <div className="min-h-screen bg-white">
+@@ -43,11 +44,11 @@ export default async function HomePage({
+         <CategoryGrid categories={categories} locale={locale} />
+       </section>
+ 
+-      {/* Cities */}
++      {/* Areas */}
+       <section className="bg-gray-50 py-12">
+         <div className="max-w-6xl mx-auto px-4">
+-          <h2 className="text-2xl font-bold text-gray-800 mb-6">{t('popular_cities')}</h2>
+-          <CityGrid cities={topCities} locale={locale} />
++          <h2 className="text-2xl font-bold text-gray-800 mb-6">{t('popular_areas')}</h2>
++          <AreaGrid areas={areas} locale={locale} />
+         </div>
+       </section>
+ 
+diff --git a/frontend/components/AreaGrid.tsx b/frontend/components/AreaGrid.tsx
+new file mode 100644
+index 0000000..587a27e
+--- /dev/null
++++ b/frontend/components/AreaGrid.tsx
+@@ -0,0 +1,29 @@
++import Link from 'next/link';
++import type { AreaItem } from '@/lib/api';
++import type { Locale } from '@/i18n/request';
++import { getAreaName } from '@/lib/areaFilter';
++
++const SALONS_WORD: Record<string, string> = {
++  el: 'σαλόνια', en: 'salons', ru: 'салонов', uk: 'салонів',
++};
++
++export default function AreaGrid({ areas, locale }: { areas: AreaItem[]; locale: string }) {
++  const prefix = locale === 'el' ? '' : `/${locale}`;
++  const word = SALONS_WORD[locale] || 'salons';
++  return (
++    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
++      {areas.map(area => (
++        <Link
++          key={area.slug}
++          href={`${prefix}/search?area=${area.slug}`}
++          className="p-4 bg-white rounded-xl border border-gray-100 hover:border-pink-200 hover:shadow-sm transition-all min-h-[64px] flex flex-col justify-center"
++        >
++          <div className="text-base font-semibold text-gray-800 truncate">{getAreaName(area, locale as Locale)}</div>
++          {area.salon_count > 0 && (
++            <div className="text-sm text-gray-400 mt-0.5">{area.salon_count} {word}</div>
++          )}
++        </Link>
++      ))}
++    </div>
++  );
++}
+diff --git a/frontend/components/CityGrid.tsx b/frontend/components/CityGrid.tsx
+deleted file mode 100644
+index 29b91a7..0000000
+--- a/frontend/components/CityGrid.tsx
++++ /dev/null
+@@ -1,61 +0,0 @@
+-import Link from 'next/link';
+-import type { City } from '@/lib/api';
+-
+-const SALONS_WORD: Record<string, string> = {
+-  el: 'σαλόνια', en: 'salons', ru: 'салонов', uk: 'салонів',
+-};
+-
+-// Greek city name → translations. Key is always the Greek DB value.
+-const CITY_NAMES: Record<string, Record<string, string>> = {
+-  'Αθήνα':        { en: 'Athens',        ru: 'Афины',        uk: 'Афіни' },
+-  'Θεσσαλονίκη': { en: 'Thessaloniki',   ru: 'Салоники',     uk: 'Салоніки' },
+-  'Πειραιάς':    { en: 'Piraeus',        ru: 'Пирей',        uk: 'Пірей' },
+-  'Γλυφάδα':     { en: 'Glyfada',        ru: 'Глифада',      uk: 'Гліфада' },
+-  'Λάρισα':      { en: 'Larissa',        ru: 'Лариса',       uk: 'Лариса' },
+-  'Πάτρα':       { en: 'Patras',         ru: 'Патры',        uk: 'Патри' },
+-  'Μαρούσι':     { en: 'Marousi',        ru: 'Маруси',       uk: 'Марусі' },
+-  'Κηφισιά':     { en: 'Kifisia',        ru: 'Кифисья',      uk: 'Кіфісья' },
+-  'Καλαμαριά':   { en: 'Kalamaria',      ru: 'Каламарья',    uk: 'Каламарья' },
+-  'Ηράκλειο':    { en: 'Heraklion',      ru: 'Ираклион',     uk: 'Іракліон' },
+-  'Βόλος':       { en: 'Volos',          ru: 'Волос',        uk: 'Волос' },
+-  'Χανιά':       { en: 'Chania',         ru: 'Ханья',        uk: 'Ханья' },
+-  'Ρόδος':       { en: 'Rhodes',         ru: 'Родос',        uk: 'Родос' },
+-  'Ιωάννινα':    { en: 'Ioannina',       ru: 'Янина',        uk: 'Яніна' },
+-  'Καβάλα':      { en: 'Kavala',         ru: 'Кавала',       uk: 'Кавала' },
+-  'Νέα Ιωνία':   { en: 'Nea Ionia',      ru: 'Неа Иония',    uk: 'Неа Іонія' },
+-  'Συκιές':      { en: 'Sykies',         ru: 'Сикьес',       uk: 'Сікьєс' },
+-  'Νεάπολη':     { en: 'Neapoli',        ru: 'Неаполи',      uk: 'Неаполі' },
+-  'Βύρωνας':     { en: 'Vyronas',        ru: 'Вирнас',       uk: 'Вирнас' },
+-  'Εύοσμος':     { en: 'Evosmos',        ru: 'Евосмос',      uk: 'Евосмос' },
+-  'Περιστέρι':   { en: 'Peristeri',      ru: 'Периcтери',    uk: 'Периcтері' },
+-  'Νέα Ερυθραία':{ en: 'Nea Erythraia',  ru: 'Неа Эрифрея',  uk: 'Неа Еріфрея' },
+-  'Βελισσάριος': { en: 'Velissarios',    ru: 'Велисарьос',   uk: 'Велісаріос' },
+-  'Γάζι':        { en: 'Gazi',           ru: 'Гази',         uk: 'Газі' },
+-  'Ρίο':         { en: 'Rio',            ru: 'Рио',          uk: 'Ріо' },
+-  'Ανατολή':     { en: 'Anatoli',        ru: 'Анатоли',      uk: 'Анатолі' },
+-  'Μενεμένη':    { en: 'Menemeni',       ru: 'Менемени',     uk: 'Менемені' },
+-};
+-
+-function getCityName(greekName: string, locale: string): string {
+-  if (locale === 'el') return greekName;
+-  return CITY_NAMES[greekName]?.[locale] ?? greekName;
+-}
+-
+-export default function CityGrid({ cities, locale }: { cities: City[]; locale: string }) {
+-  const prefix = locale === 'el' ? '' : `/${locale}`;
+-  const word = SALONS_WORD[locale] || 'salons';
+-  return (
+-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+-      {cities.map(city => (
+-        <Link
+-          key={city.city}
+-          href={`${prefix}/search?city=${encodeURIComponent(city.city)}`}
+-          className="p-4 bg-white rounded-xl border border-gray-100 hover:border-pink-200 hover:shadow-sm transition-all min-h-[64px] flex flex-col justify-center"
+-        >
+-          <div className="text-base font-semibold text-gray-800 truncate">{getCityName(city.city, locale)}</div>
+-          <div className="text-sm text-gray-400 mt-0.5">{city.count} {word}</div>
+-        </Link>
+-      ))}
+-    </div>
+-  );
+-}
+diff --git a/frontend/lib/api.test.ts b/frontend/lib/api.test.ts
+new file mode 100644
+index 0000000..e2e7281
+--- /dev/null
++++ b/frontend/lib/api.test.ts
+@@ -0,0 +1,68 @@
++import { test, describe, beforeEach, afterEach } from 'node:test';
++import assert from 'node:assert/strict';
++import { getHomepageAreas } from './api';
++
++describe('getHomepageAreas', () => {
++  let originalFetch: typeof globalThis.fetch;
++
++  beforeEach(() => {
++    originalFetch = globalThis.fetch;
++  });
++
++  afterEach(() => {
++    globalThis.fetch = originalFetch;
++  });
++
++  test('reads areas from a valid response items array', async () => {
++    globalThis.fetch = (async () => ({
++      ok: true,
++      json: async () => ({
++        items: [{ slug: 'glyfada', name_el: 'Γλυφάδα', name_en: 'Glyfada', name_ru: 'Глифада', name_uk: 'Гліфада', salon_count: 76, region: 'attica', city: 'athens' }],
++      }),
++    })) as unknown as typeof fetch;
++
++    const result = await getHomepageAreas();
++    assert.equal(result.length, 1);
++    assert.equal(result[0].slug, 'glyfada');
++  });
++
++  test('throws on HTTP failure — caller catches this into the fallback path', async () => {
++    globalThis.fetch = (async () => ({ ok: false, status: 502, json: async () => ({}) })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++
++  test('throws on a malformed payload (items is not an array)', async () => {
++    globalThis.fetch = (async () => ({ ok: true, json: async () => ({ notItems: [] }) })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++
++  test('throws when items is present but not an array', async () => {
++    globalThis.fetch = (async () => ({ ok: true, json: async () => ({ items: 'not-an-array' }) })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++
++  test('requests with next.revalidate 86400 (24h SSR cache)', async () => {
++    let capturedInit: RequestInit | undefined;
++    globalThis.fetch = (async (_url, init) => {
++      capturedInit = init as RequestInit;
++      return { ok: true, json: async () => ({ items: [] }) } as Response;
++    }) as unknown as typeof fetch;
++
++    await getHomepageAreas();
++    assert.equal((capturedInit as any)?.next?.revalidate, 86400);
++  });
++
++  test('requests region=attica and does not forward credentials', async () => {
++    let capturedUrl = '';
++    let capturedInit: RequestInit | undefined;
++    globalThis.fetch = (async (url, init) => {
++      capturedUrl = String(url);
++      capturedInit = init as RequestInit;
++      return { ok: true, json: async () => ({ items: [] }) } as Response;
++    }) as unknown as typeof fetch;
++
++    await getHomepageAreas();
++    assert.ok(capturedUrl.includes('/areas?region=attica'), capturedUrl);
++    assert.equal(capturedInit?.credentials, undefined);
++  });
++});
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index 7824213..cd01ea4 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -39,6 +39,27 @@ export const api = {
+   categories: (lang = 'el') => apiFetch<Category[]>(`/categories?lang=${lang}`),
+ };
+ 
++// GET /api/areas for the homepage AreaGrid (T-008) — SSR-only, revalidated
++// every 24h. Deliberately bypasses apiFetch(): Next.js rejects combining
++// `cache: 'no-store'` (apiFetch's default) with `next.revalidate`, and this
++// call needs neither apiFetch's browser-credential forwarding (server-only,
++// public/unauthenticated data) nor its no-store default. Throws on any
++// failure or malformed payload — callers decide the fallback (see
++// HomePage in app/[locale]/page.tsx), this function never returns partial
++// or fabricated data.
++export async function getHomepageAreas(): Promise<AreaItem[]> {
++  const res = await fetch(`${API_BASE}/areas?region=attica`, {
++    next: { revalidate: 86400 },
++    headers: { 'Content-Type': 'application/json' },
++  });
++  if (!res.ok) throw new Error(`API ${res.status}: /areas`);
++  const data = await res.json();
++  if (!data || !Array.isArray(data.items)) {
++    throw new Error('malformed /api/areas response');
++  }
++  return data.items as AreaItem[];
++}
++
+ // Types
+ export interface SalonListItem {
+   id: number; name: string; slug?: string;
+diff --git a/frontend/lib/areaGrid.test.ts b/frontend/lib/areaGrid.test.ts
+new file mode 100644
+index 0000000..ab2b96e
+--- /dev/null
++++ b/frontend/lib/areaGrid.test.ts
+@@ -0,0 +1,135 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { selectPopularAreas, resolveHomepageAreas, FALLBACK_AREAS } from './areaGrid';
++import { getAreaName } from './areaFilter';
++import type { AreaItem } from './api';
++
++function area(overrides: Partial<AreaItem>): AreaItem {
++  return {
++    slug: 'test-area', name_el: 'Τεστ', name_en: 'Test', name_ru: 'Тест', name_uk: 'Тест',
++    salon_count: 10, region: 'attica', city: 'athens',
++    ...overrides,
++  };
++}
++
++describe('selectPopularAreas', () => {
++  test('drops zero and negative salon_count entries', () => {
++    const items = [
++      area({ slug: 'a', salon_count: 5 }),
++      area({ slug: 'b', salon_count: 0 }),
++      area({ slug: 'c', salon_count: -1 }),
++    ];
++    const result = selectPopularAreas(items);
++    assert.deepEqual(result.map(a => a.slug), ['a']);
++  });
++
++  test('sorts by salon_count descending', () => {
++    const items = [
++      area({ slug: 'low', salon_count: 5 }),
++      area({ slug: 'high', salon_count: 100 }),
++      area({ slug: 'mid', salon_count: 50 }),
++    ];
++    const result = selectPopularAreas(items);
++    assert.deepEqual(result.map(a => a.slug), ['high', 'mid', 'low']);
++  });
++
++  test('uses slug as a deterministic tie-breaker for equal salon_count', () => {
++    const items = [
++      area({ slug: 'zebra', salon_count: 10 }),
++      area({ slug: 'alpha', salon_count: 10 }),
++      area({ slug: 'mike', salon_count: 10 }),
++    ];
++    const result = selectPopularAreas(items);
++    assert.deepEqual(result.map(a => a.slug), ['alpha', 'mike', 'zebra']);
++  });
++
++  test('displays at most 8 areas', () => {
++    const items = Array.from({ length: 15 }, (_, i) => area({ slug: `area-${i}`, salon_count: i + 1 }));
++    const result = selectPopularAreas(items);
++    assert.equal(result.length, 8);
++  });
++
++  test('at least 6 areas appear with a normal API response', () => {
++    const items = Array.from({ length: 10 }, (_, i) => area({ slug: `area-${i}`, salon_count: (i + 1) * 3 }));
++    const result = selectPopularAreas(items);
++    assert.ok(result.length >= 6, `expected >= 6, got ${result.length}`);
++  });
++
++  test('does not mutate the input array', () => {
++    const items = [area({ slug: 'b', salon_count: 1 }), area({ slug: 'a', salon_count: 2 })];
++    const snapshot = items.map(a => a.slug);
++    selectPopularAreas(items);
++    assert.deepEqual(items.map(a => a.slug), snapshot);
++  });
++});
++
++describe('resolveHomepageAreas (fallback activation)', () => {
++  test('activates fallback when items is null (API/HTTP failure)', () => {
++    const result = resolveHomepageAreas(null);
++    assert.deepEqual(result, FALLBACK_AREAS);
++  });
++
++  test('activates fallback when items is an empty array', () => {
++    const result = resolveHomepageAreas([]);
++    assert.deepEqual(result, FALLBACK_AREAS);
++  });
++
++  test('activates fallback when every item has salon_count <= 0', () => {
++    const result = resolveHomepageAreas([area({ salon_count: 0 }), area({ slug: 'b', salon_count: -3 })]);
++    assert.deepEqual(result, FALLBACK_AREAS);
++  });
++
++  test('uses real selection when a normal response is available', () => {
++    const items = [area({ slug: 'real-area', salon_count: 42 })];
++    const result = resolveHomepageAreas(items);
++    assert.deepEqual(result.map(a => a.slug), ['real-area']);
++  });
++});
++
++describe('FALLBACK_AREAS', () => {
++  const expectedSlugs = [
++    'glyfada', 'athens-center', 'piraeus', 'marousi',
++    'kallithea', 'nea-smyrni', 'chalandri', 'kifissia',
++  ];
++
++  test('contains exactly the expected stable slugs', () => {
++    assert.deepEqual(FALLBACK_AREAS.map(a => a.slug), expectedSlugs);
++  });
++
++  test('does not show fake salon counts', () => {
++    for (const a of FALLBACK_AREAS) {
++      assert.equal(a.salon_count, 0, `${a.slug} must have salon_count 0, not an invented number`);
++    }
++  });
++
++  test('has all four localized names for every entry', () => {
++    for (const a of FALLBACK_AREAS) {
++      for (const field of ['name_el', 'name_en', 'name_ru', 'name_uk'] as const) {
++        assert.ok(a[field] && a[field].length > 0, `${a.slug}.${field} must be a non-empty localized name`);
++      }
++    }
++  });
++
++  test('area names resolve correctly per locale via the shared T-007 helper', () => {
++    const glyfada = FALLBACK_AREAS.find(a => a.slug === 'glyfada')!;
++    assert.equal(getAreaName(glyfada, 'el'), 'Γλυφάδα');
++    assert.equal(getAreaName(glyfada, 'en'), 'Glyfada');
++    assert.equal(getAreaName(glyfada, 'ru'), 'Глифада');
++    assert.equal(getAreaName(glyfada, 'uk'), 'Гліфада');
++  });
++});
++
++describe('homepage message files', () => {
++  test('all four locales define home.popular_areas', async () => {
++    const fs = await import('node:fs');
++    const path = await import('node:path');
++    const { fileURLToPath } = await import('node:url');
++    const here = path.dirname(fileURLToPath(import.meta.url));
++    const dir = path.join(here, '..', 'messages');
++    for (const locale of ['el', 'en', 'ru', 'uk']) {
++      const messages = JSON.parse(fs.readFileSync(path.join(dir, `${locale}.json`), 'utf-8'));
++      const heading = messages?.home?.popular_areas;
++      assert.ok(typeof heading === 'string' && heading.length > 0, `${locale}.json home.popular_areas missing or empty`);
++    }
++  });
++});
+diff --git a/frontend/lib/areaGrid.ts b/frontend/lib/areaGrid.ts
+new file mode 100644
+index 0000000..6d535a9
+--- /dev/null
++++ b/frontend/lib/areaGrid.ts
+@@ -0,0 +1,51 @@
++// Pure helpers for the homepage AreaGrid (T-008). Dependency-free (no
++// React/DOM) so they can run under node:test without a browser/JSDOM —
++// same convention as lib/areaFilter.ts (T-007).
++import type { AreaItem } from '@/lib/api';
++
++const DISPLAY_LIMIT = 8;
++
++/**
++ * Selects the popular areas to show on the homepage from a raw
++ * GET /api/areas response: drops zero/negative-count entries, sorts by
++ * salon_count descending with the stable slug as a deterministic
++ * tie-breaker, and caps at DISPLAY_LIMIT. Does not mutate `items` — filter
++ * already returns a new array before sort runs on it.
++ */
++export function selectPopularAreas(items: AreaItem[]): AreaItem[] {
++  return items
++    .filter(area => area.salon_count > 0)
++    .sort((a, b) => b.salon_count - a.salon_count || a.slug.localeCompare(b.slug))
++    .slice(0, DISPLAY_LIMIT);
++}
++
++/**
++ * Homepage AreaGrid data source, combining selection with the static
++ * fallback: `items` is whatever GET /api/areas produced (or null if the
++ * request failed/threw — see getHomepageAreas() in lib/api.ts). Falls back
++ * to FALLBACK_AREAS whenever selection would otherwise be empty — API
++ * failure, malformed payload (both surfaced as null upstream), an empty
++ * items array, or every item having salon_count <= 0.
++ */
++export function resolveHomepageAreas(items: AreaItem[] | null): AreaItem[] {
++  const popular = items ? selectPopularAreas(items) : [];
++  return popular.length > 0 ? popular : FALLBACK_AREAS;
++}
++
++// Static availability fallback for when GET /api/areas fails, times out, or
++// returns an invalid/empty payload. Not the canonical data source — see
++// selectPopularAreas above and getHomepageAreas() in lib/api.ts. Deliberately
++// has no salon_count (0 = "not shown", see AreaGrid.tsx) since a fabricated
++// count would misrepresent live data. Slugs/names must stay in sync with
++// backend/app/data/area_metadata.py — this list intentionally does not
++// import from there since the frontend has no access to the Python module.
++export const FALLBACK_AREAS: AreaItem[] = [
++  { slug: 'glyfada', name_el: 'Γλυφάδα', name_en: 'Glyfada', name_ru: 'Глифада', name_uk: 'Гліфада', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'athens-center', name_el: 'Αθήνα', name_en: 'Athens Center', name_ru: 'Центр Афин', name_uk: 'Центр Афін', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'piraeus', name_el: 'Πειραιάς', name_en: 'Piraeus', name_ru: 'Пирей', name_uk: 'Пірей', salon_count: 0, region: 'attica', city: 'piraeus' },
++  { slug: 'marousi', name_el: 'Μαρούσι', name_en: 'Marousi', name_ru: 'Маруси', name_uk: 'Маруси', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'kallithea', name_el: 'Καλλιθέα', name_en: 'Kallithea', name_ru: 'Каллифея', name_uk: 'Каллітея', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'nea-smyrni', name_el: 'Νέα Σμύρνη', name_en: 'Nea Smyrni', name_ru: 'Неа-Смирни', name_uk: 'Неа-Смирні', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'chalandri', name_el: 'Χαλάνδρι', name_en: 'Chalandri', name_ru: 'Халандри', name_uk: 'Халандрі', salon_count: 0, region: 'attica', city: 'athens' },
++  { slug: 'kifissia', name_el: 'Κηφισιά', name_en: 'Kifissia', name_ru: 'Кифисья', name_uk: 'Кіфісья', salon_count: 0, region: 'attica', city: 'athens' },
++];
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 3cd6d5b..c1862bc 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -12,6 +12,7 @@
+     "hero_subtitle": "Χιλιάδες σαλόνια και επαγγελματίες σε όλη την Ελλάδα",
+     "search_button": "Αναζήτηση",
+     "popular_cities": "Δημοφιλείς πόλεις",
++    "popular_areas": "Δημοφιλείς Περιοχές",
+     "popular_services": "Δημοφιλείς υπηρεσίες",
+     "how_it_works": "Πώς λειτουργεί",
+     "step_search_title": "Αναζητήστε",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 8f5033e..77cce50 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -12,6 +12,7 @@
+     "hero_subtitle": "Thousands of salons and professionals across Greece",
+     "search_button": "Search",
+     "popular_cities": "Popular cities",
++    "popular_areas": "Popular Areas",
+     "popular_services": "Popular services",
+     "how_it_works": "How it works",
+     "step_search_title": "Search",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 8e27cc3..6ac0088 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -12,6 +12,7 @@
+     "hero_subtitle": "Тысячи салонов и мастеров по всей Греции",
+     "search_button": "Поиск",
+     "popular_cities": "Популярные города",
++    "popular_areas": "Популярные районы",
+     "popular_services": "Популярные услуги",
+     "how_it_works": "Как это работает",
+     "step_search_title": "Найдите",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index d4c409e..3f73dec 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -12,6 +12,7 @@
+     "hero_subtitle": "Тисячі салонів і майстрів по всій Греції",
+     "search_button": "Пошук",
+     "popular_cities": "Популярні міста",
++    "popular_areas": "Популярні райони",
+     "popular_services": "Популярні послуги",
+     "how_it_works": "Як це працює",
+     "step_search_title": "Знайдіть",
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index a484d34..57b64e4 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -28,6 +28,7 @@
+         "eslint-config-next": "14.2.35",
+         "postcss": "^8",
+         "tailwindcss": "^3.4.1",
++        "tsx": "^4.23.0",
+         "typescript": "^5"
+       }
+     },
+@@ -74,6 +75,422 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@esbuild/aix-ppc64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.28.1.tgz",
++      "integrity": "sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "aix"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/android-arm": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.28.1.tgz",
++      "integrity": "sha512-0k2F129Xdio1TdJfzJ8sy1Q47vUD2NnwdhiAf7drUN1EBTfPf4hsFCtmMgu/6m8JSzsBrlmVjudMBQqOfG8usQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/android-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.28.1.tgz",
++      "integrity": "sha512-34EGEbCIAgosYz6goLcopX6Mo7NyGv9tfwEM2/7Ce2VcVRk568iSvniGWcUXIy7wEDR1wzolcxcriFVrWYcwBg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/android-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.28.1.tgz",
++      "integrity": "sha512-dbwY7ltSMDWsRatcRpCnES4F+im88OCUgGZjy52shC7GqHRE/cYlxNbB4Z4UpJswpcc4Qxd2oE/ufM0p61IKng==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/darwin-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.28.1.tgz",
++      "integrity": "sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/darwin-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.28.1.tgz",
++      "integrity": "sha512-zfdzgK9ACBNZLI/CyHTOx81SyNbM6YXn7rxSgX97VjyiPl9W1i4Ka4fgKECEoFCKGpvBj5qArWIGgQjOwkgskQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/freebsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-wG2EA8ENdEI0qhkSZMjfqrdY+ziCYCPMmtZjjIwOmXFjmyzEHn+UUxk5of+SYsjtfs3VpnlC7QLzSI5hY/rOAw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/freebsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.28.1.tgz",
++      "integrity": "sha512-i7dZ9vQgnvSCzi/rYCXNgtF/U+eKZNJBzu3eTQbRgHnM7tNSizLOkRFAl3qzVc/Op/u5YkHHa4pf/3DOYHthLQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-arm": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.28.1.tgz",
++      "integrity": "sha512-qVXBOHQS+d5Y722GwJzJUtOLlX7km3CraOaGormF1pDtPd2C/l1SHRPgjLunLGe51Sh5YYWKMFDyV4SxgMQYTQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.28.1.tgz",
++      "integrity": "sha512-yHs+0uc8+nvEAfAfxrWQKK5peSNzBc4PegcMO0EJ2hT71uA7vB8Ihg2e77R2P7SG5uYjPbHlLLmve4LLLRCf0g==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-ia32": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.28.1.tgz",
++      "integrity": "sha512-d1z4ZuP0ajrfz/FhGT4vv278rX8KnPPJx8i5+AtK7TYbx9Le9F1hyzurZpkEyjkGa9dUGhQow4C1NmeGvqxN2w==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-loong64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.28.1.tgz",
++      "integrity": "sha512-M5sRjUVZrkm1OAPR3dlOYzNmN+loZKGVi1VUQGrwuqLcbR6qeAz+famMhjASeH3YVKvZz+zT1jlh/keC3Rj/lg==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-mips64el": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.28.1.tgz",
++      "integrity": "sha512-mRObBZeHh2OxcBFPWE/FjylkRgZdYuiTR3vaTozquCGOH14iP9oN4x4Ge81CoIDYQrXmIxpFumJBu5MtZpnQJQ==",
++      "cpu": [
++        "mips64el"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-ppc64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.28.1.tgz",
++      "integrity": "sha512-slScBsMAb3GFDcdrCgLwZtPYRoH2H/youv10QiZyRjmsP48fznoveWytSgCI/R0ZcUgpc0ZhIUEx6LHts8yrfQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-riscv64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.28.1.tgz",
++      "integrity": "sha512-kw0owk1o0GFETUJyW0jc0G4Yzs0BHZn0JDZ8JRT088vjJYX777BAs1fDGxAC+q831qOs2DTC96mNsG2opdfyyQ==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-s390x": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.28.1.tgz",
++      "integrity": "sha512-/lAIjX8aYFRByhh6L5rYtPEDRqa9de/4V/juOXcta5frjvzXO4/sqEtyytse0g3zZFuWu5cDN0MkLz2qRDD2Ag==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/linux-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.1.tgz",
++      "integrity": "sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/netbsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-oks0DYbLwWMmaakTsCb+zL4E+aHRVLom9IJZOAthMQEPiQmydXHkziYEsGYRx0uNV/IjEKGAV941JzH02pflqw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/netbsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.28.1.tgz",
++      "integrity": "sha512-aeL6lAnN89Hz43Mlh1G8ARasbuoYvSITDEx0tHh5b7jJnHcssqgjy9Yx430GDpmCa6OyrKoS0aNRjKundRizGg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/openbsd-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-arm64/-/openbsd-arm64-0.28.1.tgz",
++      "integrity": "sha512-MEFJe5C3R8pwXdZ5Y21oo6m7ePiS0d9pWucn99O/wvyJZChoIQKrQDxKrGeW8F5+T0okTHesAmDeiHDTIq0V/Q==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/openbsd-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.28.1.tgz",
++      "integrity": "sha512-i/ZLIOafE0Z8cI/XANJAixoJL/uRAoS2xOA3rb0xN+KK0K177cMAsQYkzHtBrtMXAKuAc7HGgcWiZ/sRC1Nxgw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/openharmony-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/openharmony-arm64/-/openharmony-arm64-0.28.1.tgz",
++      "integrity": "sha512-ge+Z7EXFNt2BO1oAMsVpiQ8EwndV9i1xXerAeTIK7AtPs3bKFXQM7nlRxDSIUIMeueR1CNXxqztLzdNeReKBJg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "openharmony"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/sunos-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.28.1.tgz",
++      "integrity": "sha512-BEjgtECkL3vY+SaSQ6nzVfiALUeFxpawyp8Jmf5PtYhf1Ug40N1h/hxlhts+f1FvSvarEigdxS3BlSMI2PJLcQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "sunos"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/win32-arm64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.28.1.tgz",
++      "integrity": "sha512-lCv9eK/H6ZJWbE7bh2nw54CZ9M2nupBxJcTsdk/QQnWkdSjKGuxmmH8/GWrlT1eMmZfn4dGcCjRte397WqfQXA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/win32-ia32": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.28.1.tgz",
++      "integrity": "sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg==",
++      "cpu": [
++        "ia32"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@esbuild/win32-x64": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.28.1.tgz",
++      "integrity": "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/@eslint-community/eslint-utils": {
+       "version": "4.9.1",
+       "resolved": "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.9.1.tgz",
+@@ -2628,6 +3045,47 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/esbuild": {
++      "version": "0.28.1",
++      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.1.tgz",
++      "integrity": "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "bin": {
++        "esbuild": "bin/esbuild"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "optionalDependencies": {
++        "@esbuild/aix-ppc64": "0.28.1",
++        "@esbuild/android-arm": "0.28.1",
++        "@esbuild/android-arm64": "0.28.1",
++        "@esbuild/android-x64": "0.28.1",
++        "@esbuild/darwin-arm64": "0.28.1",
++        "@esbuild/darwin-x64": "0.28.1",
++        "@esbuild/freebsd-arm64": "0.28.1",
++        "@esbuild/freebsd-x64": "0.28.1",
++        "@esbuild/linux-arm": "0.28.1",
++        "@esbuild/linux-arm64": "0.28.1",
++        "@esbuild/linux-ia32": "0.28.1",
++        "@esbuild/linux-loong64": "0.28.1",
++        "@esbuild/linux-mips64el": "0.28.1",
++        "@esbuild/linux-ppc64": "0.28.1",
++        "@esbuild/linux-riscv64": "0.28.1",
++        "@esbuild/linux-s390x": "0.28.1",
++        "@esbuild/linux-x64": "0.28.1",
++        "@esbuild/netbsd-arm64": "0.28.1",
++        "@esbuild/netbsd-x64": "0.28.1",
++        "@esbuild/openbsd-arm64": "0.28.1",
++        "@esbuild/openbsd-x64": "0.28.1",
++        "@esbuild/openharmony-arm64": "0.28.1",
++        "@esbuild/sunos-x64": "0.28.1",
++        "@esbuild/win32-arm64": "0.28.1",
++        "@esbuild/win32-ia32": "0.28.1",
++        "@esbuild/win32-x64": "0.28.1"
++      }
++    },
+     "node_modules/escape-string-regexp": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz",
+@@ -6038,6 +6496,24 @@
+       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="
+     },
++    "node_modules/tsx": {
++      "version": "4.23.0",
++      "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.23.0.tgz",
++      "integrity": "sha512-eUdUIaCr963q2h5u3+QwvYp0+eqPvn+egeqZUm0hwERCqqx1E3kK5ehbGCvqSE5MQAULr67ww0cA3jKc3YkM1w==",
++      "dev": true,
++      "dependencies": {
++        "esbuild": "~0.28.0"
++      },
++      "bin": {
++        "tsx": "dist/cli.mjs"
++      },
++      "engines": {
++        "node": ">=18.0.0"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.3"
++      }
++    },
+     "node_modules/type-check": {
+       "version": "0.4.0",
+       "resolved": "https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index 1c94068..9b947a8 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -6,7 +6,8 @@
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+-    "lint": "next lint"
++    "lint": "next lint",
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts"
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
+@@ -29,6 +30,7 @@
+     "eslint-config-next": "14.2.35",
+     "postcss": "^8",
+     "tailwindcss": "^3.4.1",
++    "tsx": "^4.23.0",
+     "typescript": "^5"
+   }
+ }
