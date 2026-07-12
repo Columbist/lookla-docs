@@ -235,6 +235,23 @@ matches (since it's strictly more precise); every other query — including
 existing pure city-name synonyms — continues through the unchanged legacy
 path.
 
+**Overlap rule with legacy `CITY_SYNONYMS` (review round 2 decision,
+2026-07-12):** the new alias table includes `name_ru`/`name_uk`/`name_el`/
+`name_en`/slug/canonical district from `AREA_METADATA`, and some of those
+strings already exist in the older, hand-maintained `CITY_SYNONYMS` dict
+(e.g. Ukrainian "Пірей" → legacy `Πειραιάς` city ILIKE, and also the
+`Piraeus` district's `name_uk`). This is intentional, not an oversight:
+**any `q` that matches `DISTRICT_QUERY_ALIASES` always takes canonical
+`address_district` exact-match semantics, even where an overlapping
+`CITY_SYNONYMS` entry exists** — it does not fall through to the legacy
+`address_city ILIKE` path. Only `q` values with *no* district-alias match
+(e.g. "афины", which has no district-alias entry — "Athens Center"'s
+Russian name is the different string "Центр Афин") continue through the
+unchanged legacy path. Verified end-to-end with dedicated fixture rows
+that share the same legacy Greek `address_city` but differ in
+`address_district`, proving the new path does not silently widen to the
+old substring match.
+
 **Acceptance Criteria:**
 - [x] Russian "Глифада" resolves through `AREA_METADATA` to district
       "Glyfada" and works in `/api/salons?q=Глифада` (exact equality, not
@@ -245,8 +262,14 @@ path.
 - [x] `area=` and district-alias `q=` combine consistently: matching →
       expected results, conflicting → empty result (not one silently
       overriding the other)
-- [x] Unit tests added — 34 new tests (pure alias resolution + list + map
-      endpoints), no regression in the existing 108 T-005/T-038 tests
+- [x] `city=` (legacy) and district-alias `q=` combine the same way —
+      matching narrows, conflicting empties, on both list and map
+- [x] Aliases overlapping with legacy `CITY_SYNONYMS` (e.g. "Пірей") use
+      exact district semantics, not the old substring path; non-overlapping
+      legacy synonyms (e.g. "афины") are unaffected
+- [x] Unit tests added — 37 new tests (pure alias resolution + list + map
+      endpoints, including the overlap and city-interaction cases above),
+      no regression in the existing 108 T-005/T-038 tests (145 total)
 
 ---
 

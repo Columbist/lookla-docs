@@ -90,8 +90,15 @@ implementation_status: Documents current API + MVP-required additions
 - `area` param takes precedence over `city` param when both provided
 - `area`/`city` and a district-alias `q` combine via ordinary AND, not
   override: a matching pair narrows to the same district (redundant but
-  consistent); a conflicting pair (e.g. `area=athens-center&q=Глифада`)
-  yields an empty result rather than either param silently winning (T-006)
+  consistent); a conflicting pair (e.g. `area=athens-center&q=Глифада`,
+  or `city=Athens&q=Глифада`) yields an empty result rather than either
+  param silently winning (T-006)
+- some district aliases overlap with older `CITY_SYNONYMS` entries (e.g.
+  Ukrainian "Пірей" is both a legacy city synonym for `Πειραιάς` and the
+  `Piraeus` district's `name_uk`). Overlapping aliases always take the new
+  exact `address_district` semantics, never the legacy `address_city
+  ILIKE` substring match — only `q` values with no district-alias match
+  (e.g. "афины") continue through the unchanged legacy path (T-006)
 
 ---
 
