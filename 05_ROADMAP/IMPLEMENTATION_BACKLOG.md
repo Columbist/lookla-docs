@@ -206,16 +206,47 @@ Kallithea") and can't use the `address_district` index as efficiently.
 
 ---
 
-### T-006 — Update CITY_SYNONYMS with district-level synonyms
+### T-006 — Russian/Ukrainian district query aliases for canonical /api/salons
 **Priority:** P1 | **Owner:** BE | **Estimate:** 1h | **Epic:** EPIC-02
-**Dependencies:** T-003
+**Dependencies:** T-004 (AREA_METADATA is the runtime source of truth for district aliases, not T-003 directly)
+**Status:** pending review — do not mark completed before merge and production verification
 
-**Description:** The `CITY_SYNONYMS` dict in the backend search module translates Russian/Ukrainian input to Greek district names. Add entries for all `address_district` values used in T-003.
+**Architecture correction (2026-07-12):** the original description was wrong
+on two counts, discovered during implementation. `CITY_SYNONYMS` is *not*
+part of the deprecated search module — it already runs inside the
+canonical `GET /api/salons` and `GET /api/salons/map` (see
+`_translate_query` in `app/routers/salons.py`). The deprecated
+`GET /api/search` has its own, entirely independent PostgreSQL FTS
+(`tsvector`/`unaccent`) and never touches `CITY_SYNONYMS` at all. Several
+Athens district names (e.g. "глифада") were already partially handled via
+`CITY_SYNONYMS`, but through substring `ILIKE` on `address_city` with a
+hand-maintained Greek string — not exact equality on the canonical
+`address_district` via `AREA_METADATA`, which didn't exist when
+`CITY_SYNONYMS` was written.
+
+**Description:** Accept an exact, complete localized district name in `q`
+(e.g. "Глифада", "Гліфада", "центр Афин") and resolve it through
+`AREA_METADATA` to the canonical `address_district`, matched with exact
+equality — not substring matching, no fuzzy/stemmed matching, and no
+combined service+location parsing ("маникюр глифада" stays out of scope,
+deferred to T-037). A new `apply_text_query_filter()` helper runs before
+the legacy `CITY_SYNONYMS` path and takes precedence for exact district
+matches (since it's strictly more precise); every other query — including
+existing pure city-name synonyms — continues through the unchanged legacy
+path.
 
 **Acceptance Criteria:**
-- [ ] Russian "Глифада" → "glyfada" synonym works in `/api/salons?q=Глифада`
-- [ ] Russian "центр Афин" → "Athens Center" synonym works
-- [ ] Unit test added for the synonym expansion (verify no regression against T-030)
+- [x] Russian "Глифада" resolves through `AREA_METADATA` to district
+      "Glyfada" and works in `/api/salons?q=Глифада` (exact equality, not
+      substring)
+- [x] Ukrainian "Гліфада" resolves the same way
+- [x] Russian "центр Афин" → "Athens Center" works
+- [x] Same interpretation applied in `GET /api/salons/map`
+- [x] `area=` and district-alias `q=` combine consistently: matching →
+      expected results, conflicting → empty result (not one silently
+      overriding the other)
+- [x] Unit tests added — 34 new tests (pure alias resolution + list + map
+      endpoints), no regression in the existing 108 T-005/T-038 tests
 
 ---
 
@@ -1024,7 +1055,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-003a Verify GIN index | ~~P0~~ DEFERRED | DB | — | EPIC-01 | — |
 | T-004 GET /api/areas endpoint | P0 | BE | 2 | EPIC-02 | T-003 |
 | T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-004 |
-| T-006 CITY_SYNONYMS district update | P1 | BE | 1 | EPIC-02 | T-003 |
+| T-006 Russian/Ukrainian district query aliases | P1 | BE | 1 | EPIC-02 | T-004 |
 | T-038 Resolve /api/salons/map response shape drift | P0 | BE/DOCS | 0.5 | EPIC-02 | T-005 |
 | T-007 SearchFilters area dropdown | P0 | FE | 2 | EPIC-02 | T-004, T-038 |
 | T-008 Homepage AreaGrid | P1 | FE | 1.5 | EPIC-02 | T-004 |

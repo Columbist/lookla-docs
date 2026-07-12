@@ -39,7 +39,7 @@ implementation_status: Documents current API + MVP-required additions
 
 | Param | Type | Required | Notes |
 |---|---|---|---|
-| `q` | string | No | Text search query. Transliterated via SERVICE_SYNONYMS (ru/uk → en terms) and CITY_SYNONYMS. |
+| `q` | string | No | Text search query. If `q` is an exact, complete localized district name (ru/uk, e.g. "Глифада", "Гліфада"), it's resolved via `AREA_METADATA` to the canonical `address_district` and matched with exact equality (T-006) — this takes precedence over the legacy path below. Otherwise, translated via SERVICE_SYNONYMS (ru/uk → en terms) and CITY_SYNONYMS (ru/uk/en → Greek city name, `address_city ILIKE`), unchanged. Combined service+location queries (e.g. "маникюр глифада") are not parsed — deferred to T-037. |
 | `area` | string | No | **NEW (DEC-010).** District slug. Replaces old `city` param. Maps to `address_district` filter. |
 | `city` | string | No | Legacy. Kept for backwards-compat during transition. Maps to `address_city ILIKE`. |
 | `category` | string | No | Category slug. Mapped to keyword list via CATEGORY_KEYWORDS. |
@@ -88,6 +88,10 @@ implementation_status: Documents current API + MVP-required additions
 - Salons with `is_active = false` are excluded
 - Default sort: `rating_google DESC, rating_count DESC`
 - `area` param takes precedence over `city` param when both provided
+- `area`/`city` and a district-alias `q` combine via ordinary AND, not
+  override: a matching pair narrows to the same district (redundant but
+  consistent); a conflicting pair (e.g. `area=athens-center&q=Глифада`)
+  yields an empty result rather than either param silently winning (T-006)
 
 ---
 
@@ -320,6 +324,7 @@ fields below may hold `null` — they are never absent:
 - Uses PostgreSQL FTS (`to_tsvector` / `plainto_tsquery` with `unaccent`). No GIN index exists (deferred to T-037).
 - `GET /api/salons` is the canonical MVP search endpoint (used by Search page, map, all frontend).
 - GIN index for this endpoint's FTS expression is blocked by `unaccent(text)` STABLE volatility and was deferred because this endpoint is deprecated. See `docs/.reviews/T-003a-review.md`.
+- T-006's Russian/Ukrainian district query aliases target `GET /api/salons`/`GET /api/salons/map` only and do not depend on or modify this endpoint's independent FTS implementation.
 
 **Response 200:** Same shape as `/api/salons`.
 
