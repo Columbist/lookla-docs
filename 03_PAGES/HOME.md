@@ -136,18 +136,18 @@ The value proposition must be legible to P-02 within the first viewport without 
 
 **Purpose:** Let users who know their area jump directly to filtered results.
 
-**Constraint per DEC-010:** These are not "Cities" — they are districts/areas of Athens (Glyfada, Kolonaki, Kallithea, Marousi, etc.) plus city-level entries for Thessaloniki and other regions. The section label must say "Popular Areas" or "Αναζήτηση κατά περιοχή" — not "Cities."
+**Constraint per DEC-010:** These are not "Cities" — they are districts/areas of Athens (Glyfada, Athens Center, Kallithea, Marousi, etc.) plus city-level entries for Thessaloniki and other regions. The section label must say "Popular Areas" or "Αναζήτηση κατά περιοχή" — not "Cities."
 
 **Content:**
-- 6–8 area tiles with name and photo or illustration
+- Top 8 active Attica areas by salon count (at least 6 shown when the API returns sufficient data)
 - Athens districts take priority (DEC-012 — Athens focus)
-- Each tile links to `/search?area={slug}` or `/search?district={slug}` per the agreed location param structure
+- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (implemented T-008; `?district=` was never built, do not use it)
 
-**Data:** From `/api/cities` initially; to be replaced when location hierarchy (DEC-010) is implemented. During transition: show districts that have ≥10 salons in Athens
+**Data:** From `GET /api/areas?region=attica` (T-004), ordered by `salon_count` descending with the stable slug as a deterministic tie-breaker. **Caching:** SSR, `revalidate: 86400` (24h) — see Data Requirements below. Localized area names come from `name_el`/`name_en`/`name_ru`/`name_uk` on each item; stable slug URLs, never localized names or raw `address_district` values, appear in the link.
 
-**Empty state:** Show static fallback of known Athens districts (Glyfada, Kolonaki, Marousi, Kallithea, Piraeus, Nea Smyrni, Chalandri, Kifissia)
+**Empty state:** On `/api/areas` failure, an invalid/empty payload, or zero areas with `salon_count > 0`, silently render a static fallback of known Athens districts (Glyfada, Athens Center, Piraeus, Marousi, Kallithea, Nea Smyrni, Chalandri, Kifissia) — no invented salon counts, no error shown to the user.
 
-**Mobile:** 2-column or 3-column grid depending on screen width
+**Mobile:** 2-column grid
 
 ---
 
@@ -181,7 +181,7 @@ The value proposition must be legible to P-02 within the first viewport without 
 | Data | Source | Caching |
 |---|---|---|
 | Category grid | `/api/categories` | SSR; can be cached aggressively |
-| Popular areas | `/api/cities` + manual curation for now | SSR |
+| Popular areas | `/api/areas?region=attica` | SSR, `revalidate: 86400` |
 | User locale | `next-intl` routing | URL-based |
 | Auth state | `/api/auth/me` | Client-side hydration |
 
@@ -236,7 +236,7 @@ The value proposition must be legible to P-02 within the first viewport without 
 
 **Changes from current implementation:**
 1. Language switcher moved to header (currently footer-only — gap identified in J-02)
-2. "Popular Cities" section renamed to "Popular Areas" and populated with Athens districts (DEC-010)
+2. ✅ Done (T-008): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010)
 3. "How it works" step 3 must mention no registration required (DEC-016 compliance)
 4. Navigation: remove any link to `/pricing` if present (DEC-006 compliance check)
 
