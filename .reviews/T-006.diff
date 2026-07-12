@@ -1,5 +1,5 @@
 diff --git a/backend/app/data/area_metadata.py b/backend/app/data/area_metadata.py
-index df09838..d62a287 100644
+index df09838..2817edf 100644
 --- a/backend/app/data/area_metadata.py
 +++ b/backend/app/data/area_metadata.py
 @@ -22,6 +22,7 @@ Coverage:
@@ -16,7 +16,7 @@ index df09838..d62a287 100644
      return AREA_SLUG_TO_DISTRICT.get(slug.strip().lower())
 +
 +
-+def normalize_district_query(value: str) -> str:
++def normalize_district_query(value: str | None) -> str:
 +    """Normalize a free-text district query for alias lookup: trims
 +    surrounding whitespace, applies Unicode NFKC normalization, collapses
 +    repeated internal whitespace, and casefolds (Unicode-aware, so it
@@ -161,7 +161,7 @@ index 54e1326..5f5bb0a 100644
      if q:
          search = f"%{q}%"
 diff --git a/backend/tests/test_salons_endpoint.py b/backend/tests/test_salons_endpoint.py
-index e784a0d..09fd808 100644
+index e784a0d..b60d731 100644
 --- a/backend/tests/test_salons_endpoint.py
 +++ b/backend/tests/test_salons_endpoint.py
 @@ -16,7 +16,14 @@ from sqlalchemy.pool import StaticPool
@@ -180,7 +180,41 @@ index e784a0d..09fd808 100644
  import app.routers.salons as salons_module
  
  
-@@ -178,6 +185,79 @@ def test_resolver_takes_no_db_argument():
+@@ -65,6 +72,33 @@ SEED_SALONS = [
+     dict(name="Glyfada No Coordinates", slug="glyfada-no-coordinates", address_city="Glyfada",
+          address_district="Glyfada", lat=None, lng=None, is_active=True,
+          rating_google=4.1, rating_count=6, description="active but ungeocoded"),
++
++    # T-006: overlap between the new district-alias lookup and the legacy
++    # CITY_SYNONYMS/_translate_query path. Both "Piraeus Port Salon" and
++    # "Piraeus Wrong District" share the same Greek address_city
++    # ("Πειραιάς", what CITY_SYNONYMS['пірей'] resolves to) but only the
++    # first has address_district == "Piraeus". This proves the new q=
++    # district-alias resolution uses exact address_district equality, not
++    # the legacy address_city ILIKE substring match — if it used the old
++    # path, both rows would match q="Пірей"; with exact-district semantics
++    # only the first does.
++    dict(name="Piraeus Port Salon", slug="piraeus-port-salon", address_city="Πειραιάς",
++         address_district="Piraeus", lat=37.94, lng=23.64, is_active=True,
++         rating_google=4.3, rating_count=15, description="port area salon"),
++    dict(name="Piraeus Wrong District", slug="piraeus-wrong-district", address_city="Πειραιάς",
++         address_district="Drapetsona", lat=37.94, lng=23.65, is_active=True,
++         rating_google=4.6, rating_count=7, description="different district, same city string"),
++
++    # T-006: "афины" is a legacy CITY_SYNONYMS entry with no overlapping
++    # district alias ("Athens" alone isn't a district in AREA_METADATA —
++    # only "Athens Center" is, with a different Russian name "Центр Афин").
++    # Proves q="афины" still takes the unchanged legacy path. address_district
++    # is deliberately None/unmapped — this salon must stay out of every
++    # "Athens Center" district-count test (e.g. area=athens-center, q=
++    # "центр Афин"), since it's only reachable via the legacy city path.
++    dict(name="Athens Legacy City Salon", slug="athens-legacy-city-salon", address_city="Αθήνα",
++         address_district=None, lat=37.98, lng=23.72, is_active=True,
++         rating_google=4.0, rating_count=4, description="matched via legacy city synonym"),
+ ]
+ 
+ 
+@@ -178,6 +212,90 @@ def test_resolver_takes_no_db_argument():
      assert list(params) == ["slug"]
  
  
@@ -257,10 +291,21 @@ index e784a0d..09fd808 100644
 +    assert normalize_district_query(None) == ""
 +
 +
++def test_resolve_district_query_overlapping_legacy_synonym_uses_exact_district():
++    # "Пірей" exists in both the legacy CITY_SYNONYMS dict (-> Greek
++    # "Πειραιάς", matched via address_city ILIKE) and AREA_METADATA
++    # (Piraeus district, name_uk="Пірей"). Review round 2 decision: exact
++    # aliases found in DISTRICT_QUERY_ALIASES intentionally take canonical
++    # district semantics — they do not fall through to the legacy
++    # address_city path. See test_list_q_overlapping_alias_uses_exact_
++    # district_not_legacy_city_ilike below for the end-to-end proof.
++    assert resolve_district_query("Пірей") == "Piraeus"
++
++
  # ── List endpoint: area filter ────────────────────────────────────────────────
  
  def test_list_area_filters_exact_district(client):
-@@ -279,6 +359,98 @@ def test_list_area_excludes_inactive_salons(client):
+@@ -279,6 +397,135 @@ def test_list_area_excludes_inactive_salons(client):
      assert "Glyfada Inactive" not in names
  
  
@@ -356,10 +401,47 @@ index e784a0d..09fd808 100644
 +    assert "Glyfada Inactive" not in names
 +
 +
++def test_list_q_overlapping_alias_uses_exact_district_not_legacy_city_ilike(client):
++    # Review round 2: "Piraeus Port Salon" and "Piraeus Wrong District" both
++    # have address_city == "Πειραιάς" — what legacy CITY_SYNONYMS['пірей']
++    # resolves to — but only the former has address_district == "Piraeus".
++    # If q="Пірей" used the old address_city ILIKE path, both would match;
++    # exact-district semantics must match only the first.
++    resp = client.get("/api/salons", params={"q": "Пірей"})
++    data = resp.json()
++    names = {item["name"] for item in data["items"]}
++    assert names == {"Piraeus Port Salon"}
++    assert "Piraeus Wrong District" not in names
++
++
++def test_list_q_non_overlapping_legacy_city_synonym_still_works(client):
++    # "афины" has no overlapping district alias ("Athens Center"'s Russian
++    # name is "Центр Афин", a different string) — it must still take the
++    # unchanged legacy CITY_SYNONYMS -> address_city ILIKE path.
++    resp = client.get("/api/salons", params={"q": "афины"})
++    data = resp.json()
++    names = {item["name"] for item in data["items"]}
++    assert names == {"Athens Legacy City Salon"}
++
++
++def test_list_matching_city_and_district_alias(client):
++    resp = client.get("/api/salons", params={"city": "Glyfada", "q": "Глифада"})
++    data = resp.json()
++    assert data["total"] == 3
++    assert all(item["address_city"] == "Glyfada" for item in data["items"])
++
++
++def test_list_conflicting_city_and_district_alias(client):
++    resp = client.get("/api/salons", params={"city": "Athens", "q": "Глифада"})
++    data = resp.json()
++    assert data["items"] == []
++    assert data["total"] == 0
++
++
  # ── Map endpoint: area filter ─────────────────────────────────────────────────
  
  def test_map_area_filters_exact_district(client):
-@@ -400,6 +572,50 @@ def test_list_includes_and_map_excludes_salon_without_coordinates(client):
+@@ -400,6 +647,56 @@ def test_list_includes_and_map_excludes_salon_without_coordinates(client):
      assert "Glyfada No Coordinates" not in map_names
  
  
@@ -407,11 +489,17 @@ index e784a0d..09fd808 100644
 +    assert names == {"Glyfada Nails", "Athens Center Nails"}
 +
 +
++def test_map_conflicting_city_and_district_alias(client):
++    resp = client.get("/api/salons/map", params={"city": "Athens", "q": "Глифада"})
++    assert resp.status_code == 200
++    assert resp.json() == []
++
++
  # ── Regression / query quality ────────────────────────────────────────────────
  
  def test_list_endpoint_is_public_no_auth_required(client):
 diff --git a/docs/04_ARCHITECTURE/API_SPECIFICATION.md b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
-index 75db9f9..760c69e 100644
+index 75db9f9..5481da1 100644
 --- a/docs/04_ARCHITECTURE/API_SPECIFICATION.md
 +++ b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
 @@ -39,7 +39,7 @@ implementation_status: Documents current API + MVP-required additions
@@ -423,18 +511,25 @@ index 75db9f9..760c69e 100644
  | `area` | string | No | **NEW (DEC-010).** District slug. Replaces old `city` param. Maps to `address_district` filter. |
  | `city` | string | No | Legacy. Kept for backwards-compat during transition. Maps to `address_city ILIKE`. |
  | `category` | string | No | Category slug. Mapped to keyword list via CATEGORY_KEYWORDS. |
-@@ -88,6 +88,10 @@ implementation_status: Documents current API + MVP-required additions
+@@ -88,6 +88,17 @@ implementation_status: Documents current API + MVP-required additions
  - Salons with `is_active = false` are excluded
  - Default sort: `rating_google DESC, rating_count DESC`
  - `area` param takes precedence over `city` param when both provided
 +- `area`/`city` and a district-alias `q` combine via ordinary AND, not
 +  override: a matching pair narrows to the same district (redundant but
-+  consistent); a conflicting pair (e.g. `area=athens-center&q=Глифада`)
-+  yields an empty result rather than either param silently winning (T-006)
++  consistent); a conflicting pair (e.g. `area=athens-center&q=Глифада`,
++  or `city=Athens&q=Глифада`) yields an empty result rather than either
++  param silently winning (T-006)
++- some district aliases overlap with older `CITY_SYNONYMS` entries (e.g.
++  Ukrainian "Пірей" is both a legacy city synonym for `Πειραιάς` and the
++  `Piraeus` district's `name_uk`). Overlapping aliases always take the new
++  exact `address_district` semantics, never the legacy `address_city
++  ILIKE` substring match — only `q` values with no district-alias match
++  (e.g. "афины") continue through the unchanged legacy path (T-006)
  
  ---
  
-@@ -320,6 +324,7 @@ fields below may hold `null` — they are never absent:
+@@ -320,6 +331,7 @@ fields below may hold `null` — they are never absent:
  - Uses PostgreSQL FTS (`to_tsvector` / `plainto_tsquery` with `unaccent`). No GIN index exists (deferred to T-037).
  - `GET /api/salons` is the canonical MVP search endpoint (used by Search page, map, all frontend).
  - GIN index for this endpoint's FTS expression is blocked by `unaccent(text)` STABLE volatility and was deferred because this endpoint is deprecated. See `docs/.reviews/T-003a-review.md`.
@@ -443,10 +538,10 @@ index 75db9f9..760c69e 100644
  **Response 200:** Same shape as `/api/salons`.
  
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 0c7d677..780c87a 100644
+index 0c7d677..73c3554 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -206,16 +206,47 @@ Kallithea") and can't use the `address_district` index as efficiently.
+@@ -206,16 +206,70 @@ Kallithea") and can't use the `address_district` index as efficiently.
  
  ---
  
@@ -482,6 +577,23 @@ index 0c7d677..780c87a 100644
 +matches (since it's strictly more precise); every other query — including
 +existing pure city-name synonyms — continues through the unchanged legacy
 +path.
++
++**Overlap rule with legacy `CITY_SYNONYMS` (review round 2 decision,
++2026-07-12):** the new alias table includes `name_ru`/`name_uk`/`name_el`/
++`name_en`/slug/canonical district from `AREA_METADATA`, and some of those
++strings already exist in the older, hand-maintained `CITY_SYNONYMS` dict
++(e.g. Ukrainian "Пірей" → legacy `Πειραιάς` city ILIKE, and also the
++`Piraeus` district's `name_uk`). This is intentional, not an oversight:
++**any `q` that matches `DISTRICT_QUERY_ALIASES` always takes canonical
++`address_district` exact-match semantics, even where an overlapping
++`CITY_SYNONYMS` entry exists** — it does not fall through to the legacy
++`address_city ILIKE` path. Only `q` values with *no* district-alias match
++(e.g. "афины", which has no district-alias entry — "Athens Center"'s
++Russian name is the different string "Центр Афин") continue through the
++unchanged legacy path. Verified end-to-end with dedicated fixture rows
++that share the same legacy Greek `address_city` but differ in
++`address_district`, proving the new path does not silently widen to the
++old substring match.
  
  **Acceptance Criteria:**
 -- [ ] Russian "Глифада" → "glyfada" synonym works in `/api/salons?q=Глифада`
@@ -496,12 +608,18 @@ index 0c7d677..780c87a 100644
 +- [x] `area=` and district-alias `q=` combine consistently: matching →
 +      expected results, conflicting → empty result (not one silently
 +      overriding the other)
-+- [x] Unit tests added — 34 new tests (pure alias resolution + list + map
-+      endpoints), no regression in the existing 108 T-005/T-038 tests
++- [x] `city=` (legacy) and district-alias `q=` combine the same way —
++      matching narrows, conflicting empties, on both list and map
++- [x] Aliases overlapping with legacy `CITY_SYNONYMS` (e.g. "Пірей") use
++      exact district semantics, not the old substring path; non-overlapping
++      legacy synonyms (e.g. "афины") are unaffected
++- [x] Unit tests added — 37 new tests (pure alias resolution + list + map
++      endpoints, including the overlap and city-interaction cases above),
++      no regression in the existing 108 T-005/T-038 tests (145 total)
  
  ---
  
-@@ -1024,7 +1055,7 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -1024,7 +1078,7 @@ Sitemap: https://lookla.gr/sitemap.xml
  | T-003a Verify GIN index | ~~P0~~ DEFERRED | DB | — | EPIC-01 | — |
  | T-004 GET /api/areas endpoint | P0 | BE | 2 | EPIC-02 | T-003 |
  | T-005 area param on /api/salons | P0 | BE | 1.5 | EPIC-02 | T-004 |
