@@ -209,7 +209,7 @@ Kallithea") and can't use the `address_district` index as efficiently.
 ### T-006 — Russian/Ukrainian district query aliases for canonical /api/salons
 **Priority:** P1 | **Owner:** BE | **Estimate:** 1h | **Epic:** EPIC-02
 **Dependencies:** T-004 (AREA_METADATA is the runtime source of truth for district aliases, not T-003 directly)
-**Status:** pending review — do not mark completed before merge and production verification
+**Status:** ✅ Completed (2026-07-12) — merged to `main`, CI green, verified in production (`q=Глифада`→76, `q=Гліфада`→76, `q=центр Афин`→143, `q=Пірей`→90 matching the earlier `area=piraeus` count, `q=афины`→142 via unchanged legacy path, `area=athens-center&q=Глифада` and `map?city=Athens&q=Глифада` both correctly empty on conflict)
 
 **Architecture correction (2026-07-12):** the original description was wrong
 on two counts, discovered during implementation. `CITY_SYNONYMS` is *not*
