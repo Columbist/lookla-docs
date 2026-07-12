@@ -108,7 +108,10 @@ All personas:
   (T-005, T-038)
 - An unresolvable/unknown `area` slug returns an empty result (HTTP 200,
   not 404) rather than falling back to any other filter
-- Clear filter → remove `area` param, show all results
+- Clear filter (including selecting the "All areas" placeholder) → remove
+  both `area` and any legacy `city` param, show all results. This prevents a
+  hidden `city` filter from silently surviving after the user resets the
+  Area control to "All areas" (fixed T-007 review round 2)
 
 **Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы" / "Усі райони"
 
@@ -116,7 +119,12 @@ All personas:
 for backwards-compat with old bookmarked/shared URLs. `area` takes
 precedence over `city` when both are present. The Search page UI offers
 only the Area dropdown — there is no separate City control — but incoming
-URLs with `?city=` alone continue to return results (T-007).
+URLs with `?city=` alone continue to return results (T-007). `city` is left
+untouched on page load/navigation and only cleared once the user explicitly
+interacts with the Area control (selecting an area, or resetting it to "All
+areas") — this keeps a bare `?city=` link fully functional on arrival while
+still preventing a stale `city` from silently persisting after the user has
+used the Area control.
 
 ---
 
