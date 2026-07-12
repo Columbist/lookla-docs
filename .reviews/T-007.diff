@@ -1,5 +1,5 @@
 diff --git a/docs/03_PAGES/SEARCH.md b/docs/03_PAGES/SEARCH.md
-index 6f398aa..9134aad 100644
+index 6f398aa..825a7be 100644
 --- a/docs/03_PAGES/SEARCH.md
 +++ b/docs/03_PAGES/SEARCH.md
 @@ -4,7 +4,7 @@ status: Approved
@@ -11,13 +11,18 @@ index 6f398aa..9134aad 100644
  related_documents:
    - 01_PRODUCT/USER_JOURNEYS.md
    - 01_PRODUCT/MVP_DEFINITION.md
-@@ -98,14 +98,25 @@ All personas:
+@@ -98,14 +98,33 @@ All personas:
  - Glyfada, Kolonaki, Kallithea, Marousi, Piraeus, Nea Smyrni, Chalandri, Kifissia, Psirri, Exarchia, Pagkrati, etc.
  
  **Behaviour:**
 -- Selection sets `area={slug}` in URL
 -- API call: filters by `address_district ILIKE` (or by mapped `address_city` values until full hierarchy is implemented)
 -- Selecting "Athens" returns all Athens metro area salons (not just central)
+-- Clear filter → remove `area` param, show all results
+-
+-**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы"
+-
+-**Implementation note:** Until the full location hierarchy migration is complete (DEC-010), the area filter maps user-visible district names to the corresponding `address_city` values in the database. This mapping must be defined in the backend before MVP launch.
 +- Selection sets `area={slug}` in URL, where `{slug}` is the stable public
 +  slug returned by `GET /api/areas` (e.g. `glyfada`, `athens-center`) — never
 +  a localized name or raw database value
@@ -28,21 +33,27 @@ index 6f398aa..9134aad 100644
 +  (T-005, T-038)
 +- An unresolvable/unknown `area` slug returns an empty result (HTTP 200,
 +  not 404) rather than falling back to any other filter
- - Clear filter → remove `area` param, show all results
- 
--**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы"
++- Clear filter (including selecting the "All areas" placeholder) → remove
++  both `area` and any legacy `city` param, show all results. This prevents a
++  hidden `city` filter from silently surviving after the user resets the
++  Area control to "All areas" (fixed T-007 review round 2)
++
 +**Placeholder text:** "All areas" / "Όλες οι περιοχές" / "Все районы" / "Усі райони"
- 
--**Implementation note:** Until the full location hierarchy migration is complete (DEC-010), the area filter maps user-visible district names to the corresponding `address_city` values in the database. This mapping must be defined in the backend before MVP launch.
++
 +**Legacy `city` parameter:** `?city=` (matching `address_city ILIKE`) is kept
 +for backwards-compat with old bookmarked/shared URLs. `area` takes
 +precedence over `city` when both are present. The Search page UI offers
 +only the Area dropdown — there is no separate City control — but incoming
-+URLs with `?city=` alone continue to return results (T-007).
++URLs with `?city=` alone continue to return results (T-007). `city` is left
++untouched on page load/navigation and only cleared once the user explicitly
++interacts with the Area control (selecting an area, or resetting it to "All
++areas") — this keeps a bare `?city=` link fully functional on arrival while
++still preventing a stale `city` from silently persisting after the user has
++used the Area control.
  
  ---
  
-@@ -150,7 +161,11 @@ The header search bar persists on the Search page and reflects `?q=` param. Edit
+@@ -150,7 +169,11 @@ The header search bar persists on the Search page and reflects `?q=` param. Edit
  Each card shows:
  - Primary photo (thumbnail)
  - Salon name (in locale: translated where available)
@@ -55,7 +66,7 @@ index 6f398aa..9134aad 100644
  - Category badge(s)
  - Open / Closed badge (computed from working hours + current Athens time)
  - Rating (stars + count): "4.7 ★ (128)"
-@@ -288,9 +303,9 @@ All filter state lives in the URL query string:
+@@ -288,9 +311,9 @@ All filter state lives in the URL query string:
  ## Implementation Notes
  
  **Changes from current implementation:**
@@ -355,10 +366,10 @@ index f1c224d..7824213 100644
 +}
 diff --git a/frontend/lib/areaFilter.ts b/frontend/lib/areaFilter.ts
 new file mode 100644
-index 0000000..82f825f
+index 0000000..39140da
 --- /dev/null
 +++ b/frontend/lib/areaFilter.ts
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +// Pure helpers for the Search page Area filter (T-007). Kept dependency-free
 +// (no React/DOM) so they can run under node:test without a browser/JSDOM.
 +import type { Locale } from '@/i18n/request';
@@ -382,18 +393,20 @@ index 0000000..82f825f
 +}
 +
 +/**
-+ * Applies the Area-select onChange semantics to a URLSearchParams instance:
-+ * selecting a slug sets `area` and drops the legacy `city` param (T-005:
-+ * area takes precedence server-side, but the UI only ever has one active
-+ * location control at a time); clearing the selection just drops `area`.
-+ * Always resets `page` since the result set changes. Returns a new
-+ * URLSearchParams — does not mutate the input.
++ * Applies the Area-select onChange semantics to a URLSearchParams instance.
++ * Any explicit interaction with the Area control — including clearing it
++ * back to "All areas" — replaces the legacy `city` param, since the UI only
++ * ever has one active location control at a time. A `city` already present
++ * in the URL is left alone until the user actually touches the Area
++ * control (see legacy-URL compatibility rules, T-007). Always resets `page`
++ * since the result set changes. Returns a new URLSearchParams — does not
++ * mutate the input.
 + */
 +export function buildAreaUrlParams(current: URLSearchParams, slug: string): URLSearchParams {
 +  const params = new URLSearchParams(current);
++  params.delete('city');
 +  if (slug) {
 +    params.set('area', slug);
-+    params.delete('city');
 +  } else {
 +    params.delete('area');
 +  }
