@@ -258,8 +258,13 @@ byte-identical JSON output against production before/after.
 ### T-007 — Update SearchFilters.tsx with area dropdown
 **Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-02
 **Dependencies:** T-004 (API endpoint must exist), T-038 ✅ done — map response shape confirmed, unblocked
+**Status:** ✅ Completed (2026-07-12) — merged to `main`, CI green, verified in production
 
 **Description:** Replace the city filter with an area filter. Fetch areas from `/api/areas`. Populate dropdown. Change filter label.
+
+**Note:** `SearchFilters.tsx` (named in the original ticket) is dead code —
+not imported anywhere. The actual filter UI lives inline in
+`app/[locale]/search/page.tsx`; that's the file edited.
 
 **Label changes (in all 4 message files):**
 - `en.json`: `"filterArea": "Area"` (was "City")
@@ -270,11 +275,19 @@ byte-identical JSON output against production before/after.
 **URL state:** Writes `?area=glyfada` (lowercase slug), not `?city=Glyfada`.
 
 **Acceptance Criteria:**
-- [ ] Area dropdown shows ≥ 8 Athens districts with salon counts
-- [ ] Selecting an area writes `?area=` to the URL
-- [ ] Filter label shows "Area" (en) / "Περιοχή" (el) / "Район" (ru) / "Район" (uk)
-- [ ] Empty state: "No salons found in [selected area]" (not a crash)
-- [ ] Old `?city=` URL still works (shows salons, possibly with "City" label)
+- [x] Area dropdown shows ≥ 8 Athens districts with salon counts
+- [x] Selecting an area writes `?area=` to the URL
+- [x] Filter label shows "Area" (en) / "Περιοχή" (el) / "Район" (ru) / "Район" (uk)
+- [x] Empty state: "No salons found in [selected area]" (not a crash)
+- [x] Old `?city=` URL still works (shows salons, possibly with "City" label)
+
+**Review round 2 fix:** `buildAreaUrlParams` only dropped the legacy `city`
+param when a new area slug was selected, not when clearing back to "All
+areas" — a URL like `?area=glyfada&city=Athens` kept filtering by Athens
+after the user reset to "All areas", with no visible indication in the UI.
+Fixed so any explicit interaction with the Area control (select or clear)
+drops `city`; a bare `?city=` link is left untouched until the user
+actually touches the control. Re-verified in production.
 
 ---
 
@@ -1074,8 +1087,8 @@ Sitemap: https://lookla.gr/sitemap.xml
 
 ```
 T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
-                         T-004 → T-007  [area filter FE]
-                         T-005 → T-038 ✅ → T-007  [map response shape decision — done, FE unblocked]
+                         T-004 → T-007 ✅  [area filter FE — done]
+                         T-005 → T-038 ✅ → T-007 ✅  [map response shape decision — done, FE done]
 T-013 → T-019             [GA4 property + settings]
 T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
 T-016                     [Search Console]
