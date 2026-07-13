@@ -941,6 +941,21 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-041 — Fix Next.js internal API rewrite loopback fallback
+**Priority:** P2 | **Owner:** FE | **Estimate:** 30m | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** ✅ Completed (2026-07-13), merged `fix/web-api-rewrite-docker`
+
+**Description:** `next.config.mjs`'s `/api/:path*` rewrite destination and `lib/api.ts`'s SSR fetch fallback both defaulted to `http://127.0.0.1:8001` / `http://localhost:8001` — inside the `web` container that's the container itself, not the `api` service. **Production traffic was never affected**: nginx's own `/api/` location block proxies directly to the `api` container (correctly, since nginx runs on the host) before any request reaches Next.js, and container port 3000 isn't published externally. This only broke direct-container access — e.g. testing `beauty_web` on its own port, bypassing nginx — which is how it surfaced, during T-009's final production smoke-test. Fixed as defense-in-depth (a future architecture change that removes the nginx layer, or direct-container testing/staging, would otherwise hit it) via a shared `lib/apiInternalUrl.mjs` helper defaulting to Docker service DNS (`http://api:8001/api`).
+
+**Acceptance Criteria:**
+- [x] Rewrite destination and SSR fetch base default to `http://api:8001/api`, never loopback
+- [x] `API_INTERNAL_URL` override still respected
+- [x] Verified both request paths return 200: `https://lookla.gr/api/...` (nginx) and `http://127.0.0.1:3000/api/...` (direct container, was 500 before)
+- [x] `api`/`db`/`redis`/`crawler` containers not restarted during verification
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
