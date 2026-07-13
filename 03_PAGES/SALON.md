@@ -149,19 +149,24 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
 - Any stub or "Coming soon" button
 
 **If no contact information:**
-- Show: "Contact information not available. If you know this salon, you can report it."
-- Show "Report incorrect information" link
+- Show: "Contact information not available."
+- Show the Report link
 
 **Registration requirement (DEC-016):**
 - Phone number is shown directly — no login required
 - WhatsApp link opens directly — no login required
 - Website link opens directly — no login required
 
-**Implementation status:** ✅ Done (T-009, merged 2026-07-13, verified in production). "Book now" / "Request appointment" / "Message" buttons removed — none had a working `onClick`/`href`. `components/ContactButtons.tsx`, an unreachable duplicate of the same fake buttons, deleted. Call/WhatsApp/Website preserved unchanged, visible with no login required. Production smoke-test across all 4 locales × desktop/mobile via Playwright: zero booking words visible, zero console errors, only the photo-gallery and Report buttons remain.
+**Implementation status:** ✅ T-009 done (merged 2026-07-13, verified in production) — fake "Book now"/"Request appointment"/"Message" buttons removed. 🔄 T-010 implemented on `feat/T-010-contact-ctas`, **pending independent review, merge, and production verification** (do not mark Completed before all three).
 
-Gaps found during T-009, deferred to T-010:
-- A **Viber** button is currently rendered (real `viber://` deep link) but is not among this section's 3 approved actions — T-010 must decide keep or remove.
-- The "no contact information" empty state described above (message + Report link) is **not implemented** — if phone/whatsapp/website/viber are all absent, the CTA area currently renders as an empty grid with no message. T-010 owns adding this.
+**T-010 final decisions:**
+- **Viber removed.** DEC-015 and the backlog define exactly 3 approved actions (Call, WhatsApp, Website); Viber was a 4th undocumented action. The user-facing salon-detail Viber button is gone; backend fields and infrastructure are untouched.
+- **Empty state implemented.** When none of the 3 actions have usable data, `ContactButtons` renders "Contact information not available" plus the existing `ReportButton` component (reused, not reimplemented) — no disabled buttons, no empty grid.
+- **`components/ContactButtons.tsx` recreated properly** (T-009 had deleted the previous, fully-unreachable version) with a slim props contract (`phone`, `websiteUrl`, `salonName`, `salonId`, `locale`) and its logic backed by pure, unit-tested helpers in `lib/contactActions.ts`.
+- **Phone normalization:** two small pure functions — `normalizePhoneForWhatsApp` (digits-only, for `wa.me`) and `normalizePhoneForCall` (keeps a leading `+` if present, for `tel:`). Neither invents a Greek country code for numbers stored without one.
+- **Website normalization:** bare hostnames get `https://` added; existing `http://`/`https://` preserved as-is; `javascript:`/`data:`/`file:` and any other unrecognized scheme rejected (returns `null`, action hidden) rather than rendered unsafely.
+- **Desktop shows the phone number** next to the "Call" label (`hidden sm:inline` — mobile stays label-only to avoid overflow on 375px).
+- All 3 actions remain anonymous — no login/auth check.
 
 **Analytics (DEC-017):**
 

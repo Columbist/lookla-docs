@@ -400,31 +400,41 @@ actually touches the control. Re-verified in production.
 ### T-010 — Implement contact CTAs (DEC-015/016)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
 **Dependencies:** T-009
+**Status:** Implemented on `feat/T-010-contact-ctas`, pending independent review, merge, and production verification (do not mark Completed before all three)
 
-**Description:** Verify the 3 required CTAs against the final contract below. **Note (post-T-009):** `ContactButtons.tsx` no longer exists — T-009 deleted it as unreachable dead code. The working Call/WhatsApp/Website markup lives inline in `SalonDetailClient.tsx`. T-010 can either keep it inline or extract a `ContactButtons.tsx` component — that architecture decision was explicitly out of T-009's scope.
+**Description:** Recreated `components/ContactButtons.tsx` (T-009 had deleted the previous unreachable version) as the single source of truth for the 3 approved salon-detail contact actions, backed by pure/unit-tested normalization helpers in `lib/contactActions.ts`.
 
-**CTA specifications:**
+**Final decisions (this task):**
+- **Viber removed.** DEC-015 defines exactly 3 approved actions (Call, WhatsApp, Website); Viber was never part of that contract. Removed the user-facing button only — no backend/DB changes.
+- **Empty state implemented:** "Contact information not available" + the existing `ReportButton`, shown only when all 3 actions are unavailable.
+- **Website normalization:** bare hostnames get `https://`; `http://`/`https://` preserved; `javascript:`/`data:`/`file:`/other unrecognized schemes rejected (hidden, not rendered).
+- **Phone normalization:** `normalizePhoneForCall` (keeps leading `+` for `tel:`) and `normalizePhoneForWhatsApp` (digits-only for `wa.me`) — neither invents a country code for a number stored without one.
+- **Desktop displays the phone number** next to "Call" (mobile stays label-only, avoiding overflow on 375px).
+
+**CTA specifications (implemented):**
 ```tsx
-// Call salon
-<a href={`tel:${salon.phone_primary}`}>Call salon</a>
+// Call salon — tel: with normalized digits, leading + preserved if present
+<a href={`tel:${normalizePhoneForCall(phone)}`}>Call</a>
 
-// WhatsApp — clean phone number (remove +, spaces, dashes)
-const wa_number = salon.phone_primary.replace(/[\s\-\+\(\)]/g, '');
-<a href={`https://wa.me/${wa_number}`} target="_blank" rel="noopener noreferrer">Message on WhatsApp</a>
+// WhatsApp — digits-only, no invented country code
+<a href={`https://wa.me/${normalizePhoneForWhatsApp(phone)}`} target="_blank" rel="noopener noreferrer">WhatsApp</a>
 
-// Website
-<a href={salon.website_url} target="_blank" rel="noopener noreferrer">Visit website</a>
+// Website — https:// added to bare hostnames, unsafe schemes rejected
+<a href={normalizeWebsiteUrl(website)} target="_blank" rel="noopener noreferrer">Website</a>
 ```
 
-**Important:** All 3 CTAs must work WITHOUT being logged in (DEC-016). No authentication check before displaying or enabling these buttons.
+**Important:** All 3 CTAs work WITHOUT being logged in (DEC-016). No authentication check before displaying or enabling these buttons.
 
 **Acceptance Criteria:**
-- [ ] "Call salon" button: on mobile, tapping initiates a phone call; on desktop, shows the phone number
-- [ ] "WhatsApp" button: opens `https://wa.me/{number}` in a new tab
-- [ ] "Visit website": opens salon website in a new tab with `rel="noopener noreferrer"`
-- [ ] All 3 buttons visible while logged out (incognito window test)
-- [ ] If `phone_primary` is null: "Call salon" and "WhatsApp" buttons are hidden (not shown with null)
-- [ ] If `website_url` is null: "Visit website" button is hidden
+- [x] "Call" button: on mobile, tapping initiates a phone call; on desktop, shows the phone number
+- [x] "WhatsApp" button: opens `https://wa.me/{digits}` in a new tab
+- [x] "Website": opens salon website in a new tab with `rel="noopener noreferrer"`
+- [x] All 3 actions render while logged out (no auth dependency in `ContactButtons.tsx`)
+- [x] If phone is null/unusable: Call and WhatsApp are hidden (not shown with a null/empty href)
+- [x] If website is null/unsafe: Website action is hidden
+- [x] Zero valid actions → empty state, not an empty container
+
+**Note:** production data has 0/6320 salons with a `website` value, so the "phone + website" and "website only" combinations couldn't be verified against real data — verified instead via a local mock API proxy exercising the real SSR pipeline (not client-side route mocking, which doesn't intercept server-side fetches), plus full unit-test coverage of the same resolution logic the component uses.
 
 ---
 
