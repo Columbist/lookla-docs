@@ -11,7 +11,7 @@ index 8bf59c8..2dd4fb2 100644
        - name: Build
          run: npm run build
 diff --git a/docs/03_PAGES/HOME.md b/docs/03_PAGES/HOME.md
-index 2bad442..14d6ca7 100644
+index 2bad442..06a561a 100644
 --- a/docs/03_PAGES/HOME.md
 +++ b/docs/03_PAGES/HOME.md
 @@ -136,18 +136,18 @@ The value proposition must be legible to P-02 within the first viewport without
@@ -26,7 +26,7 @@ index 2bad442..14d6ca7 100644
 +- Top 8 active Attica areas by salon count (at least 6 shown when the API returns sufficient data)
  - Athens districts take priority (DEC-012 — Athens focus)
 -- Each tile links to `/search?area={slug}` or `/search?district={slug}` per the agreed location param structure
-+- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (implemented T-008; `?district=` was never built, do not use it)
++- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (T-008; `?district=` was never built, do not use it)
  
 -**Data:** From `/api/cities` initially; to be replaced when location hierarchy (DEC-010) is implemented. During transition: show districts that have ≥10 salons in Athens
 +**Data:** From `GET /api/areas?region=attica` (T-004), ordered by `salon_count` descending with the stable slug as a deterministic tie-breaker. **Caching:** SSR, `revalidate: 86400` (24h) — see Data Requirements below. Localized area names come from `name_el`/`name_en`/`name_ru`/`name_uk` on each item; stable slug URLs, never localized names or raw `address_district` values, appear in the link.
@@ -53,7 +53,7 @@ index 2bad442..14d6ca7 100644
  **Changes from current implementation:**
  1. Language switcher moved to header (currently footer-only — gap identified in J-02)
 -2. "Popular Cities" section renamed to "Popular Areas" and populated with Athens districts (DEC-010)
-+2. ✅ Done (T-008): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010)
++2. Implemented by T-008 (branch `feat/T-008-homepage-area-grid`, pending review/merge): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010). Completion is recorded here as `✅ Done (T-008)` only after merge and production verification.
  3. "How it works" step 3 must mention no registration required (DEC-016 compliance)
  4. Navigation: remove any link to `/pricing` if present (DEC-006 compliance check)
  
@@ -208,13 +208,15 @@ index 29b91a7..0000000
 -}
 diff --git a/frontend/lib/api.test.ts b/frontend/lib/api.test.ts
 new file mode 100644
-index 0000000..e2e7281
+index 0000000..e2a7a9e
 --- /dev/null
 +++ b/frontend/lib/api.test.ts
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,123 @@
 +import { test, describe, beforeEach, afterEach } from 'node:test';
 +import assert from 'node:assert/strict';
-+import { getHomepageAreas } from './api';
++import { getHomepageAreas, isAreaItem } from './api';
++
++const VALID_ITEM = { slug: 'glyfada', name_el: 'Γλυφάδα', name_en: 'Glyfada', name_ru: 'Глифада', name_uk: 'Гліфада', salon_count: 76, region: 'attica', city: 'athens' };
 +
 +describe('getHomepageAreas', () => {
 +  let originalFetch: typeof globalThis.fetch;
@@ -279,32 +281,109 @@ index 0000000..e2e7281
 +    assert.ok(capturedUrl.includes('/areas?region=attica'), capturedUrl);
 +    assert.equal(capturedInit?.credentials, undefined);
 +  });
++
++  test('supplies a bounded abort signal so a hung request cannot stall SSR', async () => {
++    let capturedInit: RequestInit | undefined;
++    globalThis.fetch = (async (_url, init) => {
++      capturedInit = init as RequestInit;
++      return { ok: true, json: async () => ({ items: [] }) } as Response;
++    }) as unknown as typeof fetch;
++
++    await getHomepageAreas();
++    assert.ok(capturedInit?.signal instanceof AbortSignal, 'expected an AbortSignal to be passed');
++  });
++
++  test('throws when an item is missing slug', async () => {
++    const { slug, ...withoutSlug } = VALID_ITEM;
++    globalThis.fetch = (async () => ({ ok: true, json: async () => ({ items: [withoutSlug] }) })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++
++  test('throws when salon_count is a string', async () => {
++    globalThis.fetch = (async () => ({ ok: true, json: async () => ({ items: [{ ...VALID_ITEM, salon_count: '76' }] }) })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++
++  test('throws when salon_count is non-finite (NaN/Infinity) or negative', async () => {
++    for (const bad of [NaN, Infinity, -1]) {
++      globalThis.fetch = (async () => ({ ok: true, json: async () => ({ items: [{ ...VALID_ITEM, salon_count: bad }] }) })) as unknown as typeof fetch;
++      await assert.rejects(() => getHomepageAreas(), `expected reject for salon_count=${bad}`);
++    }
++  });
++
++  test('throws on a mixed array of valid and invalid items (all-or-nothing)', async () => {
++    globalThis.fetch = (async () => ({
++      ok: true,
++      json: async () => ({ items: [VALID_ITEM, { salon_count: 100, region: 'attica' }] }),
++    })) as unknown as typeof fetch;
++    await assert.rejects(() => getHomepageAreas());
++  });
++});
++
++describe('isAreaItem', () => {
++  test('accepts a fully-formed AreaItem', () => {
++    assert.equal(isAreaItem(VALID_ITEM), true);
++  });
++
++  test('rejects non-objects', () => {
++    assert.equal(isAreaItem(null), false);
++    assert.equal(isAreaItem(undefined), false);
++    assert.equal(isAreaItem('glyfada'), false);
++  });
++
++  test('rejects an empty slug', () => {
++    assert.equal(isAreaItem({ ...VALID_ITEM, slug: '' }), false);
++  });
 +});
 diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
-index 7824213..cd01ea4 100644
+index 7824213..3cd1314 100644
 --- a/frontend/lib/api.ts
 +++ b/frontend/lib/api.ts
-@@ -39,6 +39,27 @@ export const api = {
+@@ -39,6 +39,51 @@ export const api = {
    categories: (lang = 'el') => apiFetch<Category[]>(`/categories?lang=${lang}`),
  };
  
++// Runtime type guard for AreaItem — GET /api/areas responses are external
++// input and must be validated field-by-field, not just asserted via `as`.
++export function isAreaItem(value: unknown): value is AreaItem {
++  if (!value || typeof value !== 'object') return false;
++  const item = value as Record<string, unknown>;
++  return (
++    typeof item.slug === 'string' &&
++    item.slug.length > 0 &&
++    typeof item.name_el === 'string' &&
++    typeof item.name_en === 'string' &&
++    typeof item.name_ru === 'string' &&
++    typeof item.name_uk === 'string' &&
++    typeof item.salon_count === 'number' &&
++    Number.isFinite(item.salon_count) &&
++    item.salon_count >= 0 &&
++    typeof item.region === 'string' &&
++    typeof item.city === 'string'
++  );
++}
++
 +// GET /api/areas for the homepage AreaGrid (T-008) — SSR-only, revalidated
 +// every 24h. Deliberately bypasses apiFetch(): Next.js rejects combining
 +// `cache: 'no-store'` (apiFetch's default) with `next.revalidate`, and this
 +// call needs neither apiFetch's browser-credential forwarding (server-only,
 +// public/unauthenticated data) nor its no-store default. Throws on any
-+// failure or malformed payload — callers decide the fallback (see
-+// HomePage in app/[locale]/page.tsx), this function never returns partial
-+// or fabricated data.
++// failure, malformed payload, or malformed item — callers decide the
++// fallback (see HomePage in app/[locale]/page.tsx). All-or-nothing: this
++// function never returns partial or fabricated data.
 +export async function getHomepageAreas(): Promise<AreaItem[]> {
 +  const res = await fetch(`${API_BASE}/areas?region=attica`, {
 +    next: { revalidate: 86400 },
 +    headers: { 'Content-Type': 'application/json' },
++    signal: AbortSignal.timeout(5000),
 +  });
 +  if (!res.ok) throw new Error(`API ${res.status}: /areas`);
 +  const data = await res.json();
 +  if (!data || !Array.isArray(data.items)) {
 +    throw new Error('malformed /api/areas response');
++  }
++  if (!data.items.every(isAreaItem)) {
++    throw new Error('malformed /api/areas item');
 +  }
 +  return data.items as AreaItem[];
 +}
@@ -314,10 +393,10 @@ index 7824213..cd01ea4 100644
    id: number; name: string; slug?: string;
 diff --git a/frontend/lib/areaGrid.test.ts b/frontend/lib/areaGrid.test.ts
 new file mode 100644
-index 0000000..ab2b96e
+index 0000000..872a5bd
 --- /dev/null
 +++ b/frontend/lib/areaGrid.test.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,144 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import { selectPopularAreas, resolveHomepageAreas, FALLBACK_AREAS } from './areaGrid';
@@ -380,6 +459,15 @@ index 0000000..ab2b96e
 +    const snapshot = items.map(a => a.slug);
 +    selectPopularAreas(items);
 +    assert.deepEqual(items.map(a => a.slug), snapshot);
++  });
++
++  test('excludes a high-count non-Attica item even if present in the payload', () => {
++    const items = [
++      area({ slug: 'thessaloniki-center', region: 'thessaloniki', salon_count: 500 }),
++      area({ slug: 'glyfada', region: 'attica', salon_count: 10 }),
++    ];
++    const result = selectPopularAreas(items);
++    assert.deepEqual(result.map(a => a.slug), ['glyfada']);
 +  });
 +});
 +
@@ -455,10 +543,10 @@ index 0000000..ab2b96e
 +});
 diff --git a/frontend/lib/areaGrid.ts b/frontend/lib/areaGrid.ts
 new file mode 100644
-index 0000000..6d535a9
+index 0000000..8befcfc
 --- /dev/null
 +++ b/frontend/lib/areaGrid.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,53 @@
 +// Pure helpers for the homepage AreaGrid (T-008). Dependency-free (no
 +// React/DOM) so they can run under node:test without a browser/JSDOM —
 +// same convention as lib/areaFilter.ts (T-007).
@@ -468,14 +556,16 @@ index 0000000..6d535a9
 +
 +/**
 + * Selects the popular areas to show on the homepage from a raw
-+ * GET /api/areas response: drops zero/negative-count entries, sorts by
-+ * salon_count descending with the stable slug as a deterministic
-+ * tie-breaker, and caps at DISPLAY_LIMIT. Does not mutate `items` — filter
-+ * already returns a new array before sort runs on it.
++ * GET /api/areas response: keeps only Attica entries with a positive salon
++ * count (defense in depth — the section is Attica-only per DEC-012 even
++ * though the request already asks for region=attica), sorts by salon_count
++ * descending with the stable slug as a deterministic tie-breaker, and caps
++ * at DISPLAY_LIMIT. Does not mutate `items` — filter already returns a new
++ * array before sort runs on it.
 + */
 +export function selectPopularAreas(items: AreaItem[]): AreaItem[] {
 +  return items
-+    .filter(area => area.salon_count > 0)
++    .filter(area => area.region === 'attica' && area.salon_count > 0)
 +    .sort((a, b) => b.salon_count - a.salon_count || a.slug.localeCompare(b.slug))
 +    .slice(0, DISPLAY_LIMIT);
 +}
