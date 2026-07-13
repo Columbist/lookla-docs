@@ -1,0 +1,145 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index c817ba0..5640052 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -941,6 +941,21 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+ 
+ ---
+ 
++### T-041 — Fix Next.js internal API rewrite loopback fallback
++**Priority:** P2 | **Owner:** FE | **Estimate:** 30m | **Epic:** EPIC-09
++**Dependencies:** None
++**Status:** ✅ Completed (2026-07-13), merged `fix/web-api-rewrite-docker`
++
++**Description:** `next.config.mjs`'s `/api/:path*` rewrite destination and `lib/api.ts`'s SSR fetch fallback both defaulted to `http://127.0.0.1:8001` / `http://localhost:8001` — inside the `web` container that's the container itself, not the `api` service. **Production traffic was never affected**: nginx's own `/api/` location block proxies directly to the `api` container (correctly, since nginx runs on the host) before any request reaches Next.js, and container port 3000 isn't published externally. This only broke direct-container access — e.g. testing `beauty_web` on its own port, bypassing nginx — which is how it surfaced, during T-009's final production smoke-test. Fixed as defense-in-depth (a future architecture change that removes the nginx layer, or direct-container testing/staging, would otherwise hit it) via a shared `lib/apiInternalUrl.mjs` helper defaulting to Docker service DNS (`http://api:8001/api`).
++
++**Acceptance Criteria:**
++- [x] Rewrite destination and SSR fetch base default to `http://api:8001/api`, never loopback
++- [x] `API_INTERNAL_URL` override still respected
++- [x] Verified both request paths return 200: `https://lookla.gr/api/...` (nginx) and `http://127.0.0.1:3000/api/...` (direct container, was 500 before)
++- [x] `api`/`db`/`redis`/`crawler` containers not restarted during verification
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index 3cd1314..9ed2890 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -1,7 +1,7 @@
++import { resolveApiInternalUrl } from './apiInternalUrl.mjs';
++
+ // Server-side: call backend directly. Client-side: via nginx proxy.
+-const API_BASE = typeof window === 'undefined'
+-  ? (process.env.API_INTERNAL_URL || 'http://localhost:8001/api')
+-  : '/api';
++const API_BASE = typeof window === 'undefined' ? resolveApiInternalUrl() : '/api';
+ 
+ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+   const res = await fetch(`${API_BASE}${path}`, {
+diff --git a/frontend/lib/apiInternalUrl.mjs b/frontend/lib/apiInternalUrl.mjs
+new file mode 100644
+index 0000000..9dd3f10
+--- /dev/null
++++ b/frontend/lib/apiInternalUrl.mjs
+@@ -0,0 +1,8 @@
++// Shared by next.config.mjs (rewrite destination) and lib/api.ts (SSR fetch
++// base). Must resolve to Docker service DNS, never loopback — 127.0.0.1 or
++// localhost inside the `web` container refers to the web container itself,
++// not the `api` service.
++export function resolveApiInternalUrl(env = process.env) {
++  const raw = env.API_INTERNAL_URL || 'http://api:8001/api';
++  return raw.replace(/\/+$/, '');
++}
+diff --git a/frontend/lib/apiInternalUrl.test.ts b/frontend/lib/apiInternalUrl.test.ts
+new file mode 100644
+index 0000000..24967e2
+--- /dev/null
++++ b/frontend/lib/apiInternalUrl.test.ts
+@@ -0,0 +1,47 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { resolveApiInternalUrl } from './apiInternalUrl.mjs';
++
++describe('resolveApiInternalUrl', () => {
++  test('defaults to Docker service DNS, not loopback', () => {
++    assert.equal(resolveApiInternalUrl({}), 'http://api:8001/api');
++  });
++
++  test('never returns a destination containing 127.0.0.1 or localhost by default', () => {
++    const url = resolveApiInternalUrl({});
++    assert.ok(!url.includes('127.0.0.1'), `default must not use loopback IP, got "${url}"`);
++    assert.ok(!url.includes('localhost'), `default must not use localhost, got "${url}"`);
++  });
++
++  test('respects a custom API_INTERNAL_URL', () => {
++    assert.equal(
++      resolveApiInternalUrl({ API_INTERNAL_URL: 'http://custom-host:9000/api' }),
++      'http://custom-host:9000/api',
++    );
++  });
++
++  test('strips a trailing slash so the rewrite does not produce a double slash', () => {
++    const url = resolveApiInternalUrl({ API_INTERNAL_URL: 'http://api:8001/api/' });
++    assert.equal(url, 'http://api:8001/api');
++    assert.equal(`${url}/:path*`, 'http://api:8001/api/:path*');
++  });
++
++  test('strips multiple trailing slashes', () => {
++    assert.equal(resolveApiInternalUrl({ API_INTERNAL_URL: 'http://api:8001/api///' }), 'http://api:8001/api');
++  });
++});
++
++describe('next.config.mjs rewrite (integration)', () => {
++  test('rewrite source is /api/:path* and destination uses the resolved internal URL', async () => {
++    const config = (await import('../next.config.mjs')).default;
++    const rewrites = await config.rewrites();
++    assert.equal(rewrites.length, 1);
++    assert.equal(rewrites[0].source, '/api/:path*');
++    assert.ok(
++      rewrites[0].destination.startsWith(resolveApiInternalUrl()),
++      `destination "${rewrites[0].destination}" should start with resolved API_INTERNAL_URL`,
++    );
++    assert.ok(!rewrites[0].destination.includes('127.0.0.1'));
++    assert.ok(!rewrites[0].destination.includes('localhost'));
++  });
++});
+diff --git a/frontend/next.config.mjs b/frontend/next.config.mjs
+index 30c91a5..d708c27 100644
+--- a/frontend/next.config.mjs
++++ b/frontend/next.config.mjs
+@@ -1,7 +1,10 @@
+ import createNextIntlPlugin from 'next-intl/plugin';
++import { resolveApiInternalUrl } from './lib/apiInternalUrl.mjs';
+ 
+ const withNextIntl = createNextIntlPlugin('./i18n/request.ts');
+ 
++const apiInternalUrl = resolveApiInternalUrl();
++
+ /** @type {import('next').NextConfig} */
+ const nextConfig = {
+   output: 'standalone',
+@@ -15,7 +18,7 @@ const nextConfig = {
+   },
+   async rewrites() {
+     return [
+-      { source: '/api/:path*', destination: 'http://127.0.0.1:8001/api/:path*' },
++      { source: '/api/:path*', destination: `${apiInternalUrl}/:path*` },
+     ];
+   },
+ };
+diff --git a/frontend/package.json b/frontend/package.json
+index a4b9bae..01e8327 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
