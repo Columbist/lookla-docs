@@ -378,7 +378,7 @@ actually touches the control. Re-verified in production.
 ### T-009 — Remove booking stub buttons (DEC-015)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-03
 **Dependencies:** None
-**Status:** Implemented on `feat/T-009-remove-booking-stubs`, pending independent review, merge, and production verification (do not mark Completed before all three)
+**Status:** ✅ Completed (2026-07-13) — reviewed, merged to `main` (PR #30), production verified
 
 **Description:** Locate and remove all booking-related UI in `SalonDetailClient.tsx` and any related sub-components.
 

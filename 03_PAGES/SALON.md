@@ -157,7 +157,7 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
 - WhatsApp link opens directly — no login required
 - Website link opens directly — no login required
 
-**Implementation status (T-009, pending merge/production verification):** "Book now" / "Request appointment" / "Message" buttons removed — none had a working `onClick`/`href`. `components/ContactButtons.tsx`, an unreachable duplicate of the same fake buttons, deleted. Call/WhatsApp/Website preserved unchanged, visible with no login required.
+**Implementation status:** ✅ Done (T-009, merged 2026-07-13, verified in production). "Book now" / "Request appointment" / "Message" buttons removed — none had a working `onClick`/`href`. `components/ContactButtons.tsx`, an unreachable duplicate of the same fake buttons, deleted. Call/WhatsApp/Website preserved unchanged, visible with no login required. Production smoke-test across all 4 locales × desktop/mobile via Playwright: zero booking words visible, zero console errors, only the photo-gallery and Report buttons remain.
 
 Gaps found during T-009, deferred to T-010:
 - A **Viber** button is currently rendered (real `viber://` deep link) but is not among this section's 3 approved actions — T-010 must decide keep or remove.
