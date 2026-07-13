@@ -141,7 +141,7 @@ The value proposition must be legible to P-02 within the first viewport without 
 **Content:**
 - Top 8 active Attica areas by salon count (at least 6 shown when the API returns sufficient data)
 - Athens districts take priority (DEC-012 — Athens focus)
-- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (implemented T-008; `?district=` was never built, do not use it)
+- Each tile links to `/search?area={slug}` — the canonical, only location param for this section (T-008; `?district=` was never built, do not use it)
 
 **Data:** From `GET /api/areas?region=attica` (T-004), ordered by `salon_count` descending with the stable slug as a deterministic tie-breaker. **Caching:** SSR, `revalidate: 86400` (24h) — see Data Requirements below. Localized area names come from `name_el`/`name_en`/`name_ru`/`name_uk` on each item; stable slug URLs, never localized names or raw `address_district` values, appear in the link.
 
@@ -236,7 +236,7 @@ The value proposition must be legible to P-02 within the first viewport without 
 
 **Changes from current implementation:**
 1. Language switcher moved to header (currently footer-only — gap identified in J-02)
-2. ✅ Done (T-008): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010)
+2. Implemented by T-008 (branch `feat/T-008-homepage-area-grid`, pending review/merge): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010). Completion is recorded here as `✅ Done (T-008)` only after merge and production verification.
 3. "How it works" step 3 must mention no registration required (DEC-016 compliance)
 4. Navigation: remove any link to `/pricing` if present (DEC-006 compliance check)
 
