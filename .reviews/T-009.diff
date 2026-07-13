@@ -1,0 +1,314 @@
+diff --git a/docs/03_PAGES/SALON.md b/docs/03_PAGES/SALON.md
+index 39ac998..ced26c1 100644
+--- a/docs/03_PAGES/SALON.md
++++ b/docs/03_PAGES/SALON.md
+@@ -157,6 +157,12 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
+ - WhatsApp link opens directly — no login required
+ - Website link opens directly — no login required
+ 
++**Implementation status (T-009, pending merge/production verification):** "Book now" / "Request appointment" / "Message" buttons removed — none had a working `onClick`/`href`. `components/ContactButtons.tsx`, an unreachable duplicate of the same fake buttons, deleted. Call/WhatsApp/Website preserved unchanged, visible with no login required.
++
++Gaps found during T-009, deferred to T-010:
++- A **Viber** button is currently rendered (real `viber://` deep link) but is not among this section's 3 approved actions — T-010 must decide keep or remove.
++- The "no contact information" empty state described above (message + Report link) is **not implemented** — if phone/whatsapp/website/viber are all absent, the CTA area currently renders as an empty grid with no message. T-010 owns adding this.
++
+ **Analytics (DEC-017):**
+ 
+ | Action | GA4 Event | Parameters |
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index ca57b9a..3951a5f 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -378,15 +378,22 @@ actually touches the control. Re-verified in production.
+ ### T-009 — Remove booking stub buttons (DEC-015)
+ **Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-03
+ **Dependencies:** None
++**Status:** Implemented on `feat/T-009-remove-booking-stubs`, pending independent review, merge, and production verification (do not mark Completed before all three)
+ 
+ **Description:** Locate and remove all booking-related UI in `SalonDetailClient.tsx` and any related sub-components.
+ 
+ **Search for:** `book`, `reserve`, `appointment`, `schedule`, `booking` (case-insensitive) in all salon-related frontend files.
+ 
+ **Acceptance Criteria:**
+-- [ ] No text containing "book", "reserve", "appointment", or "schedule" visible on salon detail page
+-- [ ] No booking modal, booking form, or booking button exists in DOM
+-- [ ] "Call salon", "WhatsApp", "Visit website" CTAs are all present and visible above the fold on mobile
++- [x] No text containing "book", "reserve", "appointment", or "schedule" visible on salon detail page
++- [x] No booking modal, booking form, or booking button exists in DOM (none existed anywhere in the codebase)
++- [x] "Call salon", "WhatsApp", "Visit website" CTAs are all present and visible above the fold on mobile — preserved unchanged from the pre-T-009 implementation, not newly built by T-009
++
++**T-009 also removed** `components/ContactButtons.tsx` — found to be completely unreachable (zero imports anywhere in the codebase) and containing the same fake Book/Request/Message buttons. See T-010 below: its description assumed this file would be the CTA implementation vehicle, but it was dead code duplicating `SalonDetailClient.tsx`'s own inline CTA markup.
++
++**Gaps discovered during T-009, owned by T-010:**
++- A working **Viber** button renders today but isn't among DEC-015's 3 approved actions — decide keep/remove.
++- The documented "no contact information" empty state (message + Report link) is not implemented — CTA area currently renders empty if phone/whatsapp/website/viber are all absent.
+ 
+ ---
+ 
+@@ -394,7 +401,7 @@ actually touches the control. Re-verified in production.
+ **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
+ **Dependencies:** T-009
+ 
+-**Description:** Verify or create `ContactButtons.tsx` with the 3 required CTAs.
++**Description:** Verify the 3 required CTAs against the final contract below. **Note (post-T-009):** `ContactButtons.tsx` no longer exists — T-009 deleted it as unreachable dead code. The working Call/WhatsApp/Website markup lives inline in `SalonDetailClient.tsx`. T-010 can either keep it inline or extract a `ContactButtons.tsx` component — that architecture decision was explicitly out of T-009's scope.
+ 
+ **CTA specifications:**
+ ```tsx
+diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+index aba4f42..0301425 100644
+--- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
++++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+@@ -162,18 +162,11 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+           )}
+ 
+           {/* CTA buttons */}
+-          <div className="space-y-3">
+-            <div className="flex gap-2">
+-              <button className="flex-1 py-4 bg-pink-600 text-white rounded-xl text-base font-bold hover:bg-pink-700">📅 {t('book')}</button>
+-              <button className="flex-1 py-4 border border-pink-200 text-pink-600 rounded-xl text-base font-semibold hover:bg-pink-50">⏰ {t('request')}</button>
+-            </div>
+-            <div className="grid grid-cols-2 gap-2">
+-              {phone && <a href={`tel:${phone}`} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-green-50 text-green-700 rounded-xl text-base font-semibold hover:bg-green-100">📞 {t('call')}</a>}
+-              {viberLink && <a href={viberLink} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-50 text-purple-700 rounded-xl text-base font-semibold hover:bg-purple-100">📲 {t('viber')}</a>}
+-              {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-700 rounded-xl text-base font-semibold hover:bg-emerald-100">💬 {t('whatsapp')}</a>}
+-              {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-blue-50 text-blue-700 rounded-xl text-base font-semibold hover:bg-blue-100">🌐 {t('website')}</a>}
+-              <button className="flex items-center justify-center gap-2 px-4 py-3.5 bg-gray-50 text-gray-600 rounded-xl text-base font-semibold hover:bg-gray-100">✉️ {t('message')}</button>
+-            </div>
++          <div className="grid grid-cols-2 gap-2">
++            {phone && <a href={`tel:${phone}`} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-green-50 text-green-700 rounded-xl text-base font-semibold hover:bg-green-100">📞 {t('call')}</a>}
++            {viberLink && <a href={viberLink} className="flex items-center justify-center gap-2 px-4 py-3.5 bg-purple-50 text-purple-700 rounded-xl text-base font-semibold hover:bg-purple-100">📲 {t('viber')}</a>}
++            {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-700 rounded-xl text-base font-semibold hover:bg-emerald-100">💬 {t('whatsapp')}</a>}
++            {salon.website && <a href={salon.website} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 px-4 py-3.5 bg-blue-50 text-blue-700 rounded-xl text-base font-semibold hover:bg-blue-100">🌐 {t('website')}</a>}
+           </div>
+         </div>
+ 
+diff --git a/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
+new file mode 100644
+index 0000000..70d9f17
+--- /dev/null
++++ b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
+@@ -0,0 +1,80 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..', '..', '..', '..');
++const clientSource = fs.readFileSync(path.join(here, 'SalonDetailClient.tsx'), 'utf-8');
++
++const BANNED_KEYS = ["t('book')", "t('request')", "t('message')", 'ContactButtons'];
++const PRESERVED_KEYS = ["t('call')", "t('viber')", "t('whatsapp')", 'salon.website'];
++
++describe('T-009: no fake booking UI in salon detail', () => {
++  test('SalonDetailClient does not reference removed fake CTA translation keys', () => {
++    for (const key of BANNED_KEYS) {
++      assert.ok(!clientSource.includes(key), `SalonDetailClient.tsx must not contain "${key}"`);
++    }
++  });
++
++  test('SalonDetailClient still renders phone, viber, whatsapp, website controls', () => {
++    assert.ok(clientSource.includes("t('call')"), 'call CTA missing');
++    assert.ok(clientSource.includes("t('viber')"), 'viber CTA missing');
++    assert.ok(clientSource.includes("t('whatsapp')"), 'whatsapp CTA missing');
++    assert.ok(clientSource.includes("t('website')"), 'website CTA missing');
++  });
++
++  test('SalonDetailClient contains no empty/dead onClick booking handlers', () => {
++    // Every <button> in the CTA area must be the "show more photos" button (has onClick) —
++    // no bare, handler-less <button> should remain in the CTA block.
++    const ctaBlock = clientSource.slice(
++      clientSource.indexOf('{/* CTA buttons */}'),
++      clientSource.indexOf('{/* Description */}'),
++    );
++    assert.ok(!ctaBlock.includes('<button'), 'CTA block must contain only <a> contact links, no bare <button>');
++  });
++
++  test('ContactButtons.tsx component was deleted, not left unreachable in the tree', () => {
++    const p = path.join(frontendRoot, 'components', 'ContactButtons.tsx');
++    assert.ok(!fs.existsSync(p), 'components/ContactButtons.tsx should have been removed');
++  });
++});
++
++describe('T-009: locale files have no booking translation keys, preserve real CTAs', () => {
++  const locales = ['el', 'en', 'ru', 'uk'] as const;
++  const removedKeys = ['book', 'request', 'request_slot', 'message'];
++  const requiredKeys = ['call', 'viber', 'whatsapp', 'website', 'report'];
++
++  for (const locale of locales) {
++    test(`${locale}.json: salon namespace has no booking keys`, () => {
++      const messages = JSON.parse(
++        fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'),
++      );
++      for (const key of removedKeys) {
++        assert.ok(!(key in messages.salon), `${locale}.json salon.${key} should have been removed`);
++      }
++    });
++
++    test(`${locale}.json: salon namespace still has real contact CTA keys`, () => {
++      const messages = JSON.parse(
++        fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'),
++      );
++      for (const key of requiredKeys) {
++        assert.ok(key in messages.salon, `${locale}.json salon.${key} missing`);
++      }
++    });
++  }
++
++  test('salon namespace keys are identical across all four locales', () => {
++    const keySets = locales.map((locale) => {
++      const messages = JSON.parse(
++        fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'),
++      );
++      return Object.keys(messages.salon).sort();
++    });
++    for (let i = 1; i < keySets.length; i++) {
++      assert.deepEqual(keySets[i], keySets[0], `${locales[i]}.json salon keys differ from ${locales[0]}.json`);
++    }
++  });
++});
+diff --git a/frontend/components/ContactButtons.tsx b/frontend/components/ContactButtons.tsx
+deleted file mode 100644
+index bfe4a55..0000000
+--- a/frontend/components/ContactButtons.tsx
++++ /dev/null
+@@ -1,65 +0,0 @@
+-'use client';
+-import type { SalonDetail } from '@/lib/api';
+-
+-interface Props {
+-  salon: SalonDetail;
+-  locale: string;
+-  t_call: string; t_viber: string; t_whatsapp: string; t_website: string;
+-  t_message: string; t_book: string; t_request: string;
+-}
+-
+-export default function ContactButtons({ salon, locale, t_call, t_viber, t_whatsapp, t_website, t_message, t_book, t_request }: Props) {
+-  const phone = salon.phone_primary?.replace(/\s/g, '');
+-  const e164 = phone ? (phone.startsWith('+') ? phone.replace(/\D/g, '') : `30${phone.replace(/\D/g, '')}`) : null;
+-  const prefix = locale === 'el' ? '' : `/${locale}`;
+-
+-  const viberLink = salon.social_links?.find(sl => sl.platform === 'viber')?.url
+-    || (e164 ? `viber://chat?number=+${e164}` : null);
+-  const waLink = salon.social_links?.find(sl => sl.platform === 'whatsapp')?.url
+-    || (e164 ? `https://wa.me/${e164}` : null);
+-
+-  return (
+-    <div className="space-y-2">
+-      {/* Primary: Book + Request */}
+-      <div className="flex gap-2">
+-        <button className="flex-1 py-2.5 bg-pink-600 text-white rounded-xl text-sm font-semibold hover:bg-pink-700 transition-colors">
+-          📅 {t_book}
+-        </button>
+-        <button className="flex-1 py-2.5 border border-pink-200 text-pink-600 rounded-xl text-sm font-medium hover:bg-pink-50 transition-colors">
+-          ⏰ {t_request}
+-        </button>
+-      </div>
+-
+-      {/* Secondary: call, viber, whatsapp, message */}
+-      <div className="flex gap-2 flex-wrap">
+-        {phone && (
+-          <a href={`tel:${phone}`}
+-             className="flex items-center gap-1.5 px-3 py-2 bg-green-50 text-green-700 rounded-xl text-sm font-medium hover:bg-green-100">
+-            📞 {t_call}
+-          </a>
+-        )}
+-        {viberLink && (
+-          <a href={viberLink}
+-             className="flex items-center gap-1.5 px-3 py-2 bg-purple-50 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">
+-            📲 {t_viber}
+-          </a>
+-        )}
+-        {waLink && (
+-          <a href={waLink} target="_blank" rel="noopener noreferrer"
+-             className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-medium hover:bg-emerald-100">
+-            💬 {t_whatsapp}
+-          </a>
+-        )}
+-        {salon.website && (
+-          <a href={salon.website} target="_blank" rel="noopener noreferrer"
+-             className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100">
+-            🌐 {t_website}
+-          </a>
+-        )}
+-        <button className="flex items-center gap-1.5 px-3 py-2 bg-gray-50 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-100">
+-          ✉️ {t_message}
+-        </button>
+-      </div>
+-    </div>
+-  );
+-}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index c1862bc..68b072f 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -54,10 +54,6 @@
+     "viber": "Viber",
+     "whatsapp": "WhatsApp",
+     "website": "Ιστοσελίδα",
+-    "book": "Κράτηση",
+-    "message": "Μήνυμα",
+-    "request": "Ζητήστε ραντεβού",
+-    "request_slot": "Ζητήστε ραντεβού",
+     "report": "Αναφορά",
+     "hours": "Ώρες λειτουργίας",
+     "services": "Υπηρεσίες",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 77cce50..5315f6c 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -54,10 +54,6 @@
+     "viber": "Viber",
+     "whatsapp": "WhatsApp",
+     "website": "Website",
+-    "book": "Book now",
+-    "message": "Message",
+-    "request": "Request appointment",
+-    "request_slot": "Request appointment",
+     "report": "Report",
+     "hours": "Opening hours",
+     "services": "Services",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 6ac0088..b114b1f 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -54,10 +54,6 @@
+     "viber": "Viber",
+     "whatsapp": "WhatsApp",
+     "website": "Сайт",
+-    "book": "Записаться",
+-    "message": "Написать",
+-    "request": "Запросить время",
+-    "request_slot": "Запросить время",
+     "report": "Пожаловаться",
+     "hours": "Часы работы",
+     "services": "Услуги",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 3f73dec..4ea5f2b 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -54,10 +54,6 @@
+     "viber": "Viber",
+     "whatsapp": "WhatsApp",
+     "website": "Сайт",
+-    "book": "Записатися",
+-    "message": "Написати",
+-    "request": "Запросити час",
+-    "request_slot": "Запросити час",
+     "report": "Поскаржитися",
+     "hours": "Години роботи",
+     "services": "Послуги",
+diff --git a/frontend/package.json b/frontend/package.json
+index 9b947a8..a4b9bae 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts"
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
