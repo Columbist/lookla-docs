@@ -236,7 +236,7 @@ The value proposition must be legible to P-02 within the first viewport without 
 
 **Changes from current implementation:**
 1. Language switcher moved to header (currently footer-only — gap identified in J-02)
-2. Implemented by T-008 (branch `feat/T-008-homepage-area-grid`, pending review/merge): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010). Completion is recorded here as `✅ Done (T-008)` only after merge and production verification.
+2. ✅ Done (T-008, merged 2026-07-13): "Popular Cities" section renamed to "Popular Areas" (`CityGrid` → `AreaGrid`), populated from `GET /api/areas?region=attica` (DEC-010). Verified in production showing real Attica salon counts (Athens Center 143, Piraeus 90, Glyfada 76, ...) across all 4 locales. A pre-existing, unrelated infra bug was found and fixed alongside this verification: `beauty_web` had no `API_INTERNAL_URL`, so all SSR fetches to the backend (this section and Popular Categories) were silently failing and falling back — see `docker-compose.yml` and commit `2e4d8fe`.
 3. "How it works" step 3 must mention no registration required (DEC-016 compliance)
 4. Navigation: remove any link to `/pricing` if present (DEC-006 compliance check)
 

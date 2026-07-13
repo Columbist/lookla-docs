@@ -348,6 +348,7 @@ actually touches the control. Re-verified in production.
 ### T-008 — Update homepage CityGrid → AreaGrid
 **Priority:** P1 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-02
 **Dependencies:** T-004
+**Status:** ✅ Completed (2026-07-13) — merged to `main`, verified in production
 
 **Description:** Rename `CityGrid.tsx` to `AreaGrid.tsx`. Populate from `/api/areas` endpoint. Change section heading.
 
@@ -360,11 +361,15 @@ actually touches the control. Re-verified in production.
 **Link format:** Each area tile links to `/[locale]/search?area=[slug]`
 
 **Acceptance Criteria:**
-- [ ] Component file renamed to `AreaGrid.tsx`
-- [ ] Section heading updated in all 4 locales
-- [ ] Area tiles link to `?area=` URLs (not `?city=`)
-- [ ] Areas fetched from `/api/areas` with `revalidate: 86400` (SSR cache)
-- [ ] At least 6 area tiles visible on homepage desktop
+- [x] Component file renamed to `AreaGrid.tsx`
+- [x] Section heading updated in all 4 locales
+- [x] Area tiles link to `?area=` URLs (not `?city=`)
+- [x] Areas fetched from `/api/areas` with `revalidate: 86400` (SSR cache)
+- [x] At least 6 area tiles visible on homepage desktop
+
+**Production verification (2026-07-13):** All 4 locales show real Attica salon counts — Athens Center 143, Piraeus 90, Glyfada 76, Nea Ionia, Kallithea, Peristeri, Marousi, Kifissia. No `?city=` links. Runtime item validation (`isAreaItem`), Attica filter inside `selectPopularAreas()`, and a 5s fetch timeout were added in review round 2.
+
+**Related fix (same day, separate branch/commit `2e4d8fe`):** Found and fixed a pre-existing, unrelated infra bug during production smoke-test — `beauty_web` had no `API_INTERNAL_URL` set, so all SSR fetches to the backend (this section and Popular Categories) were silently failing and rendering fallback/empty content. Fixed via `docker-compose.yml`.
 
 ---
 
