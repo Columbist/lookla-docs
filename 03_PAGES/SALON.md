@@ -157,6 +157,12 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
 - WhatsApp link opens directly — no login required
 - Website link opens directly — no login required
 
+**Implementation status (T-009, pending merge/production verification):** "Book now" / "Request appointment" / "Message" buttons removed — none had a working `onClick`/`href`. `components/ContactButtons.tsx`, an unreachable duplicate of the same fake buttons, deleted. Call/WhatsApp/Website preserved unchanged, visible with no login required.
+
+Gaps found during T-009, deferred to T-010:
+- A **Viber** button is currently rendered (real `viber://` deep link) but is not among this section's 3 approved actions — T-010 must decide keep or remove.
+- The "no contact information" empty state described above (message + Report link) is **not implemented** — if phone/whatsapp/website/viber are all absent, the CTA area currently renders as an empty grid with no message. T-010 owns adding this.
+
 **Analytics (DEC-017):**
 
 | Action | GA4 Event | Parameters |

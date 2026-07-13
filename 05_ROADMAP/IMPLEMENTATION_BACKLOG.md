@@ -378,15 +378,22 @@ actually touches the control. Re-verified in production.
 ### T-009 — Remove booking stub buttons (DEC-015)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-03
 **Dependencies:** None
+**Status:** Implemented on `feat/T-009-remove-booking-stubs`, pending independent review, merge, and production verification (do not mark Completed before all three)
 
 **Description:** Locate and remove all booking-related UI in `SalonDetailClient.tsx` and any related sub-components.
 
 **Search for:** `book`, `reserve`, `appointment`, `schedule`, `booking` (case-insensitive) in all salon-related frontend files.
 
 **Acceptance Criteria:**
-- [ ] No text containing "book", "reserve", "appointment", or "schedule" visible on salon detail page
-- [ ] No booking modal, booking form, or booking button exists in DOM
-- [ ] "Call salon", "WhatsApp", "Visit website" CTAs are all present and visible above the fold on mobile
+- [x] No text containing "book", "reserve", "appointment", or "schedule" visible on salon detail page
+- [x] No booking modal, booking form, or booking button exists in DOM (none existed anywhere in the codebase)
+- [x] "Call salon", "WhatsApp", "Visit website" CTAs are all present and visible above the fold on mobile — preserved unchanged from the pre-T-009 implementation, not newly built by T-009
+
+**T-009 also removed** `components/ContactButtons.tsx` — found to be completely unreachable (zero imports anywhere in the codebase) and containing the same fake Book/Request/Message buttons. See T-010 below: its description assumed this file would be the CTA implementation vehicle, but it was dead code duplicating `SalonDetailClient.tsx`'s own inline CTA markup.
+
+**Gaps discovered during T-009, owned by T-010:**
+- A working **Viber** button renders today but isn't among DEC-015's 3 approved actions — decide keep/remove.
+- The documented "no contact information" empty state (message + Report link) is not implemented — CTA area currently renders empty if phone/whatsapp/website/viber are all absent.
 
 ---
 
@@ -394,7 +401,7 @@ actually touches the control. Re-verified in production.
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
 **Dependencies:** T-009
 
-**Description:** Verify or create `ContactButtons.tsx` with the 3 required CTAs.
+**Description:** Verify the 3 required CTAs against the final contract below. **Note (post-T-009):** `ContactButtons.tsx` no longer exists — T-009 deleted it as unreachable dead code. The working Call/WhatsApp/Website markup lives inline in `SalonDetailClient.tsx`. T-010 can either keep it inline or extract a `ContactButtons.tsx` component — that architecture decision was explicitly out of T-009's scope.
 
 **CTA specifications:**
 ```tsx
