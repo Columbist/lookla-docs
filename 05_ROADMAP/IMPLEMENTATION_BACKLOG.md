@@ -400,7 +400,7 @@ actually touches the control. Re-verified in production.
 ### T-010 — Implement contact CTAs (DEC-015/016)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
 **Dependencies:** T-009
-**Status:** Implemented on `feat/T-010-contact-ctas`, pending independent review, merge, and production verification (do not mark Completed before all three)
+**Status:** ✅ Completed (2026-07-14) — reviewed (2 rounds, both flagged real edge cases now fixed: website URLs with embedded credentials, phone values containing letters), merged to `main` (PR #32), production verified
 
 **Description:** Recreated `components/ContactButtons.tsx` (T-009 had deleted the previous unreachable version) as the single source of truth for the 3 approved salon-detail contact actions, backed by pure/unit-tested normalization helpers in `lib/contactActions.ts`.
 
