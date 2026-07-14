@@ -1,0 +1,528 @@
+diff --git a/backend/app/models/salon.py b/backend/app/models/salon.py
+index d5c606a..e76e2eb 100644
+--- a/backend/app/models/salon.py
++++ b/backend/app/models/salon.py
+@@ -162,6 +162,18 @@ class SocialLink(Base):
+     salon = relationship("Salon", back_populates="social_links")
+ 
+ 
++class SalonOwner(Base):
++    """T-024: claim link between a user and a salon. No status column — the
++    table has none in production (verified 2026-07-14); presence of any row
++    for a salon_id is the established "claimed" semantic already used by
++    app/routers/owner.py's claim flow (409 "already claimed" on any existing
++    row). Composite PK only, no separate index on salon_id alone."""
++    __tablename__ = "salon_owners"
++
++    user_id  = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
++    salon_id = Column(Integer, ForeignKey("salons.id", ondelete="CASCADE"), primary_key=True)
++
++
+ class Staff(Base):
+     __tablename__ = "staff"
+ 
+diff --git a/backend/app/routers/salons.py b/backend/app/routers/salons.py
+index 5f5bb0a..dfd9652 100644
+--- a/backend/app/routers/salons.py
++++ b/backend/app/routers/salons.py
+@@ -1,6 +1,6 @@
+ from fastapi import APIRouter, Depends, Query, HTTPException, Request
+ from sqlalchemy.orm import Session
+-from sqlalchemy import text, or_, false
++from sqlalchemy import text, or_, false, exists
+ from typing import Optional
+ from datetime import datetime
+ from zoneinfo import ZoneInfo
+@@ -9,7 +9,7 @@ import math
+ from app.services.translate import is_bot, translate_batch
+ from app.data.area_metadata import get_district_by_area_slug, resolve_district_query
+ from app.core.database import get_db
+-from app.models.salon import Salon
++from app.models.salon import Salon, SalonOwner
+ from app.schemas.salon import SalonListItem, SalonDetail, PaginatedSalons, PhotoOut, SalonMapItem
+ 
+ ATHENS_TZ = ZoneInfo("Europe/Athens")
+@@ -256,6 +256,16 @@ def _batch_primary_photos(salon_ids: list, db: Session) -> dict:
+     return {row.salon_id: _proxy_url_raw(row.id, row.url) for row in rows}
+ 
+ 
++def _owner_claimed_expr():
++    """T-024: correlated EXISTS, not a LEFT JOIN + COUNT — a plain join on
++    salon_owners could duplicate a salon row if it ever had more than one
++    owner row (the table's only constraint is a composite PK on
++    (user_id, salon_id), not a unique index on salon_id alone). EXISTS
++    always yields exactly one boolean per outer salon row, preserving list
++    pagination/total and requiring no GROUP BY."""
++    return exists().where(SalonOwner.salon_id == Salon.id).correlate(Salon)
++
++
+ def apply_text_query_filter(query, q: Optional[str]):
+     """Apply a district-alias filter to `query` if `q` is an exact,
+     complete localized district name (T-006, e.g. "Глифада", "Гліфада"),
+@@ -426,12 +436,16 @@ def list_salons(
+         query = query.filter(Salon.is_verified)
+ 
+     total = query.count()
+-    salons = (
+-        query.order_by(Salon.rating_google.desc().nullslast(), Salon.rating_count.desc())
++    rows = (
++        query.add_columns(_owner_claimed_expr().label("is_owner_claimed"))
++        .order_by(Salon.rating_google.desc().nullslast(), Salon.rating_count.desc())
+         .offset((page - 1) * limit)
+         .limit(limit)
+         .all()
+     )
++    salons = [row[0] for row in rows]
++    for s, is_claimed in rows:
++        s.is_owner_claimed = is_claimed
+ 
+     salon_ids = [s.id for s in salons]
+     photo_map = _batch_primary_photos(salon_ids, db)
+@@ -463,13 +477,16 @@ def _resolve(salon_id: int | str, db: Session):
+ 
+ @router.get("/{salon_id}", response_model=SalonDetail)
+ def get_salon(salon_id: int | str, db: Session = Depends(get_db)):
++    claim_query = db.query(Salon, _owner_claimed_expr())
+     if isinstance(salon_id, str) and not salon_id.isdigit():
+-        salon = db.query(Salon).filter(Salon.slug == salon_id, Salon.is_active).first()
++        row = claim_query.filter(Salon.slug == salon_id, Salon.is_active).first()
+     else:
+-        salon = db.query(Salon).filter(Salon.id == int(salon_id), Salon.is_active).first()
++        row = claim_query.filter(Salon.id == int(salon_id), Salon.is_active).first()
+ 
+-    if not salon:
++    if not row:
+         raise HTTPException(status_code=404, detail="Salon not found")
++    salon, is_claimed = row
++    salon.is_owner_claimed = is_claimed
+ 
+     detail = SalonDetail.model_validate(salon)
+     detail.primary_photo = _primary_photo(salon)
+diff --git a/backend/app/schemas/salon.py b/backend/app/schemas/salon.py
+index c2aa22f..93d7fa9 100644
+--- a/backend/app/schemas/salon.py
++++ b/backend/app/schemas/salon.py
+@@ -73,6 +73,7 @@ class SalonListItem(BaseModel):
+     rating_count: int
+     price_level: Optional[int]
+     is_verified: bool
++    is_owner_claimed: bool
+     primary_photo: Optional[str] = None
+     description_lang: Optional[str] = None
+     min_price: Optional[float] = None
+diff --git a/backend/tests/test_owner_claimed.py b/backend/tests/test_owner_claimed.py
+new file mode 100644
+index 0000000..52bb1b4
+--- /dev/null
++++ b/backend/tests/test_owner_claimed.py
+@@ -0,0 +1,283 @@
++"""
++T-024: `is_owner_claimed` on GET /api/salons and GET /api/salons/{id_or_slug}.
++
++Uses FastAPI TestClient with SQLite in-memory DB via dependency override.
++No connection to production. The EXISTS-based query is plain, portable SQL
++(no Postgres-only syntax) and runs unmodified against SQLite here — the
++same query that runs in production.
++"""
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, event
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from app.main import app
++from app.core.database import get_db, Base
++from app.models.salon import Salon, SalonOwner
++from app.models.user import User
++import app.routers.salons as salons_module
++
++
++def _build_test_engine():
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    Base.metadata.create_all(engine)
++    return engine
++
++
++SEED_SALONS = [
++    dict(id=1, name="Claimed Salon", slug="claimed-salon", address_city="Glyfada",
++         is_active=True, rating_google=4.7, rating_count=10),
++    dict(id=2, name="Unclaimed Salon", slug="unclaimed-salon", address_city="Glyfada",
++         is_active=True, rating_google=4.5, rating_count=20),
++    dict(id=3, name="Double Claimed Salon", slug="double-claimed-salon", address_city="Glyfada",
++         is_active=True, rating_google=4.9, rating_count=5),
++    dict(id=4, name="Inactive Claimed Salon", slug="inactive-claimed-salon", address_city="Glyfada",
++         is_active=False, rating_google=4.0, rating_count=3),
++]
++
++
++@pytest.fixture(scope="module")
++def client():
++    engine = _build_test_engine()
++    test_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    session = test_session_local()
++    for row in SEED_SALONS:
++        session.add(Salon(**row))
++    session.add(User(id=1, email="owner1@example.com"))
++    session.add(User(id=2, email="owner2@example.com"))
++    session.commit()
++
++    # Salon 1: claimed by one owner. Salon 3: two owner rows for the same
++    # salon (the DB schema allows this — no unique constraint on salon_id
++    # alone, only a composite PK on (user_id, salon_id)) — must still
++    # resolve to a single `true`, not duplicate the salon in list results.
++    session.add(SalonOwner(user_id=1, salon_id=1))
++    session.add(SalonOwner(user_id=1, salon_id=3))
++    session.add(SalonOwner(user_id=2, salon_id=3))
++    session.add(SalonOwner(user_id=1, salon_id=4))  # inactive salon, claimed
++    session.commit()
++    session.close()
++
++    def override_get_db():
++        db = test_session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    previous_override = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override_get_db
++
++    # Postgres-only batch helpers (unrelated to T-024) — same stubbing
++    # pattern as test_salons_endpoint.py.
++    original_photos = salons_module._batch_primary_photos
++    original_prices = salons_module._batch_min_prices
++    original_open = salons_module._batch_open_now
++    salons_module._batch_primary_photos = lambda salon_ids, db: {}
++    salons_module._batch_min_prices = lambda salon_ids, db, name_keywords=None: {}
++    salons_module._batch_open_now = lambda salon_ids, db: {}
++
++    test_client = TestClient(app)
++    test_client.engine = engine
++    try:
++        yield test_client
++    finally:
++        test_client.close()
++        salons_module._batch_primary_photos = original_photos
++        salons_module._batch_min_prices = original_prices
++        salons_module._batch_open_now = original_open
++        if previous_override is None:
++            app.dependency_overrides.pop(get_db, None)
++        else:
++            app.dependency_overrides[get_db] = previous_override
++        engine.dispose()
++
++
++def _query_count(client: TestClient, url: str) -> int:
++    return len(_captured_statements(client, url))
++
++
++def _captured_statements(client: TestClient, url: str) -> list[str]:
++    statements = []
++
++    def _log(conn, cursor, statement, parameters, context, executemany):
++        statements.append(statement)
++
++    event.listen(client.engine, "before_cursor_execute", _log)
++    try:
++        resp = client.get(url)
++    finally:
++        event.remove(client.engine, "before_cursor_execute", _log)
++    assert resp.status_code == 200
++    return statements
++
++
++def _item_by_name(items, name):
++    return next(i for i in items if i["name"] == name)
++
++
++# ── Schema / OpenAPI ───────────────────────────────────────────────────────────
++
++def test_schema_field_is_owner_claimed_present_in_list_schema():
++    from app.schemas.salon import SalonListItem
++    assert "is_owner_claimed" in SalonListItem.model_fields
++
++
++def test_schema_field_is_owner_claimed_present_in_detail_schema():
++    from app.schemas.salon import SalonDetail
++    assert "is_owner_claimed" in SalonDetail.model_fields
++
++
++def test_openapi_is_owner_claimed_required_boolean_in_list_and_detail():
++    spec = app.openapi()
++    schemas = spec["components"]["schemas"]
++    for name in ("SalonListItem", "SalonDetail"):
++        props = schemas[name]["properties"]
++        required = schemas[name].get("required", [])
++        assert "is_owner_claimed" in props, f"{name} missing is_owner_claimed"
++        assert props["is_owner_claimed"]["type"] == "boolean"
++        assert "is_owner_claimed" in required, f"{name}.is_owner_claimed must be required"
++
++
++def test_openapi_map_schema_unchanged():
++    spec = app.openapi()
++    props = spec["components"]["schemas"]["SalonMapItem"]["properties"]
++    assert "is_owner_claimed" not in props
++    assert len(props) == 10  # T-038's confirmed ten-field contract
++
++
++# ── List endpoint ──────────────────────────────────────────────────────────────
++
++def test_list_claimed_salon_returns_true(client):
++    resp = client.get("/api/salons")
++    items = resp.json()["items"]
++    assert _item_by_name(items, "Claimed Salon")["is_owner_claimed"] is True
++
++
++def test_list_unclaimed_salon_returns_false(client):
++    resp = client.get("/api/salons")
++    items = resp.json()["items"]
++    assert _item_by_name(items, "Unclaimed Salon")["is_owner_claimed"] is False
++
++
++def test_list_duplicate_ownership_rows_do_not_duplicate_salon(client):
++    resp = client.get("/api/salons")
++    items = resp.json()["items"]
++    matches = [i for i in items if i["name"] == "Double Claimed Salon"]
++    assert len(matches) == 1
++
++
++def test_list_duplicate_ownership_rows_still_true(client):
++    resp = client.get("/api/salons")
++    items = resp.json()["items"]
++    assert _item_by_name(items, "Double Claimed Salon")["is_owner_claimed"] is True
++
++
++def test_list_inactive_claimed_salon_excluded(client):
++    resp = client.get("/api/salons")
++    data = resp.json()
++    names = {i["name"] for i in data["items"]}
++    assert "Inactive Claimed Salon" not in names
++    assert data["total"] == 3
++
++
++def test_list_no_n_plus_1_ownership_queries(client):
++    # Query count must be identical whether or not any salon is claimed —
++    # the EXISTS is embedded in the same list query, not a per-row lookup.
++    assert _query_count(client, "/api/salons") == _query_count(client, "/api/salons")
++
++
++def test_list_query_count_is_two(client):
++    # One count() query + one main list query (with the EXISTS column
++    # embedded) — no separate ownership round-trip. Matches the batch-helper
++    # stubs returning {} without issuing queries.
++    n = _query_count(client, "/api/salons")
++    assert n == 2, f"expected exactly 2 SQL statements (count + list), got {n}"
++
++
++def test_list_ordering_unchanged(client):
++    # default sort: rating_google DESC, rating_count DESC — unaffected by
++    # ownership status. Double Claimed (4.9) > Claimed (4.7) > Unclaimed (4.5)
++    resp = client.get("/api/salons")
++    names = [i["name"] for i in resp.json()["items"]]
++    assert names == ["Double Claimed Salon", "Claimed Salon", "Unclaimed Salon"]
++
++
++# ── Detail endpoint ────────────────────────────────────────────────────────────
++
++def test_detail_claimed_salon_by_id_returns_true(client):
++    resp = client.get("/api/salons/1")
++    assert resp.status_code == 200
++    assert resp.json()["is_owner_claimed"] is True
++
++
++def test_detail_claimed_salon_by_slug_returns_true(client):
++    resp = client.get("/api/salons/claimed-salon")
++    assert resp.status_code == 200
++    assert resp.json()["is_owner_claimed"] is True
++
++
++def test_detail_unclaimed_salon_by_id_returns_false(client):
++    resp = client.get("/api/salons/2")
++    assert resp.json()["is_owner_claimed"] is False
++
++
++def test_detail_unclaimed_salon_by_slug_returns_false(client):
++    resp = client.get("/api/salons/unclaimed-salon")
++    assert resp.json()["is_owner_claimed"] is False
++
++
++def test_detail_double_claimed_salon_returns_true_not_an_error(client):
++    resp = client.get("/api/salons/double-claimed-salon")
++    assert resp.status_code == 200
++    assert resp.json()["is_owner_claimed"] is True
++
++
++def test_detail_inactive_salon_still_404(client):
++    resp = client.get("/api/salons/inactive-claimed-salon")
++    assert resp.status_code == 404
++
++
++def test_detail_missing_salon_still_404(client):
++    resp = client.get("/api/salons/does-not-exist")
++    assert resp.status_code == 404
++
++
++def test_detail_no_owner_identity_fields_exposed(client):
++    resp = client.get("/api/salons/claimed-salon")
++    body = resp.json()
++    for leaky_key in ("user_id", "owner_id", "owner", "owner_user_id", "salon_owners"):
++        assert leaky_key not in body
++
++
++def test_detail_ownership_check_is_embedded_not_a_separate_query(client):
++    # The detail endpoint already issues several queries pre-T-024 (lazy
++    # relationships: photos, hours, services, social_links, reviews — each
++    # accessed via SalonDetail.model_validate/len(salon.reviews)). T-024
++    # must not add a *separate* top-level query against salon_owners; the
++    # EXISTS is embedded as a subquery inside the main salon SELECT.
++    statements = _captured_statements(client, "/api/salons/claimed-salon")
++    # The one query that references salon_owners must be the main salon
++    # SELECT with an embedded EXISTS subquery, not a standalone one.
++    owner_referencing = [s for s in statements if "salon_owners" in s.lower()]
++    assert len(owner_referencing) == 1, f"expected exactly one statement referencing salon_owners, got {len(owner_referencing)}: {owner_referencing}"
++    assert "exists" in owner_referencing[0].lower()
++    assert "salons" in owner_referencing[0].lower()  # same statement also selects from salons
++
++
++# ── Map endpoint regression ──────────────────────────────────────────────────
++
++def test_map_response_unchanged_ten_fields(client):
++    resp = client.get("/api/salons/map")
++    assert resp.status_code == 200
++    body = resp.json()
++    assert isinstance(body, list)
++    if body:
++        assert "is_owner_claimed" not in body[0]
++        assert len(body[0]) == 10
+diff --git a/docs/04_ARCHITECTURE/API_SPECIFICATION.md b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
+index 5481da1..badf6dc 100644
+--- a/docs/04_ARCHITECTURE/API_SPECIFICATION.md
++++ b/docs/04_ARCHITECTURE/API_SPECIFICATION.md
+@@ -100,6 +100,12 @@ implementation_status: Documents current API + MVP-required additions
+   ILIKE` substring match — only `q` values with no district-alias match
+   (e.g. "афины") continue through the unchanged legacy path (T-006)
+ 
++**`is_owner_claimed` semantics (T-024, prerequisite for T-011's DEC-014 verification labels):**
++- `true` when at least one row exists in `salon_owners` for this salon; `false` otherwise. `salon_owners` has no status/lifecycle column — presence of any row is the claimed signal, matching the existing claim flow in `app/routers/owner.py` (which already treats "any row for this salon_id" as "already claimed", raising 409 on a second claim attempt).
++- Computed via a correlated SQL `EXISTS`, not a `LEFT JOIN + COUNT` — `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a join could in principle duplicate a salon row; `EXISTS` always yields exactly one boolean per salon and cannot affect `total`/pagination.
++- No owner identity (`user_id`, name, email) is exposed through this or any public salon endpoint — the field is a boolean only.
++- **Not present in `GET /api/salons/map`** — that endpoint's compact, historically-fixed 10-field contract (Decision T-038) is intentionally not expanded by T-024.
++
+ ---
+ 
+ ### GET /api/salons/map
+@@ -180,6 +186,7 @@ fields below may hold `null` — they are never absent:
+   "rating_count": 128,
+   "price_level": 2,
+   "is_verified": true,
++  "is_owner_claimed": false,
+   "is_open": true,
+   "opens_at": null,
+   "closes_at": "19:00",
+@@ -202,6 +209,7 @@ fields below may hold `null` — they are never absent:
+ **Notes:**
+ - `services` and `reviews` are always returned as `[]` in this response — loaded separately via lazy endpoints
+ - `is_open`, `closes_at`, `opens_at` computed at Athens timezone
++- `is_owner_claimed` (T-024, DEC-014 prerequisite) — same `EXISTS`-based semantics as `GET /api/salons`, see above
+ 
+ **Errors:**
+ - 404 — salon not found or `is_active = false`
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index e3c03df..12411f3 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -440,25 +440,23 @@ actually touches the control. Re-verified in production.
+ 
+ ### T-011 — Replace ✓ badge with text label (DEC-014)
+ **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
+-**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 resolution must be decided first
++**Dependencies:** T-024 (backend `is_owner_claimed` field — done, `feat/T-024-owner-claimed-api`, pending merge). ARCHITECTURE_REVIEW CONTRADICTION-01 resolved alongside T-024.
+ 
+ **Description:** Replace the ✓ icon with text label. Two labels depending on source:
+-- `is_verified = true` AND `EXISTS salon_owners` → "Owner verified" text
+-- `is_verified = true` AND NOT `EXISTS salon_owners` → "Information reviewed" text
++- `is_verified = true` AND `is_owner_claimed = true` → "Owner verified" text
++- `is_verified = true` AND `is_owner_claimed = false` → "Information reviewed" text
+ - `is_verified = false` → no label
+ 
+-**Implementation requires backend support:**
++**Backend support — done by T-024, purely a frontend task from here:**
+ 
+-Backend must include in `GET /api/salons/{id}` and `GET /api/salons` (list items) a new field:
++`GET /api/salons/{id_or_slug}` and `GET /api/salons` (list items) already include:
+ ```json
+ {
+   "is_verified": true,
+-  "is_owner_claimed": false  // NEW: derived from salon_owners table
++  "is_owner_claimed": false
+ }
+ ```
+ 
+-This requires a backend change: add LEFT JOIN check for `salon_owners` to the salon query.
+-
+ **Frontend:**
+ ```tsx
+ {salon.is_verified && (
+@@ -748,25 +746,30 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
+ 
+ ### T-024 — Backend: is_owner_claimed field in salon responses
+ **Priority:** P0 | **Owner:** BE | **Estimate:** 1h | **Epic:** EPIC-08
+-**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 resolution (Option B selected: LEFT JOIN on salon_owners)
++**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 (resolved 2026-07-14 — Option B, via `EXISTS`, not the JOIN the contradiction's recommendation line originally suggested)
++**Status:** Implemented on `feat/T-024-owner-claimed-api`, pending independent review, merge, and production verification (do not mark Completed before all three)
+ 
+-**Description:** Add a LEFT JOIN check on `salon_owners` to the salon queries. Add `is_owner_claimed` boolean to `SalonListSchema` and `SalonDetailSchema`.
++**Description:** Add `is_owner_claimed` boolean to `SalonListItem`/`SalonDetail` schemas (list and detail; **not** `SalonMapItem` — T-038's fixed 10-field contract stays untouched), computed via a correlated `EXISTS` against `salon_owners`.
+ 
+-**Query change:**
++**Actual implementation (replaces the stale `LEFT JOIN + COUNT` pseudocode above):**
+ ```python
+-# In salons service/router
+-.outerjoin(SalonOwner, SalonOwner.salon_id == Salon.id)
+-.add_columns(func.count(SalonOwner.id).label('owner_count'))
+-# Then: is_owner_claimed = owner_count > 0
++# app/routers/salons.py
++def _owner_claimed_expr():
++    return exists().where(SalonOwner.salon_id == Salon.id).correlate(Salon)
+ ```
++Embedded as an added column (`query.add_columns(_owner_claimed_expr().label("is_owner_claimed"))`) in the same list/detail queries — not a JOIN, not a separate ownership round-trip. `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a join could duplicate a salon row; `EXISTS` cannot.
++
++**Schema note:** `salon_owners` had no ORM model before this task (accessed via raw SQL elsewhere) and isn't tracked by Alembic — it predates migration tracking. Added a minimal read-only `SalonOwner` model (2 columns, matches the live table exactly: `user_id`, `salon_id`, composite PK, no status column). No migration; doesn't alter the table.
+ 
+-**Note:** This task is also required by T-011 (frontend badge display).
++**Known limitation, not fixed here:** no index on `salon_owners.salon_id` alone. `EXPLAIN ANALYZE` against production (read-only transaction) showed no measurable cost today (~5ms for the full 6320-row active-salon scan) since the table is currently empty (0 rows); worth an index if real claims accumulate — separate task, not created under T-024.
+ 
+ **Acceptance Criteria:**
+-- [ ] `GET /api/salons` response items include `"is_owner_claimed": true/false`
+-- [ ] `GET /api/salons/{id}` response includes `"is_owner_claimed": true/false`
+-- [ ] Claimed salons (in `salon_owners` table) return `is_owner_claimed: true`
+-- [ ] Unclaimed salons return `is_owner_claimed: false`
++- [x] `GET /api/salons` response items include `"is_owner_claimed": true/false`
++- [x] `GET /api/salons/{id_or_slug}` response includes `"is_owner_claimed": true/false` (both numeric ID and slug lookup)
++- [x] Claimed salons (any row in `salon_owners`) return `is_owner_claimed: true`, including when a salon has more than one owner row (no duplication)
++- [x] Unclaimed salons return `is_owner_claimed: false`
++- [x] `GET /api/salons/map` unchanged (still exactly 10 fields)
++- [x] No owner identity exposed through any public endpoint
+ 
+ ---
+ 
+diff --git a/docs/08_REVIEWS/ARCHITECTURE_REVIEW.md b/docs/08_REVIEWS/ARCHITECTURE_REVIEW.md
+index aea07d7..e638993 100644
+--- a/docs/08_REVIEWS/ARCHITECTURE_REVIEW.md
++++ b/docs/08_REVIEWS/ARCHITECTURE_REVIEW.md
+@@ -74,7 +74,9 @@ Option B: Derive owner-claimed from `salon_owners` table (already exists as a ju
+ - `is_verified = true AND NOT EXISTS(...)` → "Information reviewed"
+ - No new column needed; requires a JOIN on every salon fetch
+ 
+-**Recommendation:** Option B — no schema change, uses existing data. Add a LEFT JOIN to salon queries.
++**Recommendation:** Option B — no schema change, uses existing data.
++
++**Resolved (2026-07-14, T-024):** Implemented via the correlated `EXISTS` form already described above, **not** a `LEFT JOIN`. `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a plain join risked duplicating a salon row if it ever had more than one owner row; `EXISTS` always yields exactly one boolean per salon regardless. `is_owner_claimed` is now a required boolean on `GET /api/salons` and `GET /api/salons/{id_or_slug}`. T-011 (the frontend label) is unblocked.
+ 
+ ---
+ 
