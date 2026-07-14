@@ -747,7 +747,7 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 ### T-024 — Backend: is_owner_claimed field in salon responses
 **Priority:** P0 | **Owner:** BE | **Estimate:** 1h | **Epic:** EPIC-08
 **Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 (resolved 2026-07-14 — Option B, via `EXISTS`, not the JOIN the contradiction's recommendation line originally suggested)
-**Status:** Implemented on `feat/T-024-owner-claimed-api`, pending independent review, merge, and production verification (do not mark Completed before all three)
+**Status:** ✅ Completed (2026-07-14) — reviewed, merged to `main` (PR #34), production verified
 
 **Description:** Add `is_owner_claimed` boolean to `SalonListItem`/`SalonDetail` schemas (list and detail; **not** `SalonMapItem` — T-038's fixed 10-field contract stays untouched), computed via a correlated `EXISTS` against `salon_owners`.
 
@@ -984,6 +984,19 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 - [ ] Failed reviews fetch shows "Could not load reviews" with a retry link
 - [ ] Same distinction applied to Services, which shares the identical `useLazySection` hook and has the same gap (`"Service information not available"` per `SALON.md`, also not currently implemented)
 - [ ] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states
+
+---
+
+### T-043 — Add index on salon_owners(salon_id)
+**Priority:** P2 | **Owner:** BE | **Estimate:** 30m | **Epic:** EPIC-08
+**Dependencies:** None
+
+**Description:** `salon_owners` has only a composite PK on `(user_id, salon_id)` — no separate index on `salon_id` alone. T-024's `is_owner_claimed` runs a correlated `EXISTS (... WHERE salon_id = ?)` per salon on every list/detail request; `EXPLAIN ANALYZE` in production (2026-07-14) showed no measurable cost today (~5ms for a full 6320-row scan) because the table is currently empty (0 claimed salons). Flagged by review as non-blocking tech debt — revisit once real owner claims start accumulating, since a growing `salon_owners` table combined with no `salon_id` index will eventually show up in the query plan as a per-row sequential scan.
+
+**Acceptance Criteria:**
+- [ ] Alembic migration adding `CREATE INDEX idx_salon_owners_salon_id ON salon_owners(salon_id)`
+- [ ] `EXPLAIN ANALYZE` confirms the T-024 `EXISTS` query plan uses the new index once `salon_owners` has enough rows to matter
+- [ ] No change to `salon_owners`' existing composite PK or FK constraints
 
 ---
 
