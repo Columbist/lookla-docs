@@ -241,6 +241,17 @@ Source: Google Reviews  |  Imported: Yes  |  Original: No
 
 This header must be visible. It cannot be hidden, collapsed, or shown in a tooltip. It is the honest disclosure required by DEC-013.
 
+**Implementation status:** ✅ T-012 done (branch `feat/T-012-google-review-source-label`, pending independent review, merge, and production verification — do not mark Completed before all three). Exact required text per locale (`salon.googleReviewsSourceLabel`):
+
+| Locale | Text |
+|---|---|
+| en | Source: Google Reviews / Imported: Yes / Original: No |
+| el | Πηγή: Google Reviews / Εισήχθη: Ναι / Πρωτότυπο: Όχι |
+| ru | Источник: Google Reviews / Импортировано: Да / Оригинал: Нет |
+| uk | Джерело: Google Reviews / Імпортовано: Так / Оригінал: Ні |
+
+Section-level disclosure (one `<p>` per page load, not per review) rendered directly above the review list, immediately after the "Reviews" `<h2>`. Shown only when reviews have loaded (`!loading && reviewCount > 0`) via the pure helper `shouldShowReviewSourceLabel` in `lib/reviewsSection.ts` — hidden while loading, hidden when there are zero reviews (whether genuinely empty or a failed fetch, since `useLazySection`'s error handling already collapses both to an empty array). Not a tooltip, not `title=`, not collapsible.
+
 **Per-review content:**
 - Author name
 - Star rating
@@ -248,7 +259,7 @@ This header must be visible. It cannot be hidden, collapsed, or shown in a toolt
 - Date of review
 - Translation badge if translated (🌐 "Translated from Greek")
 
-**Empty state:** "No reviews available for this salon"
+**Empty state:** Documented as "No reviews available for this salon", but **this text does not currently render** — when there are zero reviews (or the reviews fetch fails), the entire Reviews section (including the "Reviews" heading) renders nothing at all. Pre-existing gap, found during T-012, not fixed here (T-012 does not touch review fetching/empty-state UI by its own scope) — candidate for a follow-up ticket.
 
 **Rating shown:** Average from `rating_google` (already shown in Section 2). Do not recalculate from individual reviews displayed.
 

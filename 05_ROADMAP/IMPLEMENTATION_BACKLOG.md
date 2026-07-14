@@ -485,6 +485,7 @@ This requires a backend change: add LEFT JOIN check for `salon_owners` to the sa
 ### T-012 — Add Google review source label (DEC-013)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-03
 **Dependencies:** None
+**Status:** Implemented on `feat/T-012-google-review-source-label`, pending independent review, merge, and production verification (do not mark Completed before all three)
 
 **Description:** Add a fixed header above the reviews section in `SalonDetailClient.tsx`.
 
@@ -501,10 +502,12 @@ Localized:
 **Important:** This label must NOT be in a tooltip. NOT collapsible. NOT behind "read more." Visible immediately above the reviews.
 
 **Acceptance Criteria:**
-- [ ] Header text visible on any salon with reviews, without scrolling to reviews (it's a section header)
-- [ ] Header is visible in all 4 locales
-- [ ] Text matches exactly: "Source: Google Reviews / Imported: Yes / Original: No" (en)
-- [ ] Label appears regardless of whether `source='google'` check — all MVP reviews are Google anyway
+- [x] Header text visible on any salon with reviews, without scrolling to reviews (it's a section header)
+- [x] Header is visible in all 4 locales
+- [x] Text matches exactly: "Source: Google Reviews / Imported: Yes / Original: No" (en)
+- [x] Label appears regardless of whether `source='google'` check — all MVP reviews are Google anyway (label is section-level, does not inspect per-review `source`)
+
+**Tested rendering semantics:** section-level disclosure via `shouldShowReviewSourceLabel(loading, reviewCount)` — visible once loaded with ≥1 review, hidden while loading, hidden at 0 reviews (covers both a genuinely-empty result and a failed fetch, since the existing lazy-load hook collapses both to an empty array with no separate error flag — preserved as-is, not modified). Verified manually that a real salon's 5 actual reviews were reachable only with a real browser User-Agent — the reviews endpoint's bot protection (`is_bot()` in `translate.py`) flags `curl`, Python's `urllib`, and Playwright's default `HeadlessChrome`/`Playwright` UA strings as bots and returns `[]`; testing required overriding Playwright's context `user_agent` to a real Chrome UA.
 
 ---
 
