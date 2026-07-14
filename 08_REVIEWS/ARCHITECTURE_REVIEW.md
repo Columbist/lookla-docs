@@ -74,7 +74,9 @@ Option B: Derive owner-claimed from `salon_owners` table (already exists as a ju
 - `is_verified = true AND NOT EXISTS(...)` → "Information reviewed"
 - No new column needed; requires a JOIN on every salon fetch
 
-**Recommendation:** Option B — no schema change, uses existing data. Add a LEFT JOIN to salon queries.
+**Recommendation:** Option B — no schema change, uses existing data.
+
+**Resolved (2026-07-14, T-024):** Implemented via the correlated `EXISTS` form already described above, **not** a `LEFT JOIN`. `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a plain join risked duplicating a salon row if it ever had more than one owner row; `EXISTS` always yields exactly one boolean per salon regardless. `is_owner_claimed` is now a required boolean on `GET /api/salons` and `GET /api/salons/{id_or_slug}`. T-011 (the frontend label) is unblocked.
 
 ---
 

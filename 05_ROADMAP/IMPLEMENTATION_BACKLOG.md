@@ -440,24 +440,22 @@ actually touches the control. Re-verified in production.
 
 ### T-011 — Replace ✓ badge with text label (DEC-014)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
-**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 resolution must be decided first
+**Dependencies:** T-024 (backend `is_owner_claimed` field — done, `feat/T-024-owner-claimed-api`, pending merge). ARCHITECTURE_REVIEW CONTRADICTION-01 resolved alongside T-024.
 
 **Description:** Replace the ✓ icon with text label. Two labels depending on source:
-- `is_verified = true` AND `EXISTS salon_owners` → "Owner verified" text
-- `is_verified = true` AND NOT `EXISTS salon_owners` → "Information reviewed" text
+- `is_verified = true` AND `is_owner_claimed = true` → "Owner verified" text
+- `is_verified = true` AND `is_owner_claimed = false` → "Information reviewed" text
 - `is_verified = false` → no label
 
-**Implementation requires backend support:**
+**Backend support — done by T-024, purely a frontend task from here:**
 
-Backend must include in `GET /api/salons/{id}` and `GET /api/salons` (list items) a new field:
+`GET /api/salons/{id_or_slug}` and `GET /api/salons` (list items) already include:
 ```json
 {
   "is_verified": true,
-  "is_owner_claimed": false  // NEW: derived from salon_owners table
+  "is_owner_claimed": false
 }
 ```
-
-This requires a backend change: add LEFT JOIN check for `salon_owners` to the salon query.
 
 **Frontend:**
 ```tsx
@@ -748,25 +746,30 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 
 ### T-024 — Backend: is_owner_claimed field in salon responses
 **Priority:** P0 | **Owner:** BE | **Estimate:** 1h | **Epic:** EPIC-08
-**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 resolution (Option B selected: LEFT JOIN on salon_owners)
+**Dependencies:** ARCHITECTURE_REVIEW CONTRADICTION-01 (resolved 2026-07-14 — Option B, via `EXISTS`, not the JOIN the contradiction's recommendation line originally suggested)
+**Status:** Implemented on `feat/T-024-owner-claimed-api`, pending independent review, merge, and production verification (do not mark Completed before all three)
 
-**Description:** Add a LEFT JOIN check on `salon_owners` to the salon queries. Add `is_owner_claimed` boolean to `SalonListSchema` and `SalonDetailSchema`.
+**Description:** Add `is_owner_claimed` boolean to `SalonListItem`/`SalonDetail` schemas (list and detail; **not** `SalonMapItem` — T-038's fixed 10-field contract stays untouched), computed via a correlated `EXISTS` against `salon_owners`.
 
-**Query change:**
+**Actual implementation (replaces the stale `LEFT JOIN + COUNT` pseudocode above):**
 ```python
-# In salons service/router
-.outerjoin(SalonOwner, SalonOwner.salon_id == Salon.id)
-.add_columns(func.count(SalonOwner.id).label('owner_count'))
-# Then: is_owner_claimed = owner_count > 0
+# app/routers/salons.py
+def _owner_claimed_expr():
+    return exists().where(SalonOwner.salon_id == Salon.id).correlate(Salon)
 ```
+Embedded as an added column (`query.add_columns(_owner_claimed_expr().label("is_owner_claimed"))`) in the same list/detail queries — not a JOIN, not a separate ownership round-trip. `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a join could duplicate a salon row; `EXISTS` cannot.
 
-**Note:** This task is also required by T-011 (frontend badge display).
+**Schema note:** `salon_owners` had no ORM model before this task (accessed via raw SQL elsewhere) and isn't tracked by Alembic — it predates migration tracking. Added a minimal read-only `SalonOwner` model (2 columns, matches the live table exactly: `user_id`, `salon_id`, composite PK, no status column). No migration; doesn't alter the table.
+
+**Known limitation, not fixed here:** no index on `salon_owners.salon_id` alone. `EXPLAIN ANALYZE` against production (read-only transaction) showed no measurable cost today (~5ms for the full 6320-row active-salon scan) since the table is currently empty (0 rows); worth an index if real claims accumulate — separate task, not created under T-024.
 
 **Acceptance Criteria:**
-- [ ] `GET /api/salons` response items include `"is_owner_claimed": true/false`
-- [ ] `GET /api/salons/{id}` response includes `"is_owner_claimed": true/false`
-- [ ] Claimed salons (in `salon_owners` table) return `is_owner_claimed: true`
-- [ ] Unclaimed salons return `is_owner_claimed: false`
+- [x] `GET /api/salons` response items include `"is_owner_claimed": true/false`
+- [x] `GET /api/salons/{id_or_slug}` response includes `"is_owner_claimed": true/false` (both numeric ID and slug lookup)
+- [x] Claimed salons (any row in `salon_owners`) return `is_owner_claimed: true`, including when a salon has more than one owner row (no duplication)
+- [x] Unclaimed salons return `is_owner_claimed: false`
+- [x] `GET /api/salons/map` unchanged (still exactly 10 fields)
+- [x] No owner identity exposed through any public endpoint
 
 ---
 

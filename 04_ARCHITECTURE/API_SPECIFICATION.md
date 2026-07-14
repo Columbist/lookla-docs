@@ -100,6 +100,12 @@ implementation_status: Documents current API + MVP-required additions
   ILIKE` substring match — only `q` values with no district-alias match
   (e.g. "афины") continue through the unchanged legacy path (T-006)
 
+**`is_owner_claimed` semantics (T-024, prerequisite for T-011's DEC-014 verification labels):**
+- `true` when at least one row exists in `salon_owners` for this salon; `false` otherwise. `salon_owners` has no status/lifecycle column — presence of any row is the claimed signal, matching the existing claim flow in `app/routers/owner.py` (which already treats "any row for this salon_id" as "already claimed", raising 409 on a second claim attempt).
+- Computed via a correlated SQL `EXISTS`, not a `LEFT JOIN + COUNT` — `salon_owners` has no unique constraint on `salon_id` alone (only a composite PK on `(user_id, salon_id)`), so a join could in principle duplicate a salon row; `EXISTS` always yields exactly one boolean per salon and cannot affect `total`/pagination.
+- No owner identity (`user_id`, name, email) is exposed through this or any public salon endpoint — the field is a boolean only.
+- **Not present in `GET /api/salons/map`** — that endpoint's compact, historically-fixed 10-field contract (Decision T-038) is intentionally not expanded by T-024.
+
 ---
 
 ### GET /api/salons/map
@@ -180,6 +186,7 @@ fields below may hold `null` — they are never absent:
   "rating_count": 128,
   "price_level": 2,
   "is_verified": true,
+  "is_owner_claimed": false,
   "is_open": true,
   "opens_at": null,
   "closes_at": "19:00",
@@ -202,6 +209,7 @@ fields below may hold `null` — they are never absent:
 **Notes:**
 - `services` and `reviews` are always returned as `[]` in this response — loaded separately via lazy endpoints
 - `is_open`, `closes_at`, `opens_at` computed at Athens timezone
+- `is_owner_claimed` (T-024, DEC-014 prerequisite) — same `EXISTS`-based semantics as `GET /api/salons`, see above
 
 **Errors:**
 - 404 — salon not found or `is_active = false`
