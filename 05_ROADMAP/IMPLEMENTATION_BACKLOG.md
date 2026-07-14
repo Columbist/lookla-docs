@@ -485,7 +485,7 @@ This requires a backend change: add LEFT JOIN check for `salon_owners` to the sa
 ### T-012 — Add Google review source label (DEC-013)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-03
 **Dependencies:** None
-**Status:** Implemented on `feat/T-012-google-review-source-label`, pending independent review, merge, and production verification (do not mark Completed before all three)
+**Status:** ✅ Completed (2026-07-14) — reviewed, merged to `main` (PR #33), production verified
 
 **Description:** Add a fixed header above the reviews section in `SalonDetailClient.tsx`.
 
@@ -966,6 +966,21 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 - [x] `API_INTERNAL_URL` override still respected
 - [x] Verified both request paths return 200: `https://lookla.gr/api/...` (nginx) and `http://127.0.0.1:3000/api/...` (direct container, was 500 before)
 - [x] `api`/`db`/`redis`/`crawler` containers not restarted during verification
+
+---
+
+### T-042 — Distinguish Reviews empty and API error states
+**Priority:** P2 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Description:** `SALON.md` documents two distinct states for the Reviews section — "No reviews available" (empty) and "Could not load reviews" with a retry link (API error) — but the current `useLazySection` hook in `SalonDetailClient.tsx` doesn't distinguish them: a failed fetch is caught and treated identically to a genuinely-empty result (`.catch(() => setLoading(false))`, leaving `data` as `[]`). In practice, the whole Reviews section (including its heading) renders nothing at all in either case — neither documented empty-state message actually appears. Found during T-012's implementation (its `googleReviewsSourceLabel` disclosure correctly stays hidden in both cases, since it only checks `reviewCount > 0`, but that's a side effect of the same missing error state, not a fix for it).
+
+**Acceptance Criteria:**
+- [ ] `useLazySection` (or a similar mechanism) tracks a distinct error state, not just loading/data
+- [ ] Zero reviews (genuine empty result) shows "No reviews available"
+- [ ] Failed reviews fetch shows "Could not load reviews" with a retry link
+- [ ] Same distinction applied to Services, which shares the identical `useLazySection` hook and has the same gap (`"Service information not available"` per `SALON.md`, also not currently implemented)
+- [ ] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states
 
 ---
 

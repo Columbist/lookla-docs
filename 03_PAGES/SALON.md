@@ -241,7 +241,7 @@ Source: Google Reviews  |  Imported: Yes  |  Original: No
 
 This header must be visible. It cannot be hidden, collapsed, or shown in a tooltip. It is the honest disclosure required by DEC-013.
 
-**Implementation status:** ✅ T-012 done (branch `feat/T-012-google-review-source-label`, pending independent review, merge, and production verification — do not mark Completed before all three). Exact required text per locale (`salon.googleReviewsSourceLabel`):
+**Implementation status:** ✅ T-012 done (merged 2026-07-14, verified in production). Exact required text per locale (`salon.googleReviewsSourceLabel`):
 
 | Locale | Text |
 |---|---|
