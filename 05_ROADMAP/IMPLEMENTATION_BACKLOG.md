@@ -628,19 +628,27 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 
 **Description:** Create `app/[locale]/privacy/page.tsx` with Privacy Policy content.
 
-**Minimum required content:**
-- What is collected: session data, contact events, registration email
-- Third parties: Google Analytics, Google OAuth, Cloudflare
-- User rights: email hello@lookla.gr for access/deletion
-- Cookie types: session (auth), analytics (GA4)
-- Retention: 14 months for GA4
+**Correction to the original spec below (found during the mandatory pre-write audit):** this task was originally written assuming GA4 already exists and should be named in the policy. It does not — GA4 is T-013/T-014/T-015, which come *after* this task in the actual sequencing. The shipped policy explicitly states GA4, reCAPTCHA/Turnstile, Sentry, and OpenAI content moderation are **not** currently active, rather than asserting a service that doesn't exist. The "14 months for GA4" retention line was speculative and has been dropped — no GA4 exists to have a retention period.
+
+**Pre-write audit (mandatory phase before any document text was written):** a full data-processing inventory was performed across the backend (every router, every SQLAlchemy model, raw-SQL-only tables with no ORM model), the frontend (storage, cookies, third-party scripts), and infrastructure (nginx, Docker, Cloudflare, backups, monitoring, CI), with every claim traced to a file:line or a live command-output check. Full findings: `docs/.reviews/T-017.diff` and the PR description. Headline discrepancies found and corrected rather than inherited into the policy:
+- `SECURITY.md`'s own Personal Data Inventory table listed "GA4 session data" as a present-tense collected data type — GA4 does not exist in any frontend code.
+- `SECURITY.md` claims "No location tracking (no GPS)" — false as written; the browser Geolocation API is used for the map's "near me" view. Coordinates are confirmed to never reach Lookla's backend or any third party (no `lat`/`lng` param on any salons query), so the policy states that narrower, accurate fact instead of either the false denial or an overstated claim.
+- `DATA_FLOW.md` and `DATABASE_SCHEMA.md` both label `Conversation`/`Message` as `[Future]`/`not user-facing` — **incorrect**. `/account/messages` is a live page calling `/api/chat/conversations` and `/api/chat/.../messages`; message bodies, and for availability requests, client name/phone (submittable by anonymous visitors, not only logged-in users) are real, live data collection today. This is the single most significant correction from this audit.
+- `SECURITY.md` claims 90-day nginx log retention; the live `logrotate.d/nginx` config is 14 days.
+- Database backups are local-only today (`rclone` not installed) despite roadmap docs describing an active Backblaze B2 offsite copy.
+- `OpenAI` content-moderation functions (`check_text`/`check_image`) exist in code but have zero call sites — not an active data flow.
+- The exact OpenAI translation payload was verified: only the raw review/service text string and a target-language name — no reviewer name, rating, salon ID, or user identifier.
+
+**Explicit non-goals for this task (per instruction), not built here:** Cookie Policy, cookie-consent banner, Terms of Service, GA4 Consent Mode, GA4 itself. Section 4 of the shipped policy (Cookies) discloses the four cookies that already exist today (`access_token`, `refresh_token`, `oauth_csrf`, `NEXT_LOCALE`) and explicitly defers the full Cookie Policy/consent banner to T-018/T-014.
+
+**Undefined business/legal points** are marked `TODO (requires business/legal decision)` in the shipped text rather than invented — no fabricated GDPR legal basis, retention period, DPO, or processor agreement. These need a business/legal decision before this page is fully launch-ready; the technical implementation is otherwise complete and accurate to the current system.
 
 **Acceptance Criteria:**
-- [ ] `/el/privacy`, `/en/privacy`, `/ru/privacy` return 200
-- [ ] Page is linked in footer of all layouts
-- [ ] Page mentions "Google Analytics" by name
-- [ ] Page mentions contact email `hello@lookla.gr` for data requests
-- [ ] Page does not use a marketing tone (factual, simple language)
+- [x] `/privacy` (el), `/en/privacy`, `/ru/privacy`, `/uk/privacy` return 200 (corrected from the original spec's 3-locale list — the site has 4 locales, `uk` included)
+- [ ] Page is linked in footer of all layouts — **not done**: no footer component exists anywhere in the codebase today (confirmed during this task); adding one is a separate, larger UI change out of scope for this ticket. Flagging as a follow-up, not silently building an unscoped footer here.
+- [x] Page explicitly states whether Google Analytics is in use (corrected from "mentions Google Analytics by name" — it does not exist yet, so the policy says so plainly instead)
+- [x] Page mentions contact email `hello@lookla.gr` for data requests
+- [x] Page does not use a marketing tone (factual, plain language, TODO markers where undecided)
 
 ---
 
