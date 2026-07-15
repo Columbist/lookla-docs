@@ -45,7 +45,6 @@ The following are documented from the Engineering Audit and prior product conver
 | Featured listings | Monetization + visibility for owners | Monetization decision approved | DEC-006: postponed |
 | Staff profiles | Discovery depth for salons with multiple stylists | Page design | Data exists in DB |
 | Portfolio for professionals | Visual discovery for independent professionals | Portfolio page design | Backend complete |
-| Sitemap.xml | SEO | SEO decision | Explicitly deferred |
 | City/Region filter rename | Fix misleading "City" filter label | Product decision on terminology | Documented in Terminology |
 | Mobile native app (iOS) | Native experience, push notifications | Full booking flow, design system | Future |
 | Mobile native app (Android) | Same as iOS | Same as iOS | Future |

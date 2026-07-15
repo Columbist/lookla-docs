@@ -420,7 +420,7 @@ Pages that are implied by the product or mentioned in roadmap but do not current
 | `/professionals/[slug]` | Professional detail page (API endpoint exists, page does not) |
 | `/account/bookings` | Client's booking history |
 | `/account/messages` | Exists as route but Chat UI completeness unverified |
-| `/sitemap.xml` | SEO (explicitly deferred) |
+| `/sitemap.xml` | SEO (explicitly deferred) — **correction (T-036, 2026-07-15): this was inaccurate even at audit time; `frontend/public/sitemap.xml` has existed since the initial commit and was live throughout, serving ~21,900 URLs. Not actually missing.** |
 | `/robots.txt` | SEO |
 | `/terms` | Legal |
 | `/privacy` | Legal |
@@ -447,7 +447,7 @@ Backend infrastructure exists but is not connected end-to-end:
 | Content moderation | moderation_queue table exists | Not built |
 | Photo moderation | Google Vision key configured, usage unclear | N/A |
 | Admin salon edit | Partial (is_verified flag) | No inline edit UI |
-| Sitemap.xml | Not implemented | Deferred |
+| Sitemap.xml | **Correction (T-036, 2026-07-15): was already implemented at audit time** — `frontend/public/sitemap.xml`, ~21,900 URLs, live since the initial commit | Not actually deferred |
 | Review verification | `is_verified` column in reviews | Not surfaced |
 | Duplicate salon detection | `needs_review` flag set by crawler | No merge UI |
 | Staff profiles | `staff` table populated by crawler | Not shown on salon detail page |

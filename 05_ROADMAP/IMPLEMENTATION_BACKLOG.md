@@ -1123,26 +1123,43 @@ def search_salons(..., response: Response):
 
 **File:** `frontend/public/robots.txt`
 
+**Pre-existing state (found during inventory, not created by this task):** `frontend/public/robots.txt` already existed (`Allow: /`, `Disallow: /api/`, `Disallow: /api/media/photo/`, Sitemap directive) but did not disallow `/admin`, `/dashboard`, or `/account`. T-036 edits this existing single source rather than creating a new one.
+
+Final content:
 ```
 User-agent: *
 Disallow: /admin
 Disallow: /dashboard
 Disallow: /account
 Disallow: /api/
+Disallow: /en/admin
+Disallow: /en/dashboard
+Disallow: /en/account
+Disallow: /ru/admin
+Disallow: /ru/dashboard
+Disallow: /ru/account
+Disallow: /uk/admin
+Disallow: /uk/dashboard
+Disallow: /uk/account
 Allow: /
-
 Sitemap: https://lookla.gr/sitemap.xml
 ```
 
-**Note:** `sitemap.xml` does not yet exist (post-MVP). The Sitemap directive is forward-compatible — it causes no error if the file is absent.
+`/api/media/photo/` was dropped as a separate line — it is a strict subpath of `/api/`, already covered, confirmed no semantic change.
+
+**Locale-routing finding (isolated production build, `node server.js` per the Dockerfile's exact runtime, `NODE_ENV=production`):** `localePrefix: 'as-needed'` with default locale `el` unprefixed means `/admin`, `/dashboard`, `/account` (bare, `el`) and `/en|ru|uk/admin|dashboard|account` are all distinct, directly-served (`200`) paths — all 12 combinations require explicit `Disallow` rules. `/el/admin` (and `/el/dashboard`, `/el/account`) reliably 307-redirect to the bare path, confirmed via `curl`, so no `/el/`-prefixed rules were added (redundant — a crawler following the redirect lands on an already-disallowed bare path).
+
+**Sitemap finding (factual correction — `sitemap.xml` was NOT absent):** `frontend/public/sitemap.xml` already exists, is tracked in git since the initial repository commit, and serves `200` with `Content-Type: application/xml`, ~21,900 real `<url>` entries (verified both by reading the file and by an isolated HTTP request). Prior notes here and in `FRONTEND_ARCHITECTURE.md` §14, `FUTURE_FEATURES.md`, and `AUDIT.md` describing it as "deferred"/"not implemented"/"post-MVP" were stale; corrected in this task as a factual correction (the sitemap's *content* is unchanged — T-036 does not generate, edit, or regenerate it).
+
+**Known open item, not resolved by this task:** `frontend/public/sitemap.xml` currently lists `/login` and `/register` as indexed URLs. `FRONTEND_ARCHITECTURE.md` §14 separately specifies a robots.txt that would `Disallow: /login`, `/register`, `/pricing` — a real contradiction with both the sitemap's current content and this task's own canonical spec (which does not disallow those paths). T-036 intentionally implements only the canonical spec above and does not touch the indexing status of `/login`/`/register`/`/pricing` — that is a separate SEO decision for a future ticket, not a technical inevitability to be decided silently here.
 
 **Acceptance Criteria:**
-- [ ] `https://lookla.gr/robots.txt` returns 200 with correct content
-- [ ] `Disallow: /admin` present
-- [ ] `Disallow: /api/` present
-- [ ] `User-agent: *` present as first rule
-- [ ] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
-- [ ] Remove `robots.txt` from T-029 acceptance criteria (T-029 is error boundary only)
+- [x] `https://lookla.gr/robots.txt` returns 200 with correct content
+- [x] `Disallow: /admin` present
+- [x] `Disallow: /api/` present
+- [x] `User-agent: *` present as first rule
+- [x] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
+- [x] Remove `robots.txt` from T-029 acceptance criteria (checked — T-029's current acceptance criteria contain no robots.txt reference; already clean, nothing to remove)
 
 ---
 

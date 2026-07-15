@@ -442,7 +442,7 @@ Allow: /
 Sitemap: https://lookla.gr/sitemap.xml
 ```
 
-**`sitemap.xml`** — explicitly deferred per audit. Not a MVP launch blocker. Add post-launch.
+**`sitemap.xml`** — **correction (T-036, 2026-07-15):** this file already exists (`frontend/public/sitemap.xml`, tracked in git since the initial commit) and is live, serving ~21,900 real URLs. The "explicitly deferred" note below was stale. Note the robots.txt content above (with `Disallow: /login`, `/register`, `/pricing`) has not been implemented as-is — see T-036 in `IMPLEMENTATION_BACKLOG.md` for the canonical content actually shipped and the open SEO question this discrepancy raises.
 
 **GA4 script placement** (DEC-017):
 ```typescript
