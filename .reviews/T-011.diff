@@ -1,0 +1,259 @@
+diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+index 72c6a2d..7e39ff8 100644
+--- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
++++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+@@ -7,6 +7,7 @@ import ReportButton from '@/components/ReportButton';
+ import SalonHours from '@/components/SalonHours';
+ import ContactButtons from '@/components/ContactButtons';
+ import { shouldShowReviewSourceLabel } from '@/lib/reviewsSection';
++import { getVerificationLabelKey } from '@/lib/verificationLabel';
+ 
+ const SOCIAL_ICONS: Record<string, string> = { instagram: '📷', facebook: '👥', facebook_messenger: '💬', viber: '📲', whatsapp: '💬', tiktok: '🎵', youtube: '▶️' };
+ const SOCIAL_LABELS: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', facebook_messenger: 'Messenger', viber: 'Viber', whatsapp: 'WhatsApp', tiktok: 'TikTok', youtube: 'YouTube' };
+@@ -132,7 +133,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+ 
+         {/* Title + meta */}
+         <div className="bg-white rounded-xl p-5 mb-4">
+-          <div className="flex items-start justify-between gap-3 mb-4">
++          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+             <div>
+               <h1 className="text-2xl font-bold text-gray-900 mb-1">{salon.name}</h1>
+               <p className="text-gray-500 text-base">
+@@ -147,7 +148,9 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+               )}
+             </div>
+             {salon.is_verified && (
+-              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">✓ {t('verified')}</span>
++              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">
++                {t(getVerificationLabelKey(salon.is_owner_claimed))}
++              </span>
+             )}
+           </div>
+ 
+diff --git a/frontend/components/SalonCard.tsx b/frontend/components/SalonCard.tsx
+index c5712e8..fbfe56e 100644
+--- a/frontend/components/SalonCard.tsx
++++ b/frontend/components/SalonCard.tsx
+@@ -1,5 +1,6 @@
+ import Link from 'next/link';
+ import type { SalonListItem } from '@/lib/api';
++import { getVerificationLabelKey } from '@/lib/verificationLabel';
+ 
+ const STARS = (r?: string) => {
+   const n = parseFloat(r || '0');
+@@ -44,6 +45,14 @@ const FROM_LABEL: Record<string, string> = {
+   el: 'από', en: 'from', ru: 'от', uk: 'від',
+ };
+ 
++// DEC-014 text labels — kept in sync with messages/*.json salon.infoReviewed / salon.ownerVerified.
++const VERIFICATION_LABEL: Record<string, Record<'infoReviewed' | 'ownerVerified', string>> = {
++  el: { infoReviewed: 'Πληροφορίες επαληθεύτηκαν', ownerVerified: 'Επαληθεύτηκε από τον ιδιοκτήτη' },
++  en: { infoReviewed: 'Information reviewed', ownerVerified: 'Owner verified' },
++  ru: { infoReviewed: 'Информация проверена', ownerVerified: 'Подтверждено владельцем' },
++  uk: { infoReviewed: 'Інформацію перевірено', ownerVerified: 'Підтверджено власником' },
++};
++
+ interface Props {
+   salon: SalonListItem;
+   locale: string;
+@@ -56,6 +65,10 @@ export default function SalonCard({ salon, locale, category }: Props) {
+   const [openLabel, closedLabel] = OPEN_LABEL[locale] ?? OPEN_LABEL.en;
+   const fromLabel = FROM_LABEL[locale] ?? 'από';
+   const genderIcon = category ? CATEGORY_GENDER[category] : undefined;
++  const verificationLabels = VERIFICATION_LABEL[locale] ?? VERIFICATION_LABEL.en;
++  const verificationLabel = salon.is_verified
++    ? verificationLabels[getVerificationLabelKey(salon.is_owner_claimed)]
++    : undefined;
+ 
+   return (
+     <Link href={href} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
+@@ -72,8 +85,8 @@ export default function SalonCard({ salon, locale, category }: Props) {
+         ) : (
+           <div className="flex items-center justify-center h-full text-5xl">💈</div>
+         )}
+-        {salon.is_verified && (
+-          <span className="absolute top-2 right-2 bg-white text-xs text-blue-600 px-2 py-0.5 rounded-full shadow-sm font-medium">✓</span>
++        {verificationLabel && (
++          <span className="absolute top-2 right-2 max-w-[85%] truncate bg-white text-xs text-blue-600 px-2 py-0.5 rounded-full shadow-sm font-medium">{verificationLabel}</span>
+         )}
+         {/* Open/Closed badge on photo */}
+         {salon.is_open_now !== undefined && salon.is_open_now !== null && (
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index 9ed2890..1d7578c 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -92,6 +92,7 @@ export interface SalonListItem {
+   rating_google?: string; rating_count: number; price_level?: number;
+   is_verified: boolean; primary_photo?: string;
+   min_price?: number; is_open_now?: boolean;
++  is_owner_claimed?: boolean;
+ }
+ export interface SalonHour { day_of_week: number; open_time?: string; close_time?: string; is_closed: boolean; }
+ export interface Photo { id: number; url: string; caption?: string; is_primary: boolean; width?: number; height?: number; }
+diff --git a/frontend/lib/verificationLabel.test.ts b/frontend/lib/verificationLabel.test.ts
+new file mode 100644
+index 0000000..f20e266
+--- /dev/null
++++ b/frontend/lib/verificationLabel.test.ts
+@@ -0,0 +1,74 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { getVerificationLabelKey } from './verificationLabel';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++
++describe('getVerificationLabelKey — T-011 (DEC-014)', () => {
++  test('returns "ownerVerified" when is_owner_claimed is true', () => {
++    assert.equal(getVerificationLabelKey(true), 'ownerVerified');
++  });
++
++  test('returns "infoReviewed" when is_owner_claimed is false', () => {
++    assert.equal(getVerificationLabelKey(false), 'infoReviewed');
++  });
++
++  test('returns "infoReviewed" when is_owner_claimed is undefined (field absent)', () => {
++    assert.equal(getVerificationLabelKey(undefined), 'infoReviewed');
++  });
++});
++
++describe('T-011: locale files define infoReviewed/ownerVerified, no leftover "verified" key', () => {
++  const locales = ['el', 'en', 'ru', 'uk'] as const;
++  for (const locale of locales) {
++    test(`${locale}.json salon.infoReviewed / salon.ownerVerified present and non-empty`, () => {
++      const messages = JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++      for (const key of ['infoReviewed', 'ownerVerified']) {
++        assert.ok(key in messages.salon, `${locale}.json salon.${key} missing`);
++        assert.ok(messages.salon[key].length > 0, `${locale}.json salon.${key} is empty`);
++      }
++    });
++
++    test(`${locale}.json salon.verified was removed (superseded by DEC-014 text labels)`, () => {
++      const messages = JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++      assert.ok(!('verified' in messages.salon), `${locale}.json salon.verified should have been removed`);
++    });
++  }
++});
++
++describe('T-011: DEC-014 — no bare checkmark icon on verification labels', () => {
++  test('SalonDetailClient.tsx does not render a ✓ icon next to the verification label', () => {
++    const source = fs.readFileSync(
++      path.join(frontendRoot, 'app', '[locale]', 'salons', '[slug]', 'SalonDetailClient.tsx'),
++      'utf-8',
++    );
++    assert.ok(!source.includes('✓'), 'SalonDetailClient.tsx must not contain a ✓ icon (DEC-014: text only)');
++  });
++
++  test('SalonCard.tsx does not render a ✓ icon next to the verification label', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'components', 'SalonCard.tsx'), 'utf-8');
++    assert.ok(!source.includes('✓'), 'SalonCard.tsx must not contain a ✓ icon (DEC-014: text only)');
++  });
++});
++
++describe('T-011 non-regression: T-010 CTA contract untouched by verification-label change', () => {
++  test('ContactButtons.tsx still has no Viber/booking/auth-check code', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'components', 'ContactButtons.tsx'), 'utf-8');
++    for (const banned of ['viber', 'Viber', "t('book')", "t('request')", 'useAuth', 'requireAuth', 'isLoggedIn']) {
++      assert.ok(!source.includes(banned), `ContactButtons.tsx must not contain "${banned}"`);
++    }
++  });
++});
++
++describe('T-011 non-regression: T-012 review-source label untouched by verification-label change', () => {
++  test('shouldShowReviewSourceLabel is unchanged (still section-level, not per-review)', async () => {
++    const { shouldShowReviewSourceLabel } = await import('./reviewsSection');
++    assert.equal(shouldShowReviewSourceLabel(true, 0), false, 'while loading, never show');
++    assert.equal(shouldShowReviewSourceLabel(false, 0), false, 'zero reviews, never show');
++    assert.equal(shouldShowReviewSourceLabel(false, 1), true, 'loaded with reviews, show');
++  });
++});
+diff --git a/frontend/lib/verificationLabel.ts b/frontend/lib/verificationLabel.ts
+new file mode 100644
+index 0000000..389b816
+--- /dev/null
++++ b/frontend/lib/verificationLabel.ts
+@@ -0,0 +1,12 @@
++/**
++ * T-011 (DEC-014): text-only verification label, sole source of truth is
++ * `is_owner_claimed`. The existing `is_verified` gate (already used to
++ * decide whether any badge renders at all) is left untouched by callers —
++ * this only picks which of the two approved strings to show once that gate
++ * has passed.
++ */
++export type VerificationLabelKey = 'ownerVerified' | 'infoReviewed';
++
++export function getVerificationLabelKey(isOwnerClaimed: boolean | undefined): VerificationLabelKey {
++  return isOwnerClaimed === true ? 'ownerVerified' : 'infoReviewed';
++}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 20fc333..cc33c30 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -64,7 +64,8 @@
+     "translated_from": "Μεταφράστηκε από τα {lang}",
+     "original": "Εμφάνιση πρωτοτύπου",
+     "show_original": "Εμφάνιση πρωτοτύπου",
+-    "verified": "Επαληθευμένο",
++    "infoReviewed": "Πληροφορίες επαληθεύτηκαν",
++    "ownerVerified": "Επαληθεύτηκε από τον ιδιοκτήτη",
+     "open_now": "Ανοιχτά τώρα",
+     "closed": "Κλειστά",
+     "not_found": "Το σαλόνι δεν βρέθηκε",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index f8a6ceb..c439629 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -64,7 +64,8 @@
+     "translated_from": "Translated from {lang}",
+     "original": "Show original",
+     "show_original": "Show original",
+-    "verified": "Verified",
++    "infoReviewed": "Information reviewed",
++    "ownerVerified": "Owner verified",
+     "open_now": "Open now",
+     "closed": "Closed",
+     "not_found": "Salon not found",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index a057e08..abc1abc 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -64,7 +64,8 @@
+     "translated_from": "Переведено с {lang}",
+     "original": "Показать оригинал",
+     "show_original": "Показать оригинал",
+-    "verified": "Подтверждено",
++    "infoReviewed": "Информация проверена",
++    "ownerVerified": "Подтверждено владельцем",
+     "open_now": "Открыто сейчас",
+     "closed": "Закрыто",
+     "not_found": "Салон не найден",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 2ac96a2..79db8f7 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -64,7 +64,8 @@
+     "translated_from": "Перекладено з {lang}",
+     "original": "Показати оригінал",
+     "show_original": "Показати оригінал",
+-    "verified": "Підтверджено",
++    "infoReviewed": "Інформацію перевірено",
++    "ownerVerified": "Підтверджено власником",
+     "open_now": "Відкрито зараз",
+     "closed": "Закрито",
+     "not_found": "Салон не знайдено",
+diff --git a/frontend/package.json b/frontend/package.json
+index 1e1a774..1f46ea1 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
