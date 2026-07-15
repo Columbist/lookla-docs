@@ -1,0 +1,274 @@
+diff --git a/docs/04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md b/docs/04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md
+index 7eb6dae..232a79e 100644
+--- a/docs/04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md
++++ b/docs/04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md
+@@ -442,7 +442,7 @@ Allow: /
+ Sitemap: https://lookla.gr/sitemap.xml
+ ```
+ 
+-**`sitemap.xml`** — explicitly deferred per audit. Not a MVP launch blocker. Add post-launch.
++**`sitemap.xml`** — **correction (T-036, 2026-07-15):** this file already exists (`frontend/public/sitemap.xml`, tracked in git since the initial commit) and is live, serving ~21,900 real URLs. The "explicitly deferred" note below was stale. Note the robots.txt content above (with `Disallow: /login`, `/register`, `/pricing`) has not been implemented as-is — see T-036 in `IMPLEMENTATION_BACKLOG.md` for the canonical content actually shipped and the open SEO question this discrepancy raises.
+ 
+ **GA4 script placement** (DEC-017):
+ ```typescript
+diff --git a/docs/05_ROADMAP/FUTURE_FEATURES.md b/docs/05_ROADMAP/FUTURE_FEATURES.md
+index e370940..3be22ce 100644
+--- a/docs/05_ROADMAP/FUTURE_FEATURES.md
++++ b/docs/05_ROADMAP/FUTURE_FEATURES.md
+@@ -45,7 +45,6 @@ The following are documented from the Engineering Audit and prior product conver
+ | Featured listings | Monetization + visibility for owners | Monetization decision approved | DEC-006: postponed |
+ | Staff profiles | Discovery depth for salons with multiple stylists | Page design | Data exists in DB |
+ | Portfolio for professionals | Visual discovery for independent professionals | Portfolio page design | Backend complete |
+-| Sitemap.xml | SEO | SEO decision | Explicitly deferred |
+ | City/Region filter rename | Fix misleading "City" filter label | Product decision on terminology | Documented in Terminology |
+ | Mobile native app (iOS) | Native experience, push notifications | Full booking flow, design system | Future |
+ | Mobile native app (Android) | Same as iOS | Same as iOS | Future |
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 5a47ba7..7aec12d 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1123,26 +1123,43 @@ def search_salons(..., response: Response):
+ 
+ **File:** `frontend/public/robots.txt`
+ 
++**Pre-existing state (found during inventory, not created by this task):** `frontend/public/robots.txt` already existed (`Allow: /`, `Disallow: /api/`, `Disallow: /api/media/photo/`, Sitemap directive) but did not disallow `/admin`, `/dashboard`, or `/account`. T-036 edits this existing single source rather than creating a new one.
++
++Final content:
+ ```
+ User-agent: *
+ Disallow: /admin
+ Disallow: /dashboard
+ Disallow: /account
+ Disallow: /api/
++Disallow: /en/admin
++Disallow: /en/dashboard
++Disallow: /en/account
++Disallow: /ru/admin
++Disallow: /ru/dashboard
++Disallow: /ru/account
++Disallow: /uk/admin
++Disallow: /uk/dashboard
++Disallow: /uk/account
+ Allow: /
+-
+ Sitemap: https://lookla.gr/sitemap.xml
+ ```
+ 
+-**Note:** `sitemap.xml` does not yet exist (post-MVP). The Sitemap directive is forward-compatible — it causes no error if the file is absent.
++`/api/media/photo/` was dropped as a separate line — it is a strict subpath of `/api/`, already covered, confirmed no semantic change.
++
++**Locale-routing finding (isolated production build, `node server.js` per the Dockerfile's exact runtime, `NODE_ENV=production`):** `localePrefix: 'as-needed'` with default locale `el` unprefixed means `/admin`, `/dashboard`, `/account` (bare, `el`) and `/en|ru|uk/admin|dashboard|account` are all distinct, directly-served (`200`) paths — all 12 combinations require explicit `Disallow` rules. `/el/admin` (and `/el/dashboard`, `/el/account`) reliably 307-redirect to the bare path, confirmed via `curl`, so no `/el/`-prefixed rules were added (redundant — a crawler following the redirect lands on an already-disallowed bare path).
++
++**Sitemap finding (factual correction — `sitemap.xml` was NOT absent):** `frontend/public/sitemap.xml` already exists, is tracked in git since the initial repository commit, and serves `200` with `Content-Type: application/xml`, ~21,900 real `<url>` entries (verified both by reading the file and by an isolated HTTP request). Prior notes here and in `FRONTEND_ARCHITECTURE.md` §14, `FUTURE_FEATURES.md`, and `AUDIT.md` describing it as "deferred"/"not implemented"/"post-MVP" were stale; corrected in this task as a factual correction (the sitemap's *content* is unchanged — T-036 does not generate, edit, or regenerate it).
++
++**Known open item, not resolved by this task:** `frontend/public/sitemap.xml` currently lists `/login` and `/register` as indexed URLs. `FRONTEND_ARCHITECTURE.md` §14 separately specifies a robots.txt that would `Disallow: /login`, `/register`, `/pricing` — a real contradiction with both the sitemap's current content and this task's own canonical spec (which does not disallow those paths). T-036 intentionally implements only the canonical spec above and does not touch the indexing status of `/login`/`/register`/`/pricing` — that is a separate SEO decision for a future ticket, not a technical inevitability to be decided silently here.
+ 
+ **Acceptance Criteria:**
+-- [ ] `https://lookla.gr/robots.txt` returns 200 with correct content
+-- [ ] `Disallow: /admin` present
+-- [ ] `Disallow: /api/` present
+-- [ ] `User-agent: *` present as first rule
+-- [ ] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
+-- [ ] Remove `robots.txt` from T-029 acceptance criteria (T-029 is error boundary only)
++- [x] `https://lookla.gr/robots.txt` returns 200 with correct content
++- [x] `Disallow: /admin` present
++- [x] `Disallow: /api/` present
++- [x] `User-agent: *` present as first rule
++- [x] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
++- [x] Remove `robots.txt` from T-029 acceptance criteria (checked — T-029's current acceptance criteria contain no robots.txt reference; already clean, nothing to remove)
+ 
+ ---
+ 
+diff --git a/docs/06_ENGINEERING/AUDIT.md b/docs/06_ENGINEERING/AUDIT.md
+index 5476072..06dfac1 100644
+--- a/docs/06_ENGINEERING/AUDIT.md
++++ b/docs/06_ENGINEERING/AUDIT.md
+@@ -420,7 +420,7 @@ Pages that are implied by the product or mentioned in roadmap but do not current
+ | `/professionals/[slug]` | Professional detail page (API endpoint exists, page does not) |
+ | `/account/bookings` | Client's booking history |
+ | `/account/messages` | Exists as route but Chat UI completeness unverified |
+-| `/sitemap.xml` | SEO (explicitly deferred) |
++| `/sitemap.xml` | SEO (explicitly deferred) — **correction (T-036, 2026-07-15): this was inaccurate even at audit time; `frontend/public/sitemap.xml` has existed since the initial commit and was live throughout, serving ~21,900 URLs. Not actually missing.** |
+ | `/robots.txt` | SEO |
+ | `/terms` | Legal |
+ | `/privacy` | Legal |
+@@ -447,7 +447,7 @@ Backend infrastructure exists but is not connected end-to-end:
+ | Content moderation | moderation_queue table exists | Not built |
+ | Photo moderation | Google Vision key configured, usage unclear | N/A |
+ | Admin salon edit | Partial (is_verified flag) | No inline edit UI |
+-| Sitemap.xml | Not implemented | Deferred |
++| Sitemap.xml | **Correction (T-036, 2026-07-15): was already implemented at audit time** — `frontend/public/sitemap.xml`, ~21,900 URLs, live since the initial commit | Not actually deferred |
+ | Review verification | `is_verified` column in reviews | Not surfaced |
+ | Duplicate salon detection | `needs_review` flag set by crawler | No merge UI |
+ | Staff profiles | `staff` table populated by crawler | Not shown on salon detail page |
+diff --git a/frontend/lib/robotsTxt.test.ts b/frontend/lib/robotsTxt.test.ts
+new file mode 100644
+index 0000000..40393d8
+--- /dev/null
++++ b/frontend/lib/robotsTxt.test.ts
+@@ -0,0 +1,128 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++const robotsPath = path.join(frontendRoot, 'public', 'robots.txt');
++
++interface Directive { name: string; value: string; }
++
++function parseDirectives(raw: string): Directive[] {
++  return raw
++    .split('\n')
++    .map(line => line.trim())
++    .filter(line => line.length > 0)
++    .map(line => {
++      const idx = line.indexOf(':');
++      const name = line.slice(0, idx).trim();
++      const value = line.slice(idx + 1).trim();
++      return { name, value };
++    });
++}
++
++describe('T-036: frontend/public/robots.txt exists and is well-formed', () => {
++  test('robots.txt exists', () => {
++    assert.ok(fs.existsSync(robotsPath), 'frontend/public/robots.txt must exist');
++  });
++
++  const raw = fs.existsSync(robotsPath) ? fs.readFileSync(robotsPath, 'utf-8') : '';
++  const directives = parseDirectives(raw);
++
++  test('first non-empty directive is "User-agent: *"', () => {
++    assert.equal(directives[0]?.name, 'User-agent');
++    assert.equal(directives[0]?.value, '*');
++  });
++
++  test('/admin is disallowed', () => {
++    assert.ok(directives.some(d => d.name === 'Disallow' && d.value === '/admin'));
++  });
++
++  test('/dashboard is disallowed', () => {
++    assert.ok(directives.some(d => d.name === 'Disallow' && d.value === '/dashboard'));
++  });
++
++  test('/account is disallowed', () => {
++    assert.ok(directives.some(d => d.name === 'Disallow' && d.value === '/account'));
++  });
++
++  test('/api/ is disallowed', () => {
++    assert.ok(directives.some(d => d.name === 'Disallow' && d.value === '/api/'));
++  });
++
++  test('/ is allowed', () => {
++    assert.ok(directives.some(d => d.name === 'Allow' && d.value === '/'));
++  });
++
++  test('/search is not disallowed', () => {
++    const disallows = directives.filter(d => d.name === 'Disallow').map(d => d.value);
++    assert.ok(!disallows.some(v => '/search'.startsWith(v) || v === '/search'));
++  });
++
++  test('/salons is not disallowed', () => {
++    const disallows = directives.filter(d => d.name === 'Disallow').map(d => d.value);
++    assert.ok(!disallows.some(v => '/salons'.startsWith(v) || v === '/salons'));
++  });
++
++  test('/_next/ is not disallowed', () => {
++    const disallows = directives.filter(d => d.name === 'Disallow').map(d => d.value);
++    assert.ok(!disallows.some(v => '/_next/'.startsWith(v)));
++  });
++
++  test('Sitemap URL is exactly https://lookla.gr/sitemap.xml', () => {
++    assert.ok(directives.some(d => d.name === 'Sitemap' && d.value === 'https://lookla.gr/sitemap.xml'));
++  });
++
++  test('file ends with a newline', () => {
++    assert.ok(raw.endsWith('\n'), 'robots.txt must end with a trailing newline');
++    assert.ok(!raw.endsWith('\n\n'), 'robots.txt must not have a trailing blank line');
++  });
++
++  test('no conflicting "Disallow: /" exists (would block the entire site)', () => {
++    assert.ok(!directives.some(d => d.name === 'Disallow' && d.value === '/'));
++  });
++
++  test('every Disallow value for a private area is a subpath of /admin, /dashboard, /account, or /api/', () => {
++    const disallows = directives.filter(d => d.name === 'Disallow').map(d => d.value);
++    const allowedPrefixes = ['/admin', '/dashboard', '/account', '/api/'];
++    for (const v of disallows) {
++      const matchesKnownPrefix = allowedPrefixes.some(p => v === p || v.endsWith(p));
++      assert.ok(matchesKnownPrefix, `unexpected Disallow rule not tied to a known private area: ${v}`);
++    }
++  });
++
++  test('locale-prefixed private routes (en/ru/uk) are explicitly disallowed — confirmed reachable via isolated routing check', () => {
++    for (const locale of ['en', 'ru', 'uk']) {
++      for (const area of ['admin', 'dashboard', 'account']) {
++        assert.ok(
++          directives.some(d => d.name === 'Disallow' && d.value === `/${locale}/${area}`),
++          `missing Disallow: /${locale}/${area}`,
++        );
++      }
++    }
++  });
++
++  test('no /el/ locale-prefixed rules — default locale (el) is unprefixed and /el/* redirects to bare paths', () => {
++    assert.ok(!directives.some(d => d.name === 'Disallow' && d.value.startsWith('/el/')));
++  });
++
++  test('exactly one User-agent block (no duplicate robots implementation)', () => {
++    const userAgentCount = directives.filter(d => d.name === 'User-agent').length;
++    assert.equal(userAgentCount, 1);
++  });
++});
++
++describe('T-036: no duplicate robots implementation exists', () => {
++  test('no app/robots.ts dynamic route (would conflict with the static public/robots.txt)', () => {
++    const candidates = [
++      path.join(frontendRoot, 'app', 'robots.ts'),
++      path.join(frontendRoot, 'app', 'robots.tsx'),
++      path.join(frontendRoot, 'app', '[locale]', 'robots.ts'),
++    ];
++    for (const c of candidates) {
++      assert.ok(!fs.existsSync(c), `unexpected dynamic robots route found at ${c}`);
++    }
++  });
++});
+diff --git a/frontend/package.json b/frontend/package.json
+index 1f46ea1..027017e 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
+diff --git a/frontend/public/robots.txt b/frontend/public/robots.txt
+index 248b321..e7b8ae0 100644
+--- a/frontend/public/robots.txt
++++ b/frontend/public/robots.txt
+@@ -1,6 +1,16 @@
+ User-agent: *
+-Allow: /
++Disallow: /admin
++Disallow: /dashboard
++Disallow: /account
+ Disallow: /api/
+-Disallow: /api/media/photo/
+-
++Disallow: /en/admin
++Disallow: /en/dashboard
++Disallow: /en/account
++Disallow: /ru/admin
++Disallow: /ru/dashboard
++Disallow: /ru/account
++Disallow: /uk/admin
++Disallow: /uk/dashboard
++Disallow: /uk/account
++Allow: /
+ Sitemap: https://lookla.gr/sitemap.xml
