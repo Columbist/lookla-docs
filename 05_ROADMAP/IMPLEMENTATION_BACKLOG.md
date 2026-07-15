@@ -440,7 +440,8 @@ actually touches the control. Re-verified in production.
 
 ### T-011 — Replace ✓ badge with text label (DEC-014)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-03
-**Dependencies:** T-024 (backend `is_owner_claimed` field — done, `feat/T-024-owner-claimed-api`, pending merge). ARCHITECTURE_REVIEW CONTRADICTION-01 resolved alongside T-024.
+**Dependencies:** T-024 (backend `is_owner_claimed` field — done, merged). ARCHITECTURE_REVIEW CONTRADICTION-01 resolved alongside T-024.
+**Status:** ✅ Completed (2026-07-15) — reviewed, merged to `main` (PR #35), production deployed and verified
 
 **Description:** Replace the ✓ icon with text label. Two labels depending on source:
 - `is_verified = true` AND `is_owner_claimed = true` → "Owner verified" text
@@ -471,12 +472,18 @@ actually touches the control. Re-verified in production.
 - `t('ownerVerified')`: en="Owner verified" / el="Επαληθεύτηκε από τον ιδιοκτήτη" / ru="Подтверждено владельцем"
 
 **Acceptance Criteria:**
-- [ ] No ✓ checkmark icon visible on any verified salon
-- [ ] Text "Information reviewed" appears on admin-verified salons (no salon_owners row)
-- [ ] Text "Owner verified" appears on claimed salons (salon_owners row exists)
-- [ ] Unverified salons show no badge/label
-- [ ] Label appears on both `SalonCard` (search results) and `SalonDetailClient`
-- [ ] `GET /api/salons` response includes `is_owner_claimed` boolean field
+- [x] No ✓ checkmark icon visible on any verified salon
+- [x] Text "Information reviewed" appears on admin-verified salons (no salon_owners row)
+- [x] Text "Owner verified" appears on claimed salons (salon_owners row exists)
+- [x] Unverified salons show no badge/label
+- [x] Label appears on both `SalonCard` (search results) and `SalonDetailClient`
+- [x] `GET /api/salons` response includes `is_owner_claimed` boolean field (done in T-024)
+
+**Implementation notes:**
+- Single pure helper `lib/verificationLabel.ts` used by both `SalonCard` and `SalonDetailClient` so the two call sites can never disagree on label choice. `is_owner_claimed` is the sole input; `is_verified` continues to gate whether any label renders at all (unchanged from prior behavior).
+- Production has 0 verified salons and 0 owner claims as of this writing, so both positive label states were verified via a local mock API proxy exercising the real SSR pipeline (same technique as T-010), not against live data. The default "no label" state — what's actually live today — was verified directly against production.
+- Found and fixed a real mobile viewport-overflow regression during manual verification: the new text labels are longer than the old "✓ Verified", causing horizontal overflow at 390px on the salon detail page. Fixed with `flex-wrap` on the header row; `SalonCard`'s badge got defensive `max-w-[85%] truncate` for the same reason.
+- `salon.verified` i18n key removed from all 4 locale files (superseded by `infoReviewed`/`ownerVerified`); unrelated `account.verified`/`dashboard.verified` keys left untouched.
 
 ---
 
@@ -1217,9 +1224,9 @@ T-001 → T-002 → T-003 → T-004 → T-005  [database + area filter BE]
 T-013 → T-019             [GA4 property + settings]
 T-017 → T-018 → T-014 → T-015  [legal → GA4 deploy → events]
 T-016                     [Search Console]
-T-009 → T-010             [booking stubs removed → contact CTAs]
-T-024 → T-011             [API owner_claimed field → badge fix]
-T-012                     [review labels — independent]
+T-009 ✅ → T-010 ✅        [booking stubs removed → contact CTAs]
+T-024 ✅ → T-011 ✅        [API owner_claimed field → badge fix]
+T-012 ✅                  [review labels — independent]
 T-026                     [backup cron — independent]
 T-030                     [critical tests — before changing those functions]
 ```
