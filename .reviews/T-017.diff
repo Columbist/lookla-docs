@@ -1,0 +1,713 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index aa7fb26..67fb27a 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -628,19 +628,27 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
+ 
+ **Description:** Create `app/[locale]/privacy/page.tsx` with Privacy Policy content.
+ 
+-**Minimum required content:**
+-- What is collected: session data, contact events, registration email
+-- Third parties: Google Analytics, Google OAuth, Cloudflare
+-- User rights: email hello@lookla.gr for access/deletion
+-- Cookie types: session (auth), analytics (GA4)
+-- Retention: 14 months for GA4
++**Correction to the original spec below (found during the mandatory pre-write audit):** this task was originally written assuming GA4 already exists and should be named in the policy. It does not — GA4 is T-013/T-014/T-015, which come *after* this task in the actual sequencing. The shipped policy explicitly states GA4, reCAPTCHA/Turnstile, Sentry, and OpenAI content moderation are **not** currently active, rather than asserting a service that doesn't exist. The "14 months for GA4" retention line was speculative and has been dropped — no GA4 exists to have a retention period.
++
++**Pre-write audit (mandatory phase before any document text was written):** a full data-processing inventory was performed across the backend (every router, every SQLAlchemy model, raw-SQL-only tables with no ORM model), the frontend (storage, cookies, third-party scripts), and infrastructure (nginx, Docker, Cloudflare, backups, monitoring, CI), with every claim traced to a file:line or a live command-output check. Full findings: `docs/.reviews/T-017.diff` and the PR description. Headline discrepancies found and corrected rather than inherited into the policy:
++- `SECURITY.md`'s own Personal Data Inventory table listed "GA4 session data" as a present-tense collected data type — GA4 does not exist in any frontend code.
++- `SECURITY.md` claims "No location tracking (no GPS)" — false as written; the browser Geolocation API is used for the map's "near me" view. Coordinates are confirmed to never reach Lookla's backend or any third party (no `lat`/`lng` param on any salons query), so the policy states that narrower, accurate fact instead of either the false denial or an overstated claim.
++- `DATA_FLOW.md` and `DATABASE_SCHEMA.md` both label `Conversation`/`Message` as `[Future]`/`not user-facing` — **incorrect**. `/account/messages` is a live page calling `/api/chat/conversations` and `/api/chat/.../messages`; message bodies, and for availability requests, client name/phone (submittable by anonymous visitors, not only logged-in users) are real, live data collection today. This is the single most significant correction from this audit.
++- `SECURITY.md` claims 90-day nginx log retention; the live `logrotate.d/nginx` config is 14 days.
++- Database backups are local-only today (`rclone` not installed) despite roadmap docs describing an active Backblaze B2 offsite copy.
++- `OpenAI` content-moderation functions (`check_text`/`check_image`) exist in code but have zero call sites — not an active data flow.
++- The exact OpenAI translation payload was verified: only the raw review/service text string and a target-language name — no reviewer name, rating, salon ID, or user identifier.
++
++**Explicit non-goals for this task (per instruction), not built here:** Cookie Policy, cookie-consent banner, Terms of Service, GA4 Consent Mode, GA4 itself. Section 4 of the shipped policy (Cookies) discloses the four cookies that already exist today (`access_token`, `refresh_token`, `oauth_csrf`, `NEXT_LOCALE`) and explicitly defers the full Cookie Policy/consent banner to T-018/T-014.
++
++**Undefined business/legal points** are marked `TODO (requires business/legal decision)` in the shipped text rather than invented — no fabricated GDPR legal basis, retention period, DPO, or processor agreement. These need a business/legal decision before this page is fully launch-ready; the technical implementation is otherwise complete and accurate to the current system.
+ 
+ **Acceptance Criteria:**
+-- [ ] `/el/privacy`, `/en/privacy`, `/ru/privacy` return 200
+-- [ ] Page is linked in footer of all layouts
+-- [ ] Page mentions "Google Analytics" by name
+-- [ ] Page mentions contact email `hello@lookla.gr` for data requests
+-- [ ] Page does not use a marketing tone (factual, simple language)
++- [x] `/privacy` (el), `/en/privacy`, `/ru/privacy`, `/uk/privacy` return 200 (corrected from the original spec's 3-locale list — the site has 4 locales, `uk` included)
++- [ ] Page is linked in footer of all layouts — **not done**: no footer component exists anywhere in the codebase today (confirmed during this task); adding one is a separate, larger UI change out of scope for this ticket. Flagging as a follow-up, not silently building an unscoped footer here.
++- [x] Page explicitly states whether Google Analytics is in use (corrected from "mentions Google Analytics by name" — it does not exist yet, so the policy says so plainly instead)
++- [x] Page mentions contact email `hello@lookla.gr` for data requests
++- [x] Page does not use a marketing tone (factual, plain language, TODO markers where undecided)
+ 
+ ---
+ 
+diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
+new file mode 100644
+index 0000000..9ec4776
+--- /dev/null
++++ b/frontend/app/[locale]/privacy/content.ts
+@@ -0,0 +1,463 @@
++export interface PrivacySection {
++  heading: string;
++  paragraphs: string[];
++}
++
++export interface PrivacyContent {
++  title: string;
++  lastUpdated: string;
++  intro: string[];
++  sections: PrivacySection[];
++}
++
++const TODO = 'TODO (requires business/legal decision)';
++
++export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent> = {
++  en: {
++    title: 'Privacy Policy',
++    lastUpdated: '2026-07-15',
++    intro: [
++      `This page describes what personal data Lookla ("we", "us") actually collects, stores, and shares today, based on a direct review of the running application — not a generic template. Where a business or legal decision has not yet been made, this is marked as "${TODO}" rather than assumed.`,
++      `Lookla is a marketplace for beauty salons and independent professionals in Greece. Operating entity, registered address, and Data Protection Officer (if applicable): ${TODO}.`,
++    ],
++    sections: [
++      {
++        heading: '1. Personal data we collect',
++        paragraphs: [
++          'Account registration: email address, password (stored as a bcrypt hash, never in plain text), name, and optionally a phone number, Viber number, and WhatsApp number.',
++          'Sign in with Google: if you use Google to sign in, we receive and store your email address, name, and your Google account ID. We do not request or store a profile picture from Google.',
++          'Salon-owner claim: if you claim ownership of a salon listing, we send a one-time verification code to the salon\'s own listed email address, and record the link between your account and that salon.',
++          'In-app messaging: if you message a salon or professional (or they message you) through the "/account/messages" feature, we store the message text, who sent it, when, and its read status. There is currently no working file/photo upload for attachments — the message can reference an attachment URL, but no upload mechanism exists in the app today, so this field is not populated by ordinary use.',
++          'Availability requests and appointments: if you ask a salon for an available time slot, we store your name, phone number, and any notes you provide. This can happen even if you are not logged in — the form does not require an account. If the salon proposes a time and you confirm it, we create an appointment record containing the same name and phone number. We do not currently send you an email or other confirmation of a booked appointment — the data is stored, but no notification is triggered.',
++          'Reports: if you report a listing (e.g. as closed, duplicate, or incorrect), we store the reason, your optional description, and the IP address the request came from (used to prevent the same report being submitted repeatedly). We do not currently have an automatic deletion schedule for this data — retention period: ' + TODO + '.',
++          'Password reset and email verification: we generate a single-use token, email it to you as a link, and store the token (or its hash) with an expiry time so it can only be used once.',
++        ],
++      },
++      {
++        heading: '2. Data about salons, professionals, and reviews',
++        paragraphs: [
++          'Most of the salon and professional listings on Lookla — names, addresses, phone numbers, opening hours, services, photos, and reviews — are gathered automatically from public sources (Google Places, Treatwell, Fresha, and similar platforms), not submitted by the businesses themselves through Lookla.',
++          'Where a listing shows customer reviews, the reviewer\'s displayed name and review text come from the original platform (typically Google) and are shown on Lookla as-is, along with a label disclosing the source. We do not collect any other data about reviewers (no profile photo, no reviewer ID, no link to a Lookla account) — reviewers are not Lookla users.',
++          'When you view a salon page in a language other than Greek, review text and service names may be translated on demand — see Section 5 for what is sent to our translation provider.',
++        ],
++      },
++      {
++        heading: '3. Location data',
++        paragraphs: [
++          'The interactive map may ask your browser for your device location, so it can center the map near you and highlight nearby salons. This happens entirely in your browser: your coordinates are used locally to sort and display already-public salon locations, and are never sent to Lookla\'s servers or to any third party. If you decline the browser\'s location permission prompt, the map simply shows all salons without centering on you.',
++        ],
++      },
++      {
++        heading: '4. Cookies',
++        paragraphs: [
++          'We use four cookies today, all functional (not advertising or analytics cookies):',
++          '• access_token and refresh_token — set when you sign in, used to keep you logged in. Both are HttpOnly (not readable by page scripts), Secure, and SameSite=Lax.',
++          '• oauth_csrf — set only during the "Sign in with Google" flow, for a few minutes, to protect against cross-site request forgery. Same security flags as above.',
++          '• NEXT_LOCALE — remembers which of the four site languages (Greek, English, Russian, Ukrainian) you\'re viewing. Contains only a language code, no personal data.',
++          'We do not currently use any advertising, tracking, or analytics cookies — see Section 6 for services we do not yet use. A dedicated Cookie Policy and a cookie-consent banner are planned as separate, upcoming work and are not yet part of the site.',
++        ],
++      },
++      {
++        heading: '5. Third parties we share data with',
++        paragraphs: [
++          'Google (Sign-In) — if you choose to sign in with Google, Google processes your authentication and returns your email, name, and account ID to us, as described in Section 1.',
++          'OpenAI — when you view reviews or service names in a language other than Greek or English, the original text (review body or service name only) is sent to OpenAI\'s translation API to produce the translation. No reviewer name, rating, salon ID, or any Lookla user identifier is included in that request — only the plain text being translated and the target language.',
++          'Resend — transactional emails (registration verification, password reset, salon-claim verification codes) are sent through Resend, a third-party email delivery service. Resend receives the recipient\'s email address and the email content.',
++          'Cloudflare — sits in front of our servers for content delivery and security (all site traffic passes through Cloudflare\'s network on the way to our server), and also hosts salon photos we\'ve gathered from public sources (not user-uploaded photos) via Cloudflare R2 storage.',
++          'OpenStreetMap and CARTO — the interactive map loads map tiles directly from these providers in your browser. As with any map service, this means your IP address and the map area you\'re viewing are visible to these providers when the map loads. We do not use Google Maps.',
++        ],
++      },
++      {
++        heading: '6. Services we do not currently use',
++        paragraphs: [
++          'To avoid any ambiguity: as of the date at the top of this page, we do not use Google Analytics (GA4) or any other analytics or audience-tracking service. We do not use reCAPTCHA. Error-tracking software (Sentry) exists in our codebase but is not switched on. Automated content-moderation checks exist in our codebase but are not connected to any part of the site. If any of this changes, this page will be updated to reflect it before it goes live.',
++        ],
++      },
++      {
++        heading: '7. International data transfers',
++        paragraphs: [
++          `Some of the third parties listed in Section 5 (Google, OpenAI, Resend, Cloudflare) are based outside Greece and the EU, principally in the United States. The specific legal mechanism relied on for these transfers is: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '8. How long we keep your data',
++        paragraphs: [
++          'Web server access logs (IP address, browser identifier, page requested) are kept for 14 days and then automatically deleted.',
++          'Database backups are currently kept for 7 days, stored on the same server (an offsite copy is planned but not active today).',
++          `For account data, messages, appointments, and reports, we do not currently have defined retention periods or automatic deletion schedules beyond what is stated above. Specific retention periods: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '9. Security',
++        paragraphs: [
++          'Passwords are stored as bcrypt hashes, never in plain text. Sign-in cookies are HttpOnly, Secure, and SameSite=Lax. All traffic to the site is encrypted (HTTPS). Our database is not directly reachable from the internet.',
++          `We do not currently hold a formal security certification or a published penetration-test report. ${TODO}.`,
++        ],
++      },
++      {
++        heading: '10. Your rights',
++        paragraphs: [
++          `We do not currently have a self-service tool to view, export, or delete your account data. To ask about, correct, or request deletion of your personal data, contact us at hello@lookla.gr. Response timelines and a formal identity-verification process for such requests: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '11. Children',
++        paragraphs: [
++          `We do not currently have an age-verification step for account registration. Our policy on the minimum age to use Lookla: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '12. Automated decision-making',
++        paragraphs: [
++          'We do not use your personal data for automated profiling, personalized advertising, or any automated decision that produces a legal or similarly significant effect on you.',
++        ],
++      },
++      {
++        heading: '13. Changes to this policy',
++        paragraphs: [
++          'Because this page is meant to reflect what the application actually does, it will be updated whenever we add or remove a data-processing feature described above — not on a fixed schedule.',
++        ],
++      },
++      {
++        heading: '14. Contact',
++        paragraphs: ['Questions about this policy or your data: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  el: {
++    title: 'Πολιτική Απορρήτου',
++    lastUpdated: '2026-07-15',
++    intro: [
++      `Αυτή η σελίδα περιγράφει ποια προσωπικά δεδομένα συλλέγει, αποθηκεύει και μοιράζεται σήμερα το Lookla («εμείς»), με βάση απευθείας έλεγχο της εφαρμογής που λειτουργεί — όχι ένα γενικό πρότυπο. Όπου δεν έχει ληφθεί ακόμη επιχειρηματική ή νομική απόφαση, αυτό σημειώνεται ως «${TODO}» αντί να θεωρείται δεδομένο.`,
++      `Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα. Νομική οντότητα λειτουργίας, καταχωρημένη διεύθυνση και Υπεύθυνος Προστασίας Δεδομένων (εφόσον απαιτείται): ${TODO}.`,
++    ],
++    sections: [
++      {
++        heading: '1. Προσωπικά δεδομένα που συλλέγουμε',
++        paragraphs: [
++          'Εγγραφή λογαριασμού: διεύθυνση email, κωδικός πρόσβασης (αποθηκεύεται ως bcrypt hash, ποτέ σε απλό κείμενο), όνομα, και προαιρετικά αριθμός τηλεφώνου, αριθμός Viber και αριθμός WhatsApp.',
++          'Σύνδεση με Google: αν συνδεθείτε μέσω Google, λαμβάνουμε και αποθηκεύουμε το email σας, το όνομά σας και το αναγνωριστικό λογαριασμού Google σας. Δεν ζητάμε ούτε αποθηκεύουμε φωτογραφία προφίλ από το Google.',
++          'Διεκδίκηση ιδιοκτησίας σαλονιού: αν διεκδικήσετε την ιδιοκτησία μιας καταχώρησης σαλονιού, στέλνουμε έναν μοναδικό κωδικό επαλήθευσης στο email που έχει καταχωρηθεί για το ίδιο το σαλόνι, και καταγράφουμε τη σύνδεση μεταξύ του λογαριασμού σας και του σαλονιού.',
++          'Εσωτερική ανταλλαγή μηνυμάτων: αν στείλετε μήνυμα σε σαλόνι ή επαγγελματία (ή εκείνοι σε εσάς) μέσω της λειτουργίας «/account/messages», αποθηκεύουμε το κείμενο του μηνύματος, τον αποστολέα, την ημερομηνία και την κατάσταση ανάγνωσης. Δεν υπάρχει προς το παρόν λειτουργικό ανέβασμα αρχείου/φωτογραφίας για συνημμένα — το μήνυμα μπορεί να αναφέρει έναν σύνδεσμο συνημμένου, αλλά δεν υπάρχει σήμερα μηχανισμός ανεβάσματος στην εφαρμογή.',
++          'Αιτήματα διαθεσιμότητας και ραντεβού: αν ζητήσετε από ένα σαλόνι διαθέσιμη ώρα, αποθηκεύουμε το όνομα, τον αριθμό τηλεφώνου σας και τυχόν σημειώσεις. Αυτό μπορεί να συμβεί ακόμα κι αν δεν έχετε συνδεθεί — η φόρμα δεν απαιτεί λογαριασμό. Αν το σαλόνι προτείνει ώρα και την επιβεβαιώσετε, δημιουργούμε εγγραφή ραντεβού με το ίδιο όνομα και τηλέφωνο. Προς το παρόν δεν σας στέλνουμε email ή άλλη επιβεβαίωση για το ραντεβού — τα δεδομένα αποθηκεύονται, αλλά δεν ενεργοποιείται καμία ειδοποίηση.',
++          `Αναφορές: αν αναφέρετε μια καταχώρηση (π.χ. ως κλειστή, διπλή ή λανθασμένη), αποθηκεύουμε τον λόγο, την προαιρετική περιγραφή σας και τη διεύθυνση IP από την οποία στάλθηκε το αίτημα (χρησιμοποιείται για την αποτροπή επανειλημμένης υποβολής της ίδιας αναφοράς). Δεν έχουμε προς το παρόν αυτόματο πρόγραμμα διαγραφής για αυτά τα δεδομένα — περίοδος διατήρησης: ${TODO}.`,
++          'Επαναφορά κωδικού και επαλήθευση email: δημιουργούμε ένα μοναδικό διακριτικό μίας χρήσης, το στέλνουμε ως σύνδεσμο μέσω email, και το αποθηκεύουμε (ή το hash του) με χρόνο λήξης, ώστε να μπορεί να χρησιμοποιηθεί μόνο μία φορά.',
++        ],
++      },
++      {
++        heading: '2. Δεδομένα για σαλόνια, επαγγελματίες και αξιολογήσεις',
++        paragraphs: [
++          'Οι περισσότερες καταχωρήσεις σαλονιών και επαγγελματιών στο Lookla — ονόματα, διευθύνσεις, τηλέφωνα, ωράρια, υπηρεσίες, φωτογραφίες και αξιολογήσεις — συλλέγονται αυτόματα από δημόσιες πηγές (Google Places, Treatwell, Fresha και παρόμοιες πλατφόρμες), όχι από τις ίδιες τις επιχειρήσεις μέσω του Lookla.',
++          'Όπου μια καταχώρηση εμφανίζει αξιολογήσεις πελατών, το εμφανιζόμενο όνομα και το κείμενο της αξιολόγησης προέρχονται από την αρχική πλατφόρμα (συνήθως Google) και εμφανίζονται στο Lookla όπως έχουν, μαζί με ετικέτα που δηλώνει την πηγή. Δεν συλλέγουμε άλλα δεδομένα για όσους έγραψαν αξιολογήσεις (καμία φωτογραφία προφίλ, κανένα αναγνωριστικό, καμία σύνδεση με λογαριασμό Lookla) — δεν είναι χρήστες του Lookla.',
++          'Όταν προβάλλετε μια σελίδα σαλονιού σε γλώσσα διαφορετική από τα ελληνικά, το κείμενο αξιολογήσεων και τα ονόματα υπηρεσιών ενδέχεται να μεταφράζονται κατ\' απαίτηση — δείτε την Ενότητα 5 για το τι αποστέλλεται στον πάροχο μετάφρασης.',
++        ],
++      },
++      {
++        heading: '3. Δεδομένα τοποθεσίας',
++        paragraphs: [
++          'Ο διαδραστικός χάρτης μπορεί να ζητήσει από το πρόγραμμα περιήγησής σας την τοποθεσία της συσκευής σας, ώστε να κεντράρει τον χάρτη κοντά σας και να αναδείξει κοντινά σαλόνια. Αυτό γίνεται εξ ολοκλήρου στο πρόγραμμα περιήγησής σας: οι συντεταγμένες σας χρησιμοποιούνται τοπικά για την ταξινόμηση και εμφάνιση ήδη δημόσιων τοποθεσιών σαλονιών, και δεν αποστέλλονται ποτέ στους διακομιστές του Lookla ή σε τρίτους. Αν αρνηθείτε το αίτημα άδειας τοποθεσίας του προγράμματος περιήγησης, ο χάρτης απλώς εμφανίζει όλα τα σαλόνια χωρίς να κεντράρει σε εσάς.',
++        ],
++      },
++      {
++        heading: '4. Cookies',
++        paragraphs: [
++          'Χρησιμοποιούμε σήμερα τέσσερα cookies, όλα λειτουργικά (όχι διαφημιστικά ή αναλυτικά):',
++          '• access_token και refresh_token — ορίζονται όταν συνδέεστε, χρησιμοποιούνται για να παραμείνετε συνδεδεμένοι. Και τα δύο είναι HttpOnly (μη αναγνώσιμα από scripts της σελίδας), Secure και SameSite=Lax.',
++          '• oauth_csrf — ορίζεται μόνο κατά τη διαδικασία «Σύνδεση με Google», για λίγα λεπτά, για προστασία από επιθέσεις CSRF. Ίδιες σημαίες ασφαλείας όπως παραπάνω.',
++          '• NEXT_LOCALE — θυμάται ποια από τις τέσσερις γλώσσες της ιστοσελίδας (ελληνικά, αγγλικά, ρωσικά, ουκρανικά) προβάλλετε. Περιέχει μόνο κωδικό γλώσσας, όχι προσωπικά δεδομένα.',
++          'Δεν χρησιμοποιούμε προς το παρόν κανένα διαφημιστικό, ανιχνευτικό ή αναλυτικό cookie — δείτε την Ενότητα 6 για υπηρεσίες που δεν χρησιμοποιούμε ακόμη. Μια ειδική Πολιτική Cookies και ένα banner συναίνεσης cookies σχεδιάζονται ως ξεχωριστή, μελλοντική εργασία και δεν αποτελούν ακόμη μέρος της ιστοσελίδας.',
++        ],
++      },
++      {
++        heading: '5. Τρίτοι με τους οποίους μοιραζόμαστε δεδομένα',
++        paragraphs: [
++          'Google (Sign-In) — αν επιλέξετε να συνδεθείτε με Google, η Google επεξεργάζεται την ταυτοποίησή σας και μας επιστρέφει το email, το όνομα και το αναγνωριστικό λογαριασμού σας, όπως περιγράφεται στην Ενότητα 1.',
++          'OpenAI — όταν προβάλλετε αξιολογήσεις ή ονόματα υπηρεσιών σε γλώσσα διαφορετική από τα ελληνικά ή τα αγγλικά, το πρωτότυπο κείμενο (μόνο το σώμα της αξιολόγησης ή το όνομα της υπηρεσίας) αποστέλλεται στο API μετάφρασης της OpenAI. Δεν περιλαμβάνεται στο αίτημα κανένα όνομα κριτή, βαθμολογία, αναγνωριστικό σαλονιού ή οποιοδήποτε αναγνωριστικό χρήστη του Lookla — μόνο το απλό κείμενο προς μετάφραση και η γλώσσα-στόχος.',
++          'Resend — τα συναλλακτικά email (επαλήθευση εγγραφής, επαναφορά κωδικού, κωδικοί επαλήθευσης διεκδίκησης σαλονιού) αποστέλλονται μέσω της Resend, μιας υπηρεσίας παράδοσης email τρίτου μέρους. Η Resend λαμβάνει τη διεύθυνση email του παραλήπτη και το περιεχόμενο του email.',
++          'Cloudflare — βρίσκεται μπροστά από τους διακομιστές μας για παράδοση περιεχομένου και ασφάλεια (όλη η κίνηση της ιστοσελίδας διέρχεται από το δίκτυο της Cloudflare καθ\' οδόν προς τον διακομιστή μας), και φιλοξενεί επίσης φωτογραφίες σαλονιών που έχουμε συλλέξει από δημόσιες πηγές (όχι φωτογραφίες που ανέβασαν χρήστες) μέσω αποθήκευσης Cloudflare R2.',
++          'OpenStreetMap και CARTO — ο διαδραστικός χάρτης φορτώνει πλακίδια χάρτη απευθείας από αυτούς τους παρόχους στο πρόγραμμα περιήγησής σας. Όπως με κάθε υπηρεσία χάρτη, αυτό σημαίνει ότι η διεύθυνση IP σας και η περιοχή του χάρτη που προβάλλετε είναι ορατές σε αυτούς τους παρόχους κατά τη φόρτωση του χάρτη. Δεν χρησιμοποιούμε Google Maps.',
++        ],
++      },
++      {
++        heading: '6. Υπηρεσίες που δεν χρησιμοποιούμε προς το παρόν',
++        paragraphs: [
++          'Για την αποφυγή κάθε ασάφειας: κατά την ημερομηνία στην κορυφή αυτής της σελίδας, δεν χρησιμοποιούμε Google Analytics (GA4) ούτε καμία άλλη υπηρεσία αναλυτικών στοιχείων ή παρακολούθησης κοινού. Δεν χρησιμοποιούμε reCAPTCHA. Λογισμικό παρακολούθησης σφαλμάτων (Sentry) υπάρχει στον κώδικά μας αλλά δεν είναι ενεργοποιημένο. Αυτόματοι έλεγχοι μετριασμού περιεχομένου υπάρχουν στον κώδικά μας αλλά δεν είναι συνδεδεμένοι με κανένα μέρος της ιστοσελίδας. Αν κάτι από αυτά αλλάξει, αυτή η σελίδα θα ενημερωθεί ώστε να το αντικατοπτρίζει πριν τεθεί σε λειτουργία.',
++        ],
++      },
++      {
++        heading: '7. Διεθνείς μεταφορές δεδομένων',
++        paragraphs: [
++          `Ορισμένοι από τους τρίτους που αναφέρονται στην Ενότητα 5 (Google, OpenAI, Resend, Cloudflare) εδρεύουν εκτός Ελλάδας και ΕΕ, κυρίως στις Ηνωμένες Πολιτείες. Ο συγκεκριμένος νομικός μηχανισμός που χρησιμοποιείται για αυτές τις μεταφορές είναι: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '8. Πόσο καιρό διατηρούμε τα δεδομένα σας',
++        paragraphs: [
++          'Τα αρχεία καταγραφής πρόσβασης του διακομιστή ιστού (διεύθυνση IP, αναγνωριστικό προγράμματος περιήγησης, ζητούμενη σελίδα) διατηρούνται για 14 ημέρες και στη συνέχεια διαγράφονται αυτόματα.',
++          'Τα αντίγραφα ασφαλείας της βάσης δεδομένων διατηρούνται προς το παρόν για 7 ημέρες, αποθηκευμένα στον ίδιο διακομιστή (σχεδιάζεται αλλά δεν είναι ενεργό σήμερα εξωτερικό αντίγραφο).',
++          `Για δεδομένα λογαριασμού, μηνύματα, ραντεβού και αναφορές, δεν έχουμε προς το παρόν καθορισμένες περιόδους διατήρησης ή αυτόματα προγράμματα διαγραφής πέρα από τα παραπάνω. Συγκεκριμένες περίοδοι διατήρησης: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '9. Ασφάλεια',
++        paragraphs: [
++          'Οι κωδικοί πρόσβασης αποθηκεύονται ως bcrypt hashes, ποτέ σε απλό κείμενο. Τα cookies σύνδεσης είναι HttpOnly, Secure και SameSite=Lax. Όλη η κίνηση προς την ιστοσελίδα είναι κρυπτογραφημένη (HTTPS). Η βάση δεδομένων μας δεν είναι απευθείας προσβάσιμη από το διαδίκτυο.',
++          `Δεν διαθέτουμε προς το παρόν επίσημη πιστοποίηση ασφαλείας ή δημοσιευμένη αναφορά δοκιμής διείσδυσης. ${TODO}.`,
++        ],
++      },
++      {
++        heading: '10. Τα δικαιώματά σας',
++        paragraphs: [
++          `Δεν διαθέτουμε προς το παρόν εργαλείο αυτοεξυπηρέτησης για προβολή, εξαγωγή ή διαγραφή των δεδομένων του λογαριασμού σας. Για να ρωτήσετε, να διορθώσετε ή να ζητήσετε διαγραφή των προσωπικών σας δεδομένων, επικοινωνήστε μαζί μας στο hello@lookla.gr. Χρόνοι απόκρισης και επίσημη διαδικασία επαλήθευσης ταυτότητας για τέτοια αιτήματα: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '11. Ανήλικοι',
++        paragraphs: [
++          `Δεν διαθέτουμε προς το παρόν βήμα επαλήθευσης ηλικίας κατά την εγγραφή λογαριασμού. Η πολιτική μας για την ελάχιστη ηλικία χρήσης του Lookla: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '12. Αυτοματοποιημένη λήψη αποφάσεων',
++        paragraphs: [
++          'Δεν χρησιμοποιούμε τα προσωπικά σας δεδομένα για αυτοματοποιημένη κατάρτιση προφίλ, εξατομικευμένη διαφήμιση, ή οποιαδήποτε αυτοματοποιημένη απόφαση που παράγει νομικό ή παρόμοιο σημαντικό αποτέλεσμα για εσάς.',
++        ],
++      },
++      {
++        heading: '13. Αλλαγές σε αυτή την πολιτική',
++        paragraphs: [
++          'Επειδή αυτή η σελίδα προορίζεται να αντικατοπτρίζει αυτό που πραγματικά κάνει η εφαρμογή, θα ενημερώνεται όποτε προσθέτουμε ή αφαιρούμε μια λειτουργία επεξεργασίας δεδομένων που περιγράφεται παραπάνω — όχι σε σταθερό πρόγραμμα.',
++        ],
++      },
++      {
++        heading: '14. Επικοινωνία',
++        paragraphs: ['Ερωτήσεις σχετικά με αυτή την πολιτική ή τα δεδομένα σας: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  ru: {
++    title: 'Политика конфиденциальности',
++    lastUpdated: '2026-07-15',
++    intro: [
++      `Эта страница описывает, какие персональные данные Lookla («мы») действительно собирает, хранит и передаёт сегодня — на основе прямой проверки работающего приложения, а не общего шаблона. Там, где бизнес-решение или юридическое решение ещё не принято, это отмечено как «${TODO}», а не подразумевается по умолчанию.`,
++      `Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции. Юридическое лицо-оператор, юридический адрес и ответственный за защиту данных (если применимо): ${TODO}.`,
++    ],
++    sections: [
++      {
++        heading: '1. Персональные данные, которые мы собираем',
++        paragraphs: [
++          'Регистрация аккаунта: адрес электронной почты, пароль (хранится в виде bcrypt-хэша, никогда в открытом виде), имя, а также, по желанию, номер телефона, номер Viber и номер WhatsApp.',
++          'Вход через Google: если вы входите через Google, мы получаем и сохраняем ваш email, имя и идентификатор аккаунта Google. Мы не запрашиваем и не сохраняем фото профиля из Google.',
++          'Подтверждение владения салоном: если вы подтверждаете, что владеете салоном на Lookla, мы отправляем одноразовый код подтверждения на email, указанный самим салоном, и сохраняем связь между вашим аккаунтом и этим салоном.',
++          'Внутренние сообщения: если вы пишете салону или специалисту (или они вам) через раздел «/account/messages», мы сохраняем текст сообщения, отправителя, дату и статус прочтения. На данный момент функция загрузки файлов/фото для вложений не работает — сообщение может содержать ссылку на вложение, но механизма загрузки в приложении сейчас нет.',
++          'Запросы на доступное время и записи: если вы запрашиваете у салона свободное время, мы сохраняем ваше имя, номер телефона и любые заметки. Это может произойти, даже если вы не вошли в систему — форма не требует аккаунта. Если салон предлагает время и вы его подтверждаете, мы создаём запись о визите с тем же именем и телефоном. В настоящее время мы не отправляем email или другое подтверждение записи — данные сохраняются, но уведомление не отправляется.',
++          `Жалобы: если вы жалуетесь на карточку (например, что салон закрыт, дублируется или содержит ошибку), мы сохраняем причину, ваше необязательное описание и IP-адрес, с которого был отправлен запрос (используется для предотвращения повторной отправки одной и той же жалобы). У нас пока нет автоматического расписания удаления этих данных — срок хранения: ${TODO}.`,
++          'Сброс пароля и подтверждение email: мы создаём одноразовый токен, отправляем его вам в виде ссылки по email и сохраняем токен (или его хэш) со сроком действия, чтобы его можно было использовать только один раз.',
++        ],
++      },
++      {
++        heading: '2. Данные о салонах, специалистах и отзывах',
++        paragraphs: [
++          'Большинство карточек салонов и специалистов на Lookla — названия, адреса, телефоны, часы работы, услуги, фотографии и отзывы — собираются автоматически из публичных источников (Google Places, Treatwell, Fresha и похожих платформ), а не предоставляются самими компаниями через Lookla.',
++          'Там, где карточка показывает отзывы клиентов, отображаемое имя автора и текст отзыва берутся с исходной платформы (обычно Google) и показываются на Lookla как есть, вместе с меткой, указывающей источник. Мы не собираем никаких других данных об авторах отзывов (ни фото профиля, ни идентификатора, ни связи с аккаунтом Lookla) — они не являются пользователями Lookla.',
++          'Когда вы просматриваете страницу салона на языке, отличном от греческого, текст отзывов и названия услуг могут переводиться по запросу — см. раздел 5 о том, что отправляется нашему поставщику перевода.',
++        ],
++      },
++      {
++        heading: '3. Данные о местоположении',
++        paragraphs: [
++          'Интерактивная карта может запросить у вашего браузера местоположение устройства, чтобы отцентрировать карту рядом с вами и показать близлежащие салоны. Это происходит полностью в вашем браузере: ваши координаты используются локально для сортировки и отображения уже публичных местоположений салонов и никогда не отправляются на серверы Lookla или третьим лицам. Если вы откажете в разрешении на геолокацию, карта просто покажет все салоны без центрирования на вас.',
++        ],
++      },
++      {
++        heading: '4. Файлы cookie',
++        paragraphs: [
++          'Сегодня мы используем четыре cookie-файла, все они функциональные (не рекламные и не аналитические):',
++          '• access_token и refresh_token — устанавливаются при входе в систему, используются, чтобы вы оставались авторизованы. Оба — HttpOnly (недоступны скриптам страницы), Secure и SameSite=Lax.',
++          '• oauth_csrf — устанавливается только во время входа через Google, на несколько минут, для защиты от межсайтовой подделки запроса. Те же флаги безопасности, что и выше.',
++          '• NEXT_LOCALE — запоминает, какой из четырёх языков сайта (греческий, английский, русский, украинский) вы просматриваете. Содержит только код языка, без персональных данных.',
++          'Мы пока не используем никаких рекламных, отслеживающих или аналитических cookie — см. раздел 6 о сервисах, которые мы ещё не используем. Отдельная Политика использования файлов cookie и баннер согласия на cookie запланированы как отдельная будущая работа и пока не являются частью сайта.',
++        ],
++      },
++      {
++        heading: '5. Третьи стороны, с которыми мы делимся данными',
++        paragraphs: [
++          'Google (Sign-In) — если вы выбираете вход через Google, Google обрабатывает вашу аутентификацию и возвращает нам ваш email, имя и идентификатор аккаунта, как описано в разделе 1.',
++          'OpenAI — когда вы просматриваете отзывы или названия услуг на языке, отличном от греческого или английского, оригинальный текст (только текст отзыва или название услуги) отправляется в API перевода OpenAI. Имя автора отзыва, рейтинг, ID салона или любой идентификатор пользователя Lookla в этот запрос не включаются — только сам переводимый текст и целевой язык.',
++          'Resend — транзакционные письма (подтверждение регистрации, сброс пароля, коды подтверждения владения салоном) отправляются через Resend, стороннюю службу доставки email. Resend получает адрес email получателя и содержимое письма.',
++          'Cloudflare — находится перед нашими серверами для доставки контента и защиты (весь трафик сайта проходит через сеть Cloudflare по пути к нашему серверу), а также хранит фотографии салонов, собранные из публичных источников (не загруженные пользователями), через хранилище Cloudflare R2.',
++          'OpenStreetMap и CARTO — интерактивная карта загружает тайлы карты напрямую от этих провайдеров в вашем браузере. Как и с любым картографическим сервисом, это означает, что ваш IP-адрес и просматриваемая область карты видны этим провайдерам при загрузке карты. Мы не используем Google Maps.',
++        ],
++      },
++      {
++        heading: '6. Сервисы, которые мы пока не используем',
++        paragraphs: [
++          'Чтобы исключить любую двусмысленность: на дату, указанную вверху этой страницы, мы не используем Google Analytics (GA4) или любой другой сервис аналитики или отслеживания аудитории. Мы не используем reCAPTCHA. Программное обеспечение для отслеживания ошибок (Sentry) присутствует в нашем коде, но не включено. Автоматические проверки модерации контента существуют в нашем коде, но не подключены ни к одной части сайта. Если что-либо из этого изменится, эта страница будет обновлена, прежде чем изменение вступит в силу.',
++        ],
++      },
++      {
++        heading: '7. Международная передача данных',
++        paragraphs: [
++          `Некоторые из третьих сторон, перечисленных в разделе 5 (Google, OpenAI, Resend, Cloudflare), находятся за пределами Греции и ЕС, в основном в США. Конкретный правовой механизм, используемый для этих передач: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '8. Как долго мы храним ваши данные',
++        paragraphs: [
++          'Журналы доступа веб-сервера (IP-адрес, идентификатор браузера, запрошенная страница) хранятся 14 дней, после чего автоматически удаляются.',
++          'Резервные копии базы данных в настоящее время хранятся 7 дней на том же сервере (внешняя копия запланирована, но пока не активна).',
++          `Для данных аккаунта, сообщений, записей и жалоб у нас пока нет определённых сроков хранения или расписаний автоматического удаления, кроме указанного выше. Конкретные сроки хранения: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '9. Безопасность',
++        paragraphs: [
++          'Пароли хранятся в виде bcrypt-хэшей, никогда в открытом виде. Cookie для входа — HttpOnly, Secure и SameSite=Lax. Весь трафик к сайту зашифрован (HTTPS). Наша база данных недоступна напрямую из интернета.',
++          `У нас пока нет формальной сертификации безопасности или опубликованного отчёта о тестировании на проникновение. ${TODO}.`,
++        ],
++      },
++      {
++        heading: '10. Ваши права',
++        paragraphs: [
++          `У нас пока нет инструмента самообслуживания для просмотра, экспорта или удаления данных вашего аккаунта. Чтобы задать вопрос, исправить или запросить удаление ваших персональных данных, напишите нам на hello@lookla.gr. Сроки ответа и формальный процесс проверки личности для таких запросов: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '11. Дети',
++        paragraphs: [
++          `У нас пока нет шага проверки возраста при регистрации аккаунта. Наша политика в отношении минимального возраста использования Lookla: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '12. Автоматизированное принятие решений',
++        paragraphs: [
++          'Мы не используем ваши персональные данные для автоматизированного профилирования, персонализированной рекламы или любого автоматизированного решения, которое влечёт юридические или иные значимые для вас последствия.',
++        ],
++      },
++      {
++        heading: '13. Изменения в этой политике',
++        paragraphs: [
++          'Поскольку эта страница призвана отражать то, что приложение действительно делает, она будет обновляться каждый раз, когда мы добавляем или убираем описанную выше функцию обработки данных — не по фиксированному графику.',
++        ],
++      },
++      {
++        heading: '14. Контакты',
++        paragraphs: ['Вопросы об этой политике или ваших данных: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  uk: {
++    title: 'Політика конфіденційності',
++    lastUpdated: '2026-07-15',
++    intro: [
++      `Ця сторінка описує, які персональні дані Lookla («ми») справді збирає, зберігає та передає сьогодні — на основі прямої перевірки застосунку, що працює, а не загального шаблону. Там, де бізнес-рішення або юридичне рішення ще не ухвалено, це позначено як «${TODO}», а не мається на увазі за замовчуванням.`,
++      `Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції. Юридична особа-оператор, юридична адреса та відповідальний за захист даних (якщо застосовно): ${TODO}.`,
++    ],
++    sections: [
++      {
++        heading: '1. Персональні дані, які ми збираємо',
++        paragraphs: [
++          'Реєстрація акаунта: адреса електронної пошти, пароль (зберігається у вигляді bcrypt-хешу, ніколи у відкритому вигляді), ім\'я, а також, за бажанням, номер телефону, номер Viber і номер WhatsApp.',
++          'Вхід через Google: якщо ви входите через Google, ми отримуємо і зберігаємо ваш email, ім\'я та ідентифікатор акаунта Google. Ми не запитуємо і не зберігаємо фото профілю з Google.',
++          'Підтвердження власності салону: якщо ви підтверджуєте, що є власником салону на Lookla, ми надсилаємо одноразовий код підтвердження на email, вказаний самим салоном, і зберігаємо зв\'язок між вашим акаунтом і цим салоном.',
++          'Внутрішні повідомлення: якщо ви пишете салону чи фахівцю (або вони вам) через розділ «/account/messages», ми зберігаємо текст повідомлення, відправника, дату та статус прочитання. На даний момент функція завантаження файлів/фото для вкладень не працює — повідомлення може містити посилання на вкладення, але механізму завантаження в застосунку зараз немає.',
++          'Запити на вільний час і записи: якщо ви запитуєте в салону вільний час, ми зберігаємо ваше ім\'я, номер телефону та будь-які нотатки. Це може статися, навіть якщо ви не увійшли в систему — форма не вимагає акаунта. Якщо салон пропонує час і ви його підтверджуєте, ми створюємо запис про візит з тим самим ім\'ям і телефоном. Наразі ми не надсилаємо email чи інше підтвердження запису — дані зберігаються, але сповіщення не надсилається.',
++          `Скарги: якщо ви скаржитеся на картку (наприклад, що салон закритий, дублюється чи містить помилку), ми зберігаємо причину, вашу необов\'язкову опис та IP-адресу, з якої надіслано запит (використовується для запобігання повторній подачі однієї й тієї ж скарги). У нас поки немає автоматичного розкладу видалення цих даних — термін зберігання: ${TODO}.`,
++          'Скидання пароля та підтвердження email: ми створюємо одноразовий токен, надсилаємо його вам у вигляді посилання електронною поштою і зберігаємо токен (або його хеш) з терміном дії, щоб його можна було використати лише один раз.',
++        ],
++      },
++      {
++        heading: '2. Дані про салони, фахівців та відгуки',
++        paragraphs: [
++          'Більшість карток салонів і фахівців на Lookla — назви, адреси, телефони, години роботи, послуги, фотографії та відгуки — збираються автоматично з публічних джерел (Google Places, Treatwell, Fresha та подібних платформ), а не надаються самими компаніями через Lookla.',
++          'Там, де картка показує відгуки клієнтів, відображуване ім\'я автора та текст відгуку беруться з початкової платформи (зазвичай Google) і показуються на Lookla як є, разом із міткою, що вказує джерело. Ми не збираємо жодних інших даних про авторів відгуків (ні фото профілю, ні ідентифікатора, ні зв\'язку з акаунтом Lookla) — вони не є користувачами Lookla.',
++          'Коли ви переглядаєте сторінку салону мовою, відмінною від грецької, текст відгуків і назви послуг можуть перекладатися на вимогу — див. розділ 5 про те, що надсилається нашому постачальнику перекладу.',
++        ],
++      },
++      {
++        heading: '3. Дані про місцезнаходження',
++        paragraphs: [
++          'Інтерактивна карта може запитати у вашого браузера місцезнаходження пристрою, щоб відцентрувати карту поблизу вас і показати найближчі салони. Це відбувається повністю у вашому браузері: ваші координати використовуються локально для сортування і відображення вже публічних місцезнаходжень салонів і ніколи не надсилаються на сервери Lookla чи третім особам. Якщо ви відмовите в дозволі на геолокацію, карта просто покаже всі салони без центрування на вас.',
++        ],
++      },
++      {
++        heading: '4. Файли cookie',
++        paragraphs: [
++          'Сьогодні ми використовуємо чотири файли cookie, усі функціональні (не рекламні й не аналітичні):',
++          '• access_token і refresh_token — встановлюються під час входу в систему, використовуються, щоб ви залишалися авторизованими. Обидва — HttpOnly (недоступні скриптам сторінки), Secure і SameSite=Lax.',
++          '• oauth_csrf — встановлюється лише під час входу через Google, на кілька хвилин, для захисту від міжсайтової підробки запиту. Ті самі прапорці безпеки, що й вище.',
++          '• NEXT_LOCALE — запам\'ятовує, яку з чотирьох мов сайту (грецьку, англійську, російську, українську) ви переглядаєте. Містить лише код мови, без персональних даних.',
++          'Ми поки не використовуємо жодних рекламних, відстежувальних чи аналітичних cookie — див. розділ 6 про сервіси, які ми ще не використовуємо. Окрема Політика використання файлів cookie та банер згоди на cookie заплановані як окрема майбутня робота і поки не є частиною сайту.',
++        ],
++      },
++      {
++        heading: '5. Треті сторони, з якими ми ділимося даними',
++        paragraphs: [
++          'Google (Sign-In) — якщо ви обираєте вхід через Google, Google обробляє вашу автентифікацію і повертає нам ваш email, ім\'я та ідентифікатор акаунта, як описано в розділі 1.',
++          'OpenAI — коли ви переглядаєте відгуки або назви послуг мовою, відмінною від грецької чи англійської, оригінальний текст (лише текст відгуку або назва послуги) надсилається до API перекладу OpenAI. Ім\'я автора відгуку, рейтинг, ID салону чи будь-який ідентифікатор користувача Lookla до цього запиту не включаються — лише сам текст для перекладу та цільова мова.',
++          'Resend — транзакційні листи (підтвердження реєстрації, скидання пароля, коди підтвердження власності салону) надсилаються через Resend, стороння служба доставки email. Resend отримує адресу email отримувача та вміст листа.',
++          'Cloudflare — знаходиться перед нашими серверами для доставки контенту й захисту (весь трафік сайту проходить через мережу Cloudflare на шляху до нашого сервера), а також зберігає фотографії салонів, зібрані з публічних джерел (не завантажені користувачами), через сховище Cloudflare R2.',
++          'OpenStreetMap і CARTO — інтерактивна карта завантажує тайли карти безпосередньо від цих провайдерів у вашому браузері. Як і з будь-яким картографічним сервісом, це означає, що ваша IP-адреса та область карти, яку ви переглядаєте, видимі цим провайдерам під час завантаження карти. Ми не використовуємо Google Maps.',
++        ],
++      },
++      {
++        heading: '6. Сервіси, які ми поки не використовуємо',
++        paragraphs: [
++          'Щоб виключити будь-яку двозначність: на дату, вказану вгорі цієї сторінки, ми не використовуємо Google Analytics (GA4) чи будь-який інший сервіс аналітики або відстеження аудиторії. Ми не використовуємо reCAPTCHA. Програмне забезпечення для відстеження помилок (Sentry) присутнє в нашому коді, але не увімкнене. Автоматичні перевірки модерації контенту існують у нашому коді, але не підключені до жодної частини сайту. Якщо щось із цього зміниться, ця сторінка буде оновлена до того, як зміна набуде чинності.',
++        ],
++      },
++      {
++        heading: '7. Міжнародна передача даних',
++        paragraphs: [
++          `Деякі з третіх сторін, перелічених у розділі 5 (Google, OpenAI, Resend, Cloudflare), знаходяться за межами Греції та ЄС, переважно у США. Конкретний правовий механізм, що використовується для цих передач: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '8. Як довго ми зберігаємо ваші дані',
++        paragraphs: [
++          'Журнали доступу веб-сервера (IP-адреса, ідентифікатор браузера, запитана сторінка) зберігаються 14 днів, після чого автоматично видаляються.',
++          'Резервні копії бази даних наразі зберігаються 7 днів на тому самому сервері (зовнішня копія запланована, але поки не активна).',
++          `Для даних акаунта, повідомлень, записів і скарг у нас поки немає визначених термінів зберігання чи розкладів автоматичного видалення, окрім зазначеного вище. Конкретні терміни зберігання: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '9. Безпека',
++        paragraphs: [
++          'Паролі зберігаються у вигляді bcrypt-хешів, ніколи у відкритому вигляді. Cookie для входу — HttpOnly, Secure і SameSite=Lax. Весь трафік до сайту зашифрований (HTTPS). Наша база даних недоступна безпосередньо з інтернету.',
++          `У нас поки немає формальної сертифікації безпеки чи опублікованого звіту про тестування на проникнення. ${TODO}.`,
++        ],
++      },
++      {
++        heading: '10. Ваші права',
++        paragraphs: [
++          `У нас поки немає інструменту самообслуговування для перегляду, експорту чи видалення даних вашого акаунта. Щоб поставити запитання, виправити чи запросити видалення ваших персональних даних, напишіть нам на hello@lookla.gr. Терміни відповіді та формальний процес перевірки особи для таких запитів: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '11. Діти',
++        paragraphs: [
++          `У нас поки немає кроку перевірки віку під час реєстрації акаунта. Наша політика щодо мінімального віку використання Lookla: ${TODO}.`,
++        ],
++      },
++      {
++        heading: '12. Автоматизоване прийняття рішень',
++        paragraphs: [
++          'Ми не використовуємо ваші персональні дані для автоматизованого профілювання, персоналізованої реклами чи будь-якого автоматизованого рішення, яке спричиняє юридичні чи інші значущі для вас наслідки.',
++        ],
++      },
++      {
++        heading: '13. Зміни до цієї політики',
++        paragraphs: [
++          'Оскільки ця сторінка покликана відображати те, що застосунок справді робить, вона оновлюватиметься щоразу, коли ми додаємо чи прибираємо описану вище функцію обробки даних — не за фіксованим графіком.',
++        ],
++      },
++      {
++        heading: '14. Контакти',
++        paragraphs: ['Питання щодо цієї політики чи ваших даних: hello@lookla.gr'],
++      },
++    ],
++  },
++};
+diff --git a/frontend/app/[locale]/privacy/page.tsx b/frontend/app/[locale]/privacy/page.tsx
+new file mode 100644
+index 0000000..fdb2bc6
+--- /dev/null
++++ b/frontend/app/[locale]/privacy/page.tsx
+@@ -0,0 +1,52 @@
++import Link from 'next/link';
++import type { Metadata } from 'next';
++import { PRIVACY_CONTENT } from './content';
++
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++type Locale = (typeof LOCALES)[number];
++
++function isLocale(value: string): value is Locale {
++  return (LOCALES as readonly string[]).includes(value);
++}
++
++export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
++  const { locale } = await params;
++  const content = PRIVACY_CONTENT[isLocale(locale) ? locale : 'el'];
++  return { title: content.title };
++}
++
++export default async function PrivacyPage({ params }: { params: Promise<{ locale: string }> }) {
++  const { locale } = await params;
++  const resolved: Locale = isLocale(locale) ? locale : 'el';
++  const content = PRIVACY_CONTENT[resolved];
++  const prefix = resolved === 'el' ? '' : `/${resolved}`;
++
++  return (
++    <div className="min-h-screen bg-gray-50">
++      <header className="bg-white border-b sticky top-0 z-30 px-4 py-3">
++        <div className="max-w-3xl mx-auto flex items-center gap-3">
++          <Link href={prefix || '/'} className="text-gray-400 hover:text-gray-600 text-xl">←</Link>
++          <Link href={prefix || '/'} className="text-pink-600 font-bold text-lg">Lookla</Link>
++        </div>
++      </header>
++
++      <div className="max-w-3xl mx-auto px-4 py-8">
++        <h1 className="text-2xl font-bold text-gray-900 mb-1">{content.title}</h1>
++        <p className="text-sm text-gray-400 mb-6">{content.lastUpdated}</p>
++
++        {content.intro.map((p, i) => (
++          <p key={`intro-${i}`} className="text-gray-700 mb-4 leading-relaxed">{p}</p>
++        ))}
++
++        {content.sections.map((section, si) => (
++          <section key={`section-${si}`} className="mt-8">
++            <h2 className="text-lg font-semibold text-gray-900 mb-3">{section.heading}</h2>
++            {section.paragraphs.map((p, pi) => (
++              <p key={`section-${si}-p-${pi}`} className="text-gray-700 mb-3 leading-relaxed">{p}</p>
++            ))}
++          </section>
++        ))}
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/lib/privacyContent.test.ts b/frontend/lib/privacyContent.test.ts
+new file mode 100644
+index 0000000..21f5693
+--- /dev/null
++++ b/frontend/lib/privacyContent.test.ts
+@@ -0,0 +1,124 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { PRIVACY_CONTENT } from '../app/[locale]/privacy/content';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++
++describe('T-017: Privacy Policy page exists and is SSR', () => {
++  test('page.tsx exists at app/[locale]/privacy/page.tsx', () => {
++    const pagePath = path.join(frontendRoot, 'app', '[locale]', 'privacy', 'page.tsx');
++    assert.ok(fs.existsSync(pagePath), 'privacy page.tsx must exist');
++  });
++
++  test('page.tsx has no "use client" directive — confirms it is a server component (SSR)', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'privacy', 'page.tsx'), 'utf-8');
++    assert.ok(!source.includes("'use client'"), 'privacy page must be a server component, not client-rendered');
++  });
++
++  test('page.tsx exports a default async component reading params.locale (App Router page contract)', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'privacy', 'page.tsx'), 'utf-8');
++    assert.ok(source.includes('export default async function PrivacyPage'), 'must export a PrivacyPage server component');
++  });
++});
++
++describe('T-017: Privacy Policy content covers all 4 locales', () => {
++  for (const locale of LOCALES) {
++    test(`${locale} content exists and is non-empty`, () => {
++      const content = PRIVACY_CONTENT[locale];
++      assert.ok(content, `content for locale ${locale} must exist`);
++      assert.ok(content.title.length > 0);
++      assert.ok(content.lastUpdated.length > 0);
++      assert.ok(content.intro.length > 0);
++      assert.ok(content.sections.length > 0);
++    });
++
++    test(`${locale} every section has a heading and at least one non-empty paragraph`, () => {
++      const content = PRIVACY_CONTENT[locale];
++      for (const section of content.sections) {
++        assert.ok(section.heading.length > 0);
++        assert.ok(section.paragraphs.length > 0);
++        for (const p of section.paragraphs) {
++          assert.ok(p.trim().length > 0, `empty paragraph found in section "${section.heading}" (${locale})`);
++        }
++      }
++    });
++  }
++
++  test('all 4 locales have the same number of sections (structural parity)', () => {
++    const counts = LOCALES.map(l => PRIVACY_CONTENT[l].sections.length);
++    assert.ok(counts.every(c => c === counts[0]), `section counts differ across locales: ${JSON.stringify(counts)}`);
++  });
++});
++
++describe('T-017: does not overstate data collection (per audit findings)', () => {
++  const allText = LOCALES.map(l => JSON.stringify(PRIVACY_CONTENT[l])).join('\n');
++
++  test('does not claim 90-day log retention (verified live config is 14 days)', () => {
++    assert.ok(!allText.includes('90 day') && !allText.includes('90-day'), 'must not repeat the stale 90-day retention claim');
++  });
++
++  test('states the verified 14-day nginx log retention in every locale', () => {
++    for (const locale of LOCALES) {
++      const text = JSON.stringify(PRIVACY_CONTENT[locale]);
++      assert.ok(text.includes('14'), `${locale} content should reference the verified 14-day log retention`);
++    }
++  });
++
++  test('does not claim GA4 / Google Analytics is in use', () => {
++    assert.ok(!/we use google analytics/i.test(allText));
++    assert.ok(!/we use ga4/i.test(allText));
++  });
++
++  test('does not flatly claim "no location data" / "no GPS" (browser Geolocation API is used client-side)', () => {
++    assert.ok(!/no location tracking/i.test(allText));
++    assert.ok(!/we do not collect location/i.test(allText));
++  });
++
++  test('does not claim offsite/geo-redundant backups are active (rclone is not installed; backups are local-only today)', () => {
++    assert.ok(!/offsite backup/i.test(allText) || /not active|planned but not active/i.test(allText));
++  });
++});
++
++describe('T-017: does not invent undefined legal bases (per explicit instruction)', () => {
++  const allText = LOCALES.map(l => JSON.stringify(PRIVACY_CONTENT[l])).join('\n');
++  const forbiddenLegalTerms = ['legitimate interest', 'legal obligation', 'contractual necessity', 'legal basis'];
++
++  for (const term of forbiddenLegalTerms) {
++    test(`does not assert an undefined legal basis: "${term}"`, () => {
++      assert.ok(!new RegExp(term, 'i').test(allText), `must not invent "${term}" without a business/legal decision`);
++    });
++  }
++
++  test('marks undefined business/legal points with the literal TODO marker, in every locale', () => {
++    for (const locale of LOCALES) {
++      const text = JSON.stringify(PRIVACY_CONTENT[locale]);
++      assert.ok(text.includes('TODO (requires business/legal decision)'), `${locale} must flag undecided points with the literal TODO marker`);
++    }
++  });
++});
++
++describe('T-017: messaging/booking PII disclosure present (per the live /account/messages + /api/chat audit finding)', () => {
++  test('English content discloses in-app messaging data collection', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en);
++    assert.ok(/messag/i.test(text), 'must disclose in-app messaging as a real, live data flow');
++  });
++
++  test('English content discloses availability-request / appointment name+phone collection', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en);
++    assert.ok(/appointment/i.test(text) && /phone/i.test(text));
++  });
++});
++
++describe('T-017: contact email present and consistent', () => {
++  for (const locale of LOCALES) {
++    test(`${locale} references hello@lookla.gr`, () => {
++      const text = JSON.stringify(PRIVACY_CONTENT[locale]);
++      assert.ok(text.includes('hello@lookla.gr'), `${locale} must include the contact email`);
++    });
++  }
++});
+diff --git a/frontend/package.json b/frontend/package.json
+index 027017e..ebcec39 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
