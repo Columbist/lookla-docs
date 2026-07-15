@@ -1118,6 +1118,7 @@ def search_salons(..., response: Response):
 ### T-036 — Create public/robots.txt (standalone task)
 **Priority:** P0 | **Owner:** FE | **Estimate:** 0.25h | **Epic:** EPIC-09
 **Dependencies:** None
+**Status:** ✅ Completed (2026-07-15) — reviewed, merged to `main` (PR #36), production deployed and verified
 
 **Description:** `robots.txt` was buried in T-029 acceptance criteria. Extracted as a separate P0 task since it has no dependency on error boundaries and must be live before crawlers discover the admin panel.
 
@@ -1152,6 +1153,8 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Sitemap finding (factual correction — `sitemap.xml` was NOT absent):** `frontend/public/sitemap.xml` already exists, is tracked in git since the initial repository commit, and serves `200` with `Content-Type: application/xml`, ~21,900 real `<url>` entries (verified both by reading the file and by an isolated HTTP request). Prior notes here and in `FRONTEND_ARCHITECTURE.md` §14, `FUTURE_FEATURES.md`, and `AUDIT.md` describing it as "deferred"/"not implemented"/"post-MVP" were stale; corrected in this task as a factual correction (the sitemap's *content* is unchanged — T-036 does not generate, edit, or regenerate it).
 
 **Known open item, not resolved by this task:** `frontend/public/sitemap.xml` currently lists `/login` and `/register` as indexed URLs. `FRONTEND_ARCHITECTURE.md` §14 separately specifies a robots.txt that would `Disallow: /login`, `/register`, `/pricing` — a real contradiction with both the sitemap's current content and this task's own canonical spec (which does not disallow those paths). T-036 intentionally implements only the canonical spec above and does not touch the indexing status of `/login`/`/register`/`/pricing` — that is a separate SEO decision for a future ticket, not a technical inevitability to be decided silently here.
+
+**Production verification (2026-07-15):** `beauty_web` rebuilt and redeployed alone (API/DB/Redis/crawler untouched, uptimes confirmed unchanged). Direct-to-origin request (`curl http://127.0.0.1:3000/robots.txt`, bypassing Cloudflare) is byte-identical to the committed file. Public `https://lookla.gr/robots.txt` also returns 200 with our full ruleset intact, but Cloudflare's zone-level "Content Signals"/AI Crawl Control feature prepends its own bot-management `User-agent` block at the edge — pre-existing platform config, not introduced or controlled by this task, and does not override or conflict with our `Disallow` rules (RFC 9309 merges same-user-agent groups). `sitemap.xml` confirmed reachable publicly (200, `application/xml`, correct size). No automatic "Deploy Production" workflow triggered — only CI ran on the merge push.
 
 **Acceptance Criteria:**
 - [x] `https://lookla.gr/robots.txt` returns 200 with correct content
