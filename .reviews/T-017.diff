@@ -43,10 +43,10 @@ index aa7fb26..67fb27a 100644
  
 diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
 new file mode 100644
-index 0000000..9ec4776
+index 0000000..ced2ffd
 --- /dev/null
 +++ b/frontend/app/[locale]/privacy/content.ts
-@@ -0,0 +1,463 @@
+@@ -0,0 +1,475 @@
 +export interface PrivacySection {
 +  heading: string;
 +  paragraphs: string[];
@@ -67,7 +67,10 @@ index 0000000..9ec4776
 +    lastUpdated: '2026-07-15',
 +    intro: [
 +      `This page describes what personal data Lookla ("we", "us") actually collects, stores, and shares today, based on a direct review of the running application — not a generic template. Where a business or legal decision has not yet been made, this is marked as "${TODO}" rather than assumed.`,
-+      `Lookla is a marketplace for beauty salons and independent professionals in Greece. Operating entity, registered address, and Data Protection Officer (if applicable): ${TODO}.`,
++      'Lookla is a marketplace for beauty salons and independent professionals in Greece.',
++      'Lookla is operated by Zhuykov Andrey, an individual based in Greece, who acts as the data controller for the personal data described in this Privacy Policy.',
++      'Privacy and data-protection enquiries may be sent to: hello@lookla.gr.',
++      'Lookla is currently not operated by a company or other legal entity. If the operation of Lookla is transferred to a registered business or company, this Privacy Policy will be updated to identify the new controller before that change takes effect.',
 +    ],
 +    sections: [
 +      {
@@ -179,7 +182,10 @@ index 0000000..9ec4776
 +    lastUpdated: '2026-07-15',
 +    intro: [
 +      `Αυτή η σελίδα περιγράφει ποια προσωπικά δεδομένα συλλέγει, αποθηκεύει και μοιράζεται σήμερα το Lookla («εμείς»), με βάση απευθείας έλεγχο της εφαρμογής που λειτουργεί — όχι ένα γενικό πρότυπο. Όπου δεν έχει ληφθεί ακόμη επιχειρηματική ή νομική απόφαση, αυτό σημειώνεται ως «${TODO}» αντί να θεωρείται δεδομένο.`,
-+      `Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα. Νομική οντότητα λειτουργίας, καταχωρημένη διεύθυνση και Υπεύθυνος Προστασίας Δεδομένων (εφόσον απαιτείται): ${TODO}.`,
++      'Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα.',
++      'Το Lookla λειτουργείται από τον Zhuykov Andrey, φυσικό πρόσωπο με έδρα στην Ελλάδα, ο οποίος ενεργεί ως υπεύθυνος επεξεργασίας (data controller) για τα προσωπικά δεδομένα που περιγράφονται σε αυτή την Πολιτική Απορρήτου.',
++      'Ερωτήματα σχετικά με το απόρρητο και την προστασία δεδομένων μπορούν να αποστέλλονται στο: hello@lookla.gr.',
++      'Το Lookla δεν λειτουργείται προς το παρόν από εταιρεία ή άλλη νομική οντότητα. Αν η λειτουργία του Lookla μεταβιβαστεί σε καταχωρημένη επιχείρηση ή εταιρεία, αυτή η Πολιτική Απορρήτου θα ενημερωθεί ώστε να προσδιορίζει τον νέο υπεύθυνο επεξεργασίας πριν τεθεί σε ισχύ αυτή η αλλαγή.',
 +    ],
 +    sections: [
 +      {
@@ -291,7 +297,10 @@ index 0000000..9ec4776
 +    lastUpdated: '2026-07-15',
 +    intro: [
 +      `Эта страница описывает, какие персональные данные Lookla («мы») действительно собирает, хранит и передаёт сегодня — на основе прямой проверки работающего приложения, а не общего шаблона. Там, где бизнес-решение или юридическое решение ещё не принято, это отмечено как «${TODO}», а не подразумевается по умолчанию.`,
-+      `Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции. Юридическое лицо-оператор, юридический адрес и ответственный за защиту данных (если применимо): ${TODO}.`,
++      'Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции.',
++      'Lookla управляется физическим лицом — Жуйков Андрей (Zhuykov Andrey), находящимся в Греции, который выступает в качестве контролёра данных (data controller) в отношении персональных данных, описанных в этой Политике конфиденциальности.',
++      'Вопросы о конфиденциальности и защите данных можно направлять на: hello@lookla.gr.',
++      'В настоящее время Lookla не управляется компанией или иным юридическим лицом. Если управление Lookla будет передано зарегистрированному бизнесу или компании, эта Политика конфиденциальности будет обновлена, чтобы указать нового контролёра данных до вступления этого изменения в силу.',
 +    ],
 +    sections: [
 +      {
@@ -403,7 +412,10 @@ index 0000000..9ec4776
 +    lastUpdated: '2026-07-15',
 +    intro: [
 +      `Ця сторінка описує, які персональні дані Lookla («ми») справді збирає, зберігає та передає сьогодні — на основі прямої перевірки застосунку, що працює, а не загального шаблону. Там, де бізнес-рішення або юридичне рішення ще не ухвалено, це позначено як «${TODO}», а не мається на увазі за замовчуванням.`,
-+      `Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції. Юридична особа-оператор, юридична адреса та відповідальний за захист даних (якщо застосовно): ${TODO}.`,
++      'Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції.',
++      'Lookla керується фізичною особою — Жуйков Андрій (Zhuykov Andrey), що перебуває в Греції, який виступає контролером даних (data controller) щодо персональних даних, описаних у цій Політиці конфіденційності.',
++      'Питання щодо конфіденційності та захисту даних можна надсилати на: hello@lookla.gr.',
++      'Наразі Lookla не керується компанією чи іншою юридичною особою. Якщо управління Lookla буде передано зареєстрованому бізнесу чи компанії, ця Політика конфіденційності буде оновлена, щоб визначити нового контролера даних до набуття чинності цієї зміни.',
 +    ],
 +    sections: [
 +      {
