@@ -641,7 +641,18 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 
 **Explicit non-goals for this task (per instruction), not built here:** Cookie Policy, cookie-consent banner, Terms of Service, GA4 Consent Mode, GA4 itself. Section 4 of the shipped policy (Cookies) discloses the four cookies that already exist today (`access_token`, `refresh_token`, `oauth_csrf`, `NEXT_LOCALE`) and explicitly defers the full Cookie Policy/consent banner to T-018/T-014.
 
-**Undefined business/legal points** are marked `TODO (requires business/legal decision)` in the shipped text rather than invented — no fabricated GDPR legal basis, retention period, DPO, or processor agreement. These need a business/legal decision before this page is fully launch-ready; the technical implementation is otherwise complete and accurate to the current system.
+**Undefined business/legal points** were initially marked `TODO (requires business/legal decision)` in the shipped text rather than invented — no fabricated GDPR legal basis, retention period, DPO, or processor agreement.
+
+**Round 2 (2026-07-16, architect review):** all initial `TODO` markers were resolved via explicit approved MVP decisions, applied verbatim where exact wording was specified:
+- **Controller identity** — Lookla is not operated by a company; the controller is disclosed as a natural person (Zhuykov Andrey, based in Greece), with no invented company name, VAT, or postal address, and a change-of-controller clause for if Lookla is later incorporated.
+- **Lawful-basis matrix** — a new dedicated section maps each processing purpose to a specific GDPR basis (contract performance, legitimate interest, legal obligation), with the right to object to legitimate-interest processing disclosed. Contract-performance bases depend on a Terms of Service that doesn't exist yet — see T-045.
+- **Retention matrix** — every data type now has an explicit target (14 days logs, 7 days local backups, 12 months messages/appointments/reports/claims, 30 days post-deletion-request), each honestly marked as manually-enforced today where no automated cleanup job exists — see T-047, T-048.
+- **Full data-subject rights** (access, rectification, erasure, restriction, portability, objection, consent withdrawal, rights re: automated decisions, complaint to the Hellenic DPA, judicial remedy), the approved one-month response-timing statement, and the approved identity-verification statement.
+- **Age policy** — 18+ for account features, catalog remains browsable by anyone; does not claim age verification exists yet — see T-044.
+- **International transfers** — provider-specific safeguards (OpenAI Ireland, EU SCCs, EU–US DPF "where applicable"), replacing the generic TODO; Google is described as an independent authentication provider, not labeled as Lookla's processor without contractual evidence.
+- **Remaining factual corrections applied**: Cloudflare's "all traffic passes through" claim replaced with an accurate one acknowledging the origin is also directly reachable (see T-049); token storage clarified as raw, not "or its hash"; exact cookie lifetimes stated (15 min / 30 days / 10 min); availability-requests/appointments disclosed as a backend capability not currently reachable through the production frontend; GPS vs. map-tile-area distinction sharpened; inactive-SDK (Sentry/moderation) discussion trimmed from the public-facing text; Resend fallback recipient-email logging disclosed rather than hidden (see T-050).
+
+New follow-up tickets filed as a direct result of this review: **T-044** (age-confirmation control), **T-045** (Terms of Service, pre-launch blocker), **T-046** (legitimate-interest balancing assessments), **T-047** (account-deletion workflow), **T-048** (retention cleanup jobs), **T-049** (restrict origin to Cloudflare IPs), **T-050** (remove recipient-email logging).
 
 **Acceptance Criteria:**
 - [x] `/privacy` (el), `/en/privacy`, `/ru/privacy`, `/uk/privacy` return 200 (corrected from the original spec's 3-locale list — the site has 4 locales, `uk` included)
@@ -1171,6 +1182,112 @@ Sitemap: https://lookla.gr/sitemap.xml
 - [x] `User-agent: *` present as first rule
 - [x] robots.txt does NOT disallow `/` or `/salons/` or `/search` (those must be crawlable)
 - [x] Remove `robots.txt` from T-029 acceptance criteria (checked — T-029's current acceptance criteria contain no robots.txt reference; already clean, nothing to remove)
+
+---
+
+### T-044 — Age-confirmation control at registration (18+)
+**Priority:** P0 | **Owner:** FE/BE | **Estimate:** 1h | **Epic:** EPIC-05
+**Dependencies:** T-017
+
+**Description:** T-017's Privacy Policy states an MVP age policy (approved by architect review, 2026-07-16): the public directory is browsable by anyone without an account; account registration, in-app messaging, availability requests, and appointments are intended only for users 18+; Lookla does not knowingly provide these features to children. The policy text is now live, but no enforcement exists yet — `POST /api/auth/register` has no age/date-of-birth field and no confirmation checkbox exists on the registration form.
+
+**Required:**
+- Add an "I confirm I am 18 or older" checkbox (or equivalent) to the registration form, required to submit.
+- Backend: reject registration if the confirmation is missing (do not need to collect/store an actual birthdate — a confirmation checkbox is sufficient for the approved MVP policy; do not over-engineer a full age-verification/ID-check system, which was explicitly not requested).
+- Document (in `SECURITY.md` or equivalent) the process for the "if we learn a minor created an account" case described in the Privacy Policy — today this would be entirely manual (an admin deletes/restricts the account on request), which is acceptable for MVP but should be written down.
+
+**Acceptance Criteria:**
+- [ ] Registration form requires an explicit 18+ confirmation before submission
+- [ ] Backend rejects registration requests missing the confirmation
+- [ ] The manual minor-account-removal process is documented somewhere findable (not just implied by the Privacy Policy)
+
+---
+
+### T-045 — Publish Terms of Service (pre-launch blocker)
+**Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** TBD | **Epic:** EPIC-05
+**Dependencies:** T-017
+
+**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
+
+**Acceptance Criteria:**
+- [ ] Terms of Service drafted and reviewed (legal input required — do not have an AI agent invent binding contractual terms)
+- [ ] `/terms` page published, linked from registration and the Privacy Policy
+- [ ] Confirm with Greek counsel whether e-commerce/consumer-protection rules require additional disclosures (e.g. an operator postal address) beyond what GDPR Article 13 requires — this question was explicitly raised and deferred during T-017's review and is not resolved by this ticket alone
+
+---
+
+### T-046 — Document legitimate-interest balancing assessments
+**Priority:** P1 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
+**Dependencies:** T-017
+
+**Description:** T-017's Privacy Policy states that several processing activities rely on Lookla's "legitimate interest" as their GDPR legal basis (approved matrix, 2026-07-16). Stating a legitimate-interest basis in a public policy is not itself the balancing test GDPR expects a controller to have performed — a documented (internal, not necessarily published) assessment is expected to exist. Create one for each of:
+- Public reviewer names and review text (displayed on salon pages)
+- Professional/staff names (displayed on salon/professional pages)
+- Business contact data (salon phone/email/website, displayed publicly)
+- Report/IP anti-abuse processing (`reports.reporter_ip`)
+- OpenAI translation of public review/service text
+
+**Acceptance Criteria:**
+- [ ] A documented three-part balancing assessment (purpose test / necessity test / balancing test) exists for each of the five items above, stored in internal documentation (e.g. `docs/04_ARCHITECTURE/SECURITY.md` or a new `docs/00_GOVERNANCE/` record)
+- [ ] Each assessment references the actual data involved (not a generic template)
+
+---
+
+### T-047 — Account-deletion workflow
+**Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
+**Dependencies:** T-017
+
+**Description:** T-017's Privacy Policy states a retention target of deleting account profile data within 30 days of a verified deletion request (approved matrix, 2026-07-16). No such mechanism exists today — confirmed via audit: no `DELETE`/deactivation endpoint for a user's own account exists anywhere in `backend/app/routers`, and no data-export endpoint exists either. Today, "Your rights" requests are necessarily all-manual (email `hello@lookla.gr`); this ticket is about building the underlying capability, not necessarily a self-service UI on day one.
+
+**Acceptance Criteria:**
+- [ ] A documented (admin-triggerable at minimum) way to delete or irreversibly anonymize a user's account row, associated `refresh_tokens`, `email_verifications`, `password_resets`
+- [ ] Decide and document what happens to the user's messages, reports, and appointments on account deletion (delete vs. anonymize the `sender_user_id`/`client_user_id` reference — the messages table has a `NOT NULL` FK via `JOIN users u ON m.sender_user_id = u.id` per `chat.py`, so straightforward row deletion of the user will break existing message history unless this is handled deliberately)
+- [ ] 30-day target from a verified request is met in practice, even if enforced manually for now
+
+---
+
+### T-048 — Retention cleanup jobs: tokens, messages, appointments, reports, claim records
+**Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
+**Dependencies:** T-017
+
+**Description:** T-017's Privacy Policy states specific retention targets (approved matrix, 2026-07-16) for which no automated enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). Needed:
+- Expired/used `email_verifications` and `password_resets` rows — currently just become unusable at `expires_at`, never deleted.
+- Expired/revoked `refresh_tokens` rows.
+- `messages`/`conversations` older than 12 months past account closure or last activity.
+- `availability_requests`/`appointments` older than 12 months past the relevant date.
+- `reports` (including `reporter_ip`) older than 12 months past submission.
+- `salon_owners`/`claiming_tokens` older than 12 months past when a claim ends (note: `SalonOwner` currently has no status/end-date column at all — see whether "claim ends" needs a new column, or whether this only applies to abandoned `claiming_tokens`, before implementing).
+
+**Acceptance Criteria:**
+- [ ] A scheduled job (cron, Celery beat, or equivalent) exists that purges each of the above once past its retention target
+- [ ] Each job is tested against a fixture with rows both inside and outside the retention window
+- [ ] Confirm translation-cache columns (`Review.text_en/ru/uk`, `Service.name_en/ru/uk`) need no separate cleanup job — they are columns on the same row as the source content, so they are deleted automatically if/when the source row is deleted; no separate cache table exists
+
+---
+
+### T-049 — Restrict origin server to Cloudflare IP ranges
+**Priority:** P2 | **Owner:** OPS | **Estimate:** 1h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Description:** T-017's Privacy Policy review found that the origin server's ports 80/443 are reachable directly from the public internet, not only via Cloudflare (confirmed: `ufw status` inactive, no `iptables`/`nft` source-IP restriction, and live nginx access logs show scanner/bot traffic hitting the origin IP directly). This is a real security gap independent of the Privacy Policy wording fix (which now correctly states the origin "may also be technically reachable directly" rather than falsely claiming all traffic passes through Cloudflare).
+
+**Acceptance Criteria:**
+- [ ] Firewall rule (ufw or iptables) restricts inbound 80/443 to Cloudflare's published IP ranges (`https://www.cloudflare.com/ips/`)
+- [ ] A documented process exists for updating the allowlist when Cloudflare rotates its IP ranges
+- [ ] Deployed with a safe rollback plan (e.g. verify via a maintenance window, not a blind cutover) — a misconfigured rule here takes the entire site offline
+
+---
+
+### T-050 — Remove recipient-email logging from the Resend fallback path
+**Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** None
+
+**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) currently prints the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). This is captured by Docker's default json-file logging driver, which has no configured size or rotation limit. T-017's Privacy Policy now discloses this behavior honestly rather than silently omitting it; this ticket is to fix the underlying behavior so the disclosure can eventually be removed from the policy.
+
+**Acceptance Criteria:**
+- [ ] The no-API-key fallback path no longer logs the recipient's full email address (log a redacted/hashed form, or omit the recipient entirely, if a log line is still useful for debugging)
+- [ ] Docker's `beauty_api` logging driver has a configured `max-size`/`max-file` limit (currently unbounded) — separate, related hardening while touching this area
+- [ ] Once fixed, update T-017's Privacy Policy (Section 10, Security) to remove the disclosure of this now-resolved behavior
 
 ---
 
