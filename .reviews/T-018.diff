@@ -1,0 +1,1351 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index fff8138..b2367a8 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -672,29 +672,32 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
+ 
+ ---
+ 
+-### T-018 — Create cookie consent banner
+-**Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-05
+-**Dependencies:** T-017
++### T-018 — Cookie Policy and analytics-consent foundation
++**Priority:** P0 | **Owner:** FE | **Estimate:** 3h | **Epic:** EPIC-05
++**Dependencies:** T-017 ✅ Completed
+ 
+-**Description:** Minimal cookie consent banner. Appears on first visit. Sets `lookla_consent=1` cookie. GA4 script (T-014) checks this cookie before loading.
++**Correction to the original spec below (renamed and rewritten before implementation, per architect review):** the original design was non-compliant on three counts the Hellenic DPA explicitly guards against — it offered only an Accept button with "Accept to continue" phrasing (a cookie wall, not a real choice), had no Reject action at the same level as Accept, and had no way to withdraw consent once given. It also implicitly assumed GA4/T-014 would already exist. None of that is carried forward. GA4 is **not** implemented by this task — see T-014.
+ 
+-**Minimal implementation:**
+-```tsx
+-// components/CookieConsent.tsx
+-// Shows banner at bottom of page on first visit
+-// "This site uses cookies for analytics. Accept to continue."
+-// Two buttons: "Accept" (sets cookie) and "Privacy Policy" link
+-// Banner disappears after accept, does not reappear (30-day cookie)
+-```
++**Description:** Build the Cookie Policy page (4 locales) and a dependency-free analytics-consent foundation (cookie contract + banner + persistent settings control) that T-014 can build on. At the end of this task, no analytics script or non-essential analytics cookie exists anywhere on the site — the consent mechanism ships dormant, gated behind a feature flag T-014 turns on only once GA4 is actually configured.
++
++**Pre-write inventory (mandatory phase before any code was written):** every `document.cookie` write, every backend `Set-Cookie`, `localStorage`/`sessionStorage` usage, and Cloudflare-injected cookies were re-verified live — not assumed from the T-017 audit, which the review explicitly required re-checking. Findings: only `NEXT_LOCALE` (frontend, functional) plus `access_token`/`refresh_token`/`oauth_csrf` (backend, all necessary/security) exist; no `localStorage`/`sessionStorage`/`js-cookie` usage anywhere. Google OAuth start was tested live against production (never completing the flow — no account created), confirming `oauth_csrf`'s exact header (`HttpOnly; Max-Age=600; Path=/; SameSite=lax; Secure`). `access_token`/`refresh_token` use the identical `**COOKIE_OPTS` dict as the live-confirmed `oauth_csrf` (`auth.py:28`), so their flags are verified via that shared mechanism plus direct source reading, not a live login — creating a real production account solely to observe an already-verified cookie-setting mechanism was judged an unnecessary write. Cloudflare: tested live against `https://lookla.gr/` (fresh browser context) — no Cloudflare cookie observed under normal browsing; explicitly not claiming one never appears, since Cloudflare's bot-challenge cookies are heuristic-triggered and weren't safely reproducible in this testing.
++
++**Canonical consent contract (`frontend/lib/consent.ts`):** cookie `lookla_consent`, values `1` (granted) / `0` (rejected) / anything else treated as unset. `Path=/`, `Max-Age=15552000` (180 days), `SameSite=Lax`, `Secure` only when served over HTTPS (conditional, not hardcoded — a hardcoded `Secure` would silently break local `http://` testing), **not** `HttpOnly` (the banner, settings control, and T-014's future GA4 loader must read it from client-side JS). Stores only the single digit — no identifier, timestamp, IP, user ID, locale, or fingerprint. A `lookla:consent-change` event (`{ analytics: boolean }` detail) fires on every write, so T-014 can react without reverse-engineering the banner. A separate `lookla:open-cookie-settings` event lets the footer's persistent "Cookie settings" control reopen the same UI later — accept can be changed to reject and back, exactly as easily as the original choice, per the DPA requirement that withdrawal be no harder than consent.
++
++**Feature gate:** `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` — unset or not `"true"` (the shipped default): banner and settings control stay fully dormant, nothing renders. `true`: banner appears when consent is unset, footer settings control becomes visible. This flag is **not** enabled in this task — T-014 turns it on once GA4 is actually configured, per the explicit instruction not to ask users to consent to a service that doesn't exist yet.
++
++**UX contract enforced (and regression-tested):** Accept and Reject render together, unconditionally, with an identical `className` (equal visual weight, equal click cost), no "Accept to continue" text anywhere, no preselected consent, no close icon on the *initial* unanswered banner (Escape and the × control only exist on the reopened settings view), rejecting never gates search/salon pages/map/contact CTAs/auth/messaging/locale selection.
++
++**New global footer:** this is the first footer component in the codebase — previous tickets (T-011, T-020, T-021) each independently deferred "linked in footer" as out-of-scope since none existed. It became a hard functional requirement here (there is no other way to satisfy "withdraw consent as easily as you gave it" without a persistent, always-available control), so it was built now: Privacy Policy link, Cookie Policy link, and the feature-gated "Cookie settings" button, wired into `app/[locale]/layout.tsx` so it appears on every page. Verified via Playwright across representative pages (home, search, salon detail, privacy, cookies) at desktop and 375px for layout regressions before merge.
+ 
+ **Acceptance Criteria:**
+-- [ ] Banner appears on first visit (no `lookla_consent` cookie)
+-- [ ] Banner disappears after clicking "Accept"
+-- [ ] `lookla_consent=1` cookie is set after accept
+-- [ ] Banner does not appear on subsequent visits within 30 days
+-- [ ] GA4 script only fires after `lookla_consent=1` is set
+-- [ ] Banner includes link to `/[locale]/privacy`
+-- [ ] Banner is accessible on mobile 375px without blocking salon content
++- [ ] `lookla_consent` cookie contract matches the canonical spec exactly (values, flags, 180-day lifetime, no identifying data)
++- [ ] Accept and Reject are visible simultaneously, equal effort, equal visual weight — no cookie wall, no preselection, no "Accept to continue"
++- [ ] Consent can be withdrawn/changed via the footer "Cookie settings" control, as easily as it was given
++- [ ] Rejecting analytics does not disable any existing site functionality
++- [ ] `/cookies` (el), `/en/cookies`, `/ru/cookies`, `/uk/cookies` return 200, structurally identical, cross-linked with `/privacy`
++- [ ] No GA4/GTM script, no analytics request, no `_ga*` cookie anywhere — `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` is not enabled in production by this task
++- [ ] T-017's Privacy Policy updated for factual consistency only: `lookla_consent` described, Cookie Policy linked instead of described as "planned"
+ 
+ ---
+ 
+diff --git a/frontend/app/[locale]/cookies/content.ts b/frontend/app/[locale]/cookies/content.ts
+new file mode 100644
+index 0000000..b8e0c94
+--- /dev/null
++++ b/frontend/app/[locale]/cookies/content.ts
+@@ -0,0 +1,369 @@
++export interface CookiePolicySection {
++  heading: string;
++  paragraphs: string[];
++}
++
++export interface CookiePolicyContent {
++  title: string;
++  lastUpdated: string;
++  intro: string[];
++  sections: CookiePolicySection[];
++}
++
++export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePolicyContent> = {
++  en: {
++    title: 'Cookie Policy',
++    lastUpdated: '2026-07-17',
++    intro: [
++      'This page describes what cookies and similar browser storage Lookla actually uses today, and how to accept, reject, or change your choice about the optional ones — based on a direct review of the running site, not a generic template.',
++      'Lookla is operated by Zhuykov Andrey, an individual based in Greece, who acts as the data controller for the data described here. Privacy and cookie questions may be sent to hello@lookla.gr. See the Privacy Policy for the full data-processing picture — this page is specifically about cookies and browser storage.',
++    ],
++    sections: [
++      {
++        heading: '1. What cookies and browser storage are',
++        paragraphs: [
++          'A cookie is a small piece of text a website asks your browser to store and send back on later requests to the same site. Lookla does not use any other form of browser storage (localStorage, sessionStorage) — everything described on this page is a cookie.',
++        ],
++      },
++      {
++        heading: '2. Necessary vs. optional cookies',
++        paragraphs: [
++          'Necessary cookies make the site work — signing in, remembering your language, and recording your cookie choice itself. These are set regardless of any choice you make, because the site cannot function correctly without them (or, for the consent cookie, because recording your choice requires storing that choice somewhere).',
++          'Optional cookies are not required for the site to function — today that would only be analytics cookies, and none are currently active (see Section 7).',
++        ],
++      },
++      {
++        heading: '3. Cookies currently in use',
++        paragraphs: [
++          'This is the complete, verified list — every cookie Lookla itself sets today, with nothing omitted and nothing speculative added:',
++          '• access_token — set by Lookla, necessary — keeps you signed in — 15 minutes — HttpOnly, Secure, SameSite=Lax.',
++          '• refresh_token — set by Lookla, necessary — lets you stay signed in without re-entering your password every 15 minutes — 30 days — HttpOnly, Secure, SameSite=Lax.',
++          '• oauth_csrf — set by Lookla, necessary — protects the "Sign in with Google" flow against cross-site request forgery; only present while that flow is in progress — 10 minutes — HttpOnly, Secure, SameSite=Lax.',
++          '• NEXT_LOCALE — set by Lookla, necessary — remembers which of the four site languages you\'re viewing; contains only a language code — session (no fixed expiry) — not HttpOnly, SameSite=Lax.',
++          '• lookla_consent — set by Lookla, necessary (it records your cookie choice itself) — stores whether you accepted or rejected optional analytics cookies — 180 days — not HttpOnly (so the banner and settings control can read it), SameSite=Lax, Secure when served over HTTPS.',
++        ],
++      },
++      {
++        heading: '4. The consent cookie in detail',
++        paragraphs: [
++          'lookla_consent stores exactly one of two values: "1" (you accepted optional analytics) or "0" (you rejected them). It does not contain your name, an identifier, a timestamp, your IP address, your account, or any other personal data — just that single digit.',
++        ],
++      },
++      {
++        heading: '5. Cloudflare',
++        paragraphs: [
++          'Lookla uses Cloudflare in front of its servers for content delivery and security. Tested directly against the live site (a fresh browser session, normal browsing): Cloudflare did not set any cookie of its own during that test — only Lookla\'s own NEXT_LOCALE cookie was present. We are not claiming Cloudflare never sets a cookie: Cloudflare\'s security features can set additional cookies (for example during a bot challenge) under conditions we did not trigger in this testing. If you are shown a Cloudflare security challenge, a cookie from Cloudflare may be set as part of that — this is outside Lookla\'s control and is part of Cloudflare\'s own service, not something Lookla configures.',
++        ],
++      },
++      {
++        heading: '6. Optional analytics — currently inactive',
++        paragraphs: [
++          'As of the date at the top of this page, Lookla does not use Google Analytics (GA4) or any other analytics or audience-tracking service. No optional analytics cookie is set, and no request is made to any analytics provider.',
++          'Lookla has built the underlying support for optional analytics consent (this page, and the accept/reject mechanism described below), but no analytics service is active as of this policy date. If and when an analytics service is enabled, it will only run after you have actively accepted it — never by default, and never because you simply didn\'t make a choice.',
++        ],
++      },
++      {
++        heading: '7. How to accept, reject, or change your choice',
++        paragraphs: [
++          'If analytics consent is enabled on the site, a banner appears on your first visit offering "Accept analytics" and "Reject analytics" as two equally-sized, equally-prominent options — both close the banner and record your choice for 180 days. Rejecting does not limit anything else on the site: search, salon pages, the map, contact buttons, signing in, and messaging all work exactly the same either way.',
++          'You can change your mind at any time using the "Cookie settings" link in the site footer, which reopens the same choice — accepted can be changed to rejected, and rejected can be changed to accepted, just as easily as the original choice.',
++        ],
++      },
++      {
++        heading: '8. Browser-level controls',
++        paragraphs: [
++          'Separately from Lookla\'s own consent choice, your browser lets you block or delete cookies from any site, including Lookla, in its own privacy/cookie settings.',
++        ],
++      },
++      {
++        heading: '9. Effect of blocking necessary cookies',
++        paragraphs: [
++          'If you block or delete Lookla\'s necessary cookies at the browser level, you will be signed out (or unable to sign in), your language choice will reset to Greek on each visit, and — if you had already made an analytics choice — that choice will be forgotten and the banner may reappear. Browsing the public salon directory itself does not require any cookie.',
++        ],
++      },
++      {
++        heading: '10. Changes to this policy',
++        paragraphs: [
++          'Because this page is meant to reflect what the site actually does, it will be updated whenever a cookie is added, removed, or changed — not on a fixed schedule.',
++        ],
++      },
++      {
++        heading: '11. Privacy Policy',
++        paragraphs: [
++          'For the full picture of what personal data Lookla processes beyond cookies, see the Privacy Policy.',
++        ],
++      },
++      {
++        heading: '12. Contact',
++        paragraphs: ['Questions about cookies or this policy: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  el: {
++    title: 'Πολιτική Cookies',
++    lastUpdated: '2026-07-17',
++    intro: [
++      'Αυτή η σελίδα περιγράφει ποια cookies και παρόμοια αποθήκευση προγράμματος περιήγησης χρησιμοποιεί πράγματι το Lookla σήμερα, και πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας για τα προαιρετικά — με βάση απευθείας έλεγχο της ιστοσελίδας που λειτουργεί, όχι ένα γενικό πρότυπο.',
++      'Το Lookla λειτουργείται από τον Zhuykov Andrey, φυσικό πρόσωπο με έδρα στην Ελλάδα, ο οποίος ενεργεί ως υπεύθυνος επεξεργασίας για τα δεδομένα που περιγράφονται εδώ. Ερωτήματα σχετικά με το απόρρητο και τα cookies μπορούν να αποστέλλονται στο hello@lookla.gr. Δείτε την Πολιτική Απορρήτου για την πλήρη εικόνα επεξεργασίας δεδομένων — αυτή η σελίδα αφορά συγκεκριμένα τα cookies και την αποθήκευση προγράμματος περιήγησης.',
++    ],
++    sections: [
++      {
++        heading: '1. Τι είναι τα cookies και η αποθήκευση προγράμματος περιήγησης',
++        paragraphs: [
++          'Ένα cookie είναι ένα μικρό κομμάτι κειμένου που μια ιστοσελίδα ζητά από το πρόγραμμα περιήγησής σας να αποθηκεύσει και να στείλει πίσω σε επόμενα αιτήματα προς την ίδια ιστοσελίδα. Το Lookla δεν χρησιμοποιεί καμία άλλη μορφή αποθήκευσης προγράμματος περιήγησης (localStorage, sessionStorage) — όλα όσα περιγράφονται σε αυτή τη σελίδα είναι cookies.',
++        ],
++      },
++      {
++        heading: '2. Απαραίτητα έναντι προαιρετικών cookies',
++        paragraphs: [
++          'Τα απαραίτητα cookies κάνουν την ιστοσελίδα να λειτουργεί — σύνδεση, απομνημόνευση της γλώσσας σας, και καταγραφή της ίδιας της επιλογής σας για cookies. Αυτά ορίζονται ανεξαρτήτως οποιασδήποτε επιλογής κάνετε, επειδή η ιστοσελίδα δεν μπορεί να λειτουργήσει σωστά χωρίς αυτά (ή, για το cookie συναίνεσης, επειδή η καταγραφή της επιλογής σας απαιτεί να αποθηκευτεί κάπου αυτή η επιλογή).',
++          'Τα προαιρετικά cookies δεν είναι απαραίτητα για τη λειτουργία της ιστοσελίδας — σήμερα αυτό θα αφορούσε μόνο cookies αναλυτικών στοιχείων, και κανένα δεν είναι προς το παρόν ενεργό (δείτε Ενότητα 7).',
++        ],
++      },
++      {
++        heading: '3. Cookies που χρησιμοποιούνται σήμερα',
++        paragraphs: [
++          'Αυτή είναι η πλήρης, επαληθευμένη λίστα — κάθε cookie που ορίζει το ίδιο το Lookla σήμερα, χωρίς παραλείψεις και χωρίς εικασίες:',
++          '• access_token — ορίζεται από το Lookla, απαραίτητο — σας διατηρεί συνδεδεμένους — 15 λεπτά — HttpOnly, Secure, SameSite=Lax.',
++          '• refresh_token — ορίζεται από το Lookla, απαραίτητο — σας επιτρέπει να παραμένετε συνδεδεμένοι χωρίς να εισάγετε ξανά τον κωδικό σας κάθε 15 λεπτά — 30 ημέρες — HttpOnly, Secure, SameSite=Lax.',
++          '• oauth_csrf — ορίζεται από το Lookla, απαραίτητο — προστατεύει τη διαδικασία «Σύνδεση με Google» από επιθέσεις CSRF· υπάρχει μόνο όσο διαρκεί αυτή η διαδικασία — 10 λεπτά — HttpOnly, Secure, SameSite=Lax.',
++          '• NEXT_LOCALE — ορίζεται από το Lookla, απαραίτητο — θυμάται ποια από τις τέσσερις γλώσσες της ιστοσελίδας προβάλλετε· περιέχει μόνο κωδικό γλώσσας — συνεδρία (χωρίς σταθερή λήξη) — όχι HttpOnly, SameSite=Lax.',
++          '• lookla_consent — ορίζεται από το Lookla, απαραίτητο (καταγράφει την ίδια την επιλογή σας για cookies) — αποθηκεύει αν αποδεχτήκατε ή απορρίψατε τα προαιρετικά cookies αναλυτικών στοιχείων — 180 ημέρες — όχι HttpOnly (ώστε το banner και οι ρυθμίσεις να μπορούν να το διαβάσουν), SameSite=Lax, Secure όταν παρέχεται μέσω HTTPS.',
++        ],
++      },
++      {
++        heading: '4. Το cookie συναίνεσης αναλυτικά',
++        paragraphs: [
++          'Το lookla_consent αποθηκεύει ακριβώς μία από δύο τιμές: «1» (αποδεχτήκατε τα προαιρετικά αναλυτικά) ή «0» (τα απορρίψατε). Δεν περιέχει το όνομά σας, αναγνωριστικό, χρονική σήμανση, τη διεύθυνση IP σας, τον λογαριασμό σας ή οποιοδήποτε άλλο προσωπικό δεδομένο — μόνο αυτό το ένα ψηφίο.',
++        ],
++      },
++      {
++        heading: '5. Cloudflare',
++        paragraphs: [
++          'Το Lookla χρησιμοποιεί την Cloudflare μπροστά από τους διακομιστές του για παράδοση περιεχομένου και ασφάλεια. Ελέγχθηκε απευθείας στην ενεργή ιστοσελίδα (νέα συνεδρία προγράμματος περιήγησης, κανονική περιήγηση): η Cloudflare δεν όρισε κανένα δικό της cookie κατά τη διάρκεια αυτού του ελέγχου — υπήρχε μόνο το δικό μας cookie NEXT_LOCALE. Δεν ισχυριζόμαστε ότι η Cloudflare δεν ορίζει ποτέ cookie: οι λειτουργίες ασφαλείας της Cloudflare μπορούν να ορίσουν επιπλέον cookies (για παράδειγμα κατά τη διάρκεια μιας πρόκλησης bot) υπό συνθήκες που δεν ενεργοποιήσαμε σε αυτόν τον έλεγχο. Αν σας εμφανιστεί μια πρόκληση ασφαλείας της Cloudflare, ενδέχεται να οριστεί ένα cookie από την Cloudflare ως μέρος αυτής — αυτό είναι εκτός ελέγχου του Lookla και αποτελεί μέρος της υπηρεσίας της ίδιας της Cloudflare, όχι κάτι που διαμορφώνει το Lookla.',
++        ],
++      },
++      {
++        heading: '6. Προαιρετικά αναλυτικά — προς το παρόν ανενεργά',
++        paragraphs: [
++          'Κατά την ημερομηνία στην κορυφή αυτής της σελίδας, το Lookla δεν χρησιμοποιεί Google Analytics (GA4) ούτε καμία άλλη υπηρεσία αναλυτικών στοιχείων ή παρακολούθησης κοινού. Δεν ορίζεται κανένα προαιρετικό cookie αναλυτικών, και δεν γίνεται κανένα αίτημα προς οποιονδήποτε πάροχο αναλυτικών.',
++          'Το Lookla έχει δημιουργήσει την υποκείμενη υποδομή για προαιρετική συναίνεση αναλυτικών (αυτή τη σελίδα, και τον μηχανισμό αποδοχής/απόρριψης που περιγράφεται παρακάτω), αλλά καμία υπηρεσία αναλυτικών δεν είναι ενεργή κατά την ημερομηνία αυτής της πολιτικής. Αν και όταν ενεργοποιηθεί μια υπηρεσία αναλυτικών, θα λειτουργήσει μόνο αφού την αποδεχτείτε ενεργά — ποτέ από προεπιλογή, και ποτέ επειδή απλώς δεν κάνατε επιλογή.',
++        ],
++      },
++      {
++        heading: '7. Πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας',
++        paragraphs: [
++          'Αν η συναίνεση αναλυτικών είναι ενεργοποιημένη στην ιστοσελίδα, εμφανίζεται ένα banner στην πρώτη σας επίσκεψη που προσφέρει «Αποδοχή αναλυτικών» και «Απόρριψη αναλυτικών» ως δύο εξίσου μεγάλες, εξίσου εμφανείς επιλογές — και οι δύο κλείνουν το banner και καταγράφουν την επιλογή σας για 180 ημέρες. Η απόρριψη δεν περιορίζει τίποτα άλλο στην ιστοσελίδα: η αναζήτηση, οι σελίδες σαλονιών, ο χάρτης, τα κουμπιά επικοινωνίας, η σύνδεση και τα μηνύματα λειτουργούν ακριβώς το ίδιο και στις δύο περιπτώσεις.',
++          'Μπορείτε να αλλάξετε γνώμη ανά πάσα στιγμή χρησιμοποιώντας τον σύνδεσμο «Ρυθμίσεις cookies» στο υποσέλιδο της ιστοσελίδας, ο οποίος επανανοίγει την ίδια επιλογή — η αποδοχή μπορεί να αλλάξει σε απόρριψη, και η απόρριψη σε αποδοχή, εξίσου εύκολα όσο η αρχική επιλογή.',
++        ],
++      },
++      {
++        heading: '8. Έλεγχοι σε επίπεδο προγράμματος περιήγησης',
++        paragraphs: [
++          'Ανεξάρτητα από τη δική σας επιλογή συναίνεσης στο Lookla, το πρόγραμμα περιήγησής σας σάς επιτρέπει να αποκλείσετε ή να διαγράψετε cookies από οποιαδήποτε ιστοσελίδα, συμπεριλαμβανομένου του Lookla, στις δικές του ρυθμίσεις απορρήτου/cookies.',
++        ],
++      },
++      {
++        heading: '9. Επίπτωση αποκλεισμού απαραίτητων cookies',
++        paragraphs: [
++          'Αν αποκλείσετε ή διαγράψετε τα απαραίτητα cookies του Lookla σε επίπεδο προγράμματος περιήγησης, θα αποσυνδεθείτε (ή δεν θα μπορείτε να συνδεθείτε), η επιλογή γλώσσας σας θα επανέρχεται στα ελληνικά σε κάθε επίσκεψη, και — αν είχατε ήδη κάνει επιλογή αναλυτικών — αυτή η επιλογή θα ξεχαστεί και το banner ενδέχεται να επανεμφανιστεί. Η περιήγηση στον δημόσιο κατάλογο σαλονιών από μόνη της δεν απαιτεί κανένα cookie.',
++        ],
++      },
++      {
++        heading: '10. Αλλαγές σε αυτή την πολιτική',
++        paragraphs: [
++          'Επειδή αυτή η σελίδα προορίζεται να αντικατοπτρίζει αυτό που πραγματικά κάνει η ιστοσελίδα, θα ενημερώνεται όποτε προστίθεται, αφαιρείται ή αλλάζει ένα cookie — όχι σε σταθερό πρόγραμμα.',
++        ],
++      },
++      {
++        heading: '11. Πολιτική Απορρήτου',
++        paragraphs: [
++          'Για την πλήρη εικόνα των προσωπικών δεδομένων που επεξεργάζεται το Lookla πέρα από τα cookies, δείτε την Πολιτική Απορρήτου.',
++        ],
++      },
++      {
++        heading: '12. Επικοινωνία',
++        paragraphs: ['Ερωτήσεις σχετικά με τα cookies ή αυτή την πολιτική: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  ru: {
++    title: 'Политика использования cookies',
++    lastUpdated: '2026-07-17',
++    intro: [
++      'Эта страница описывает, какие cookie и похожее хранилище браузера действительно использует Lookla сегодня, и как принять, отклонить или изменить ваш выбор в отношении необязательных — на основе прямой проверки работающего сайта, а не общего шаблона.',
++      'Lookla управляется физическим лицом — Жуйков Андрей (Zhuykov Andrey), находящимся в Греции, который выступает в качестве контролёра данных, описанных здесь. Вопросы о конфиденциальности и cookie можно направлять на hello@lookla.gr. Полную картину обработки данных см. в Политике конфиденциальности — эта страница посвящена именно cookie и хранилищу браузера.',
++    ],
++    sections: [
++      {
++        heading: '1. Что такое cookie и хранилище браузера',
++        paragraphs: [
++          'Cookie — это небольшой фрагмент текста, который сайт просит ваш браузер сохранить и отправлять обратно при последующих запросах к этому же сайту. Lookla не использует никакую другую форму хранилища браузера (localStorage, sessionStorage) — всё, что описано на этой странице, является cookie.',
++        ],
++      },
++      {
++        heading: '2. Необходимые и необязательные cookie',
++        paragraphs: [
++          'Необходимые cookie заставляют сайт работать — вход в систему, запоминание вашего языка и запись самого вашего выбора cookie. Они устанавливаются независимо от того, какой выбор вы сделаете, потому что сайт не может корректно работать без них (а для cookie согласия — потому что запись вашего выбора требует где-то этот выбор сохранить).',
++          'Необязательные cookie не требуются для работы сайта — сегодня это касалось бы только аналитических cookie, и ни один из них пока не активен (см. раздел 7).',
++        ],
++      },
++      {
++        heading: '3. Cookie, используемые сегодня',
++        paragraphs: [
++          'Это полный, проверенный список — каждый cookie, который сам Lookla устанавливает сегодня, без пропусков и без предположений:',
++          '• access_token — устанавливается Lookla, необходимый — поддерживает вашу авторизацию — 15 минут — HttpOnly, Secure, SameSite=Lax.',
++          '• refresh_token — устанавливается Lookla, необходимый — позволяет оставаться авторизованным без повторного ввода пароля каждые 15 минут — 30 дней — HttpOnly, Secure, SameSite=Lax.',
++          '• oauth_csrf — устанавливается Lookla, необходимый — защищает процесс «Войти через Google» от межсайтовой подделки запроса; присутствует только пока этот процесс идёт — 10 минут — HttpOnly, Secure, SameSite=Lax.',
++          '• NEXT_LOCALE — устанавливается Lookla, необходимый — запоминает, какой из четырёх языков сайта вы просматриваете; содержит только код языка — сессионный (без фиксированного срока) — не HttpOnly, SameSite=Lax.',
++          '• lookla_consent — устанавливается Lookla, необходимый (записывает сам ваш выбор cookie) — сохраняет, приняли ли вы или отклонили необязательные аналитические cookie — 180 дней — не HttpOnly (чтобы баннер и настройки могли его прочитать), SameSite=Lax, Secure при обслуживании через HTTPS.',
++        ],
++      },
++      {
++        heading: '4. Cookie согласия подробно',
++        paragraphs: [
++          'lookla_consent хранит ровно одно из двух значений: «1» (вы приняли необязательную аналитику) или «0» (вы её отклонили). Он не содержит вашего имени, идентификатора, временной метки, вашего IP-адреса, вашего аккаунта или каких-либо других персональных данных — только эту одну цифру.',
++        ],
++      },
++      {
++        heading: '5. Cloudflare',
++        paragraphs: [
++          'Lookla использует Cloudflare перед своими серверами для доставки контента и безопасности. Проверено напрямую на живом сайте (новая сессия браузера, обычный просмотр): Cloudflare не установила ни одного собственного cookie во время этой проверки — присутствовал только наш собственный cookie NEXT_LOCALE. Мы не утверждаем, что Cloudflare никогда не устанавливает cookie: функции безопасности Cloudflare могут устанавливать дополнительные cookie (например, во время проверки на бота) при условиях, которые мы не вызывали в этом тестировании. Если вам показана проверка безопасности Cloudflare, в рамках неё может быть установлен cookie от Cloudflare — это вне контроля Lookla и является частью собственного сервиса Cloudflare, а не тем, что настраивает Lookla.',
++        ],
++      },
++      {
++        heading: '6. Необязательная аналитика — пока неактивна',
++        paragraphs: [
++          'На дату, указанную вверху этой страницы, Lookla не использует Google Analytics (GA4) или любой другой сервис аналитики или отслеживания аудитории. Ни один необязательный аналитический cookie не устанавливается, и ни один запрос не отправляется ни одному поставщику аналитики.',
++          'Lookla создала базовую поддержку для необязательного согласия на аналитику (эту страницу и механизм принятия/отклонения, описанный ниже), но ни один сервис аналитики не активен на дату этой политики. Если и когда сервис аналитики будет включён, он заработает только после того, как вы активно его примете — никогда по умолчанию и никогда просто потому, что вы не сделали выбор.',
++        ],
++      },
++      {
++        heading: '7. Как принять, отклонить или изменить ваш выбор',
++        paragraphs: [
++          'Если согласие на аналитику включено на сайте, при первом посещении появляется баннер, предлагающий «Принять аналитику» и «Отклонить аналитику» как два одинаковых по размеру и заметности варианта — оба закрывают баннер и записывают ваш выбор на 180 дней. Отклонение не ограничивает ничего другого на сайте: поиск, страницы салонов, карта, кнопки контактов, вход в систему и сообщения работают одинаково в обоих случаях.',
++          'Вы можете передумать в любой момент, используя ссылку «Настройки cookies» в подвале сайта, которая заново открывает тот же выбор — принято можно изменить на отклонено, а отклонено — на принято, так же легко, как и первоначальный выбор.',
++        ],
++      },
++      {
++        heading: '8. Управление на уровне браузера',
++        paragraphs: [
++          'Независимо от вашего собственного выбора согласия на Lookla, ваш браузер позволяет блокировать или удалять cookie с любого сайта, включая Lookla, в собственных настройках конфиденциальности/cookie.',
++        ],
++      },
++      {
++        heading: '9. Последствия блокировки необходимых cookie',
++        paragraphs: [
++          'Если вы заблокируете или удалите необходимые cookie Lookla на уровне браузера, вы будете выведены из системы (или не сможете войти), выбор языка будет сбрасываться на греческий при каждом посещении, и — если вы уже сделали выбор об аналитике — этот выбор будет забыт, и баннер может появиться снова. Просмотр публичного каталога салонов сам по себе не требует никаких cookie.',
++        ],
++      },
++      {
++        heading: '10. Изменения в этой политике',
++        paragraphs: [
++          'Поскольку эта страница призвана отражать то, что сайт действительно делает, она будет обновляться каждый раз, когда cookie добавляется, удаляется или изменяется — не по фиксированному графику.',
++        ],
++      },
++      {
++        heading: '11. Политика конфиденциальности',
++        paragraphs: [
++          'Полную картину того, какие персональные данные обрабатывает Lookla помимо cookie, см. в Политике конфиденциальности.',
++        ],
++      },
++      {
++        heading: '12. Контакты',
++        paragraphs: ['Вопросы о cookie или этой политике: hello@lookla.gr'],
++      },
++    ],
++  },
++
++  uk: {
++    title: 'Політика використання cookies',
++    lastUpdated: '2026-07-17',
++    intro: [
++      'Ця сторінка описує, які cookie та подібне сховище браузера справді використовує Lookla сьогодні, і як прийняти, відхилити чи змінити ваш вибір щодо необов\'язкових — на основі прямої перевірки застосунку, що працює, а не загального шаблону.',
++      'Lookla керується фізичною особою — Жуйков Андрій (Zhuykov Andrey), що перебуває в Греції, який виступає контролером даних, описаних тут. Питання щодо конфіденційності та cookie можна надсилати на hello@lookla.gr. Повну картину обробки даних див. у Політиці конфіденційності — ця сторінка присвячена саме cookie та сховищу браузера.',
++    ],
++    sections: [
++      {
++        heading: '1. Що таке cookie та сховище браузера',
++        paragraphs: [
++          'Cookie — це невеликий фрагмент тексту, який сайт просить ваш браузер зберегти і надсилати назад під час подальших запитів до цього ж сайту. Lookla не використовує жодної іншої форми сховища браузера (localStorage, sessionStorage) — усе, що описано на цій сторінці, є cookie.',
++        ],
++      },
++      {
++        heading: '2. Необхідні та необов\'язкові cookie',
++        paragraphs: [
++          'Необхідні cookie змушують сайт працювати — вхід у систему, запам\'ятовування вашої мови та запис самого вашого вибору cookie. Вони встановлюються незалежно від того, який вибір ви зробите, оскільки сайт не може коректно працювати без них (а для cookie згоди — оскільки запис вашого вибору вимагає десь цей вибір зберегти).',
++          'Необов\'язкові cookie не потрібні для роботи сайту — сьогодні це стосувалося б лише аналітичних cookie, і жоден із них поки не активний (див. розділ 7).',
++        ],
++      },
++      {
++        heading: '3. Cookie, які використовуються сьогодні',
++        paragraphs: [
++          'Це повний, перевірений список — кожен cookie, який сам Lookla встановлює сьогодні, без пропусків і без припущень:',
++          '• access_token — встановлюється Lookla, необхідний — підтримує вашу авторизацію — 15 хвилин — HttpOnly, Secure, SameSite=Lax.',
++          '• refresh_token — встановлюється Lookla, необхідний — дозволяє залишатися авторизованим без повторного введення пароля кожні 15 хвилин — 30 днів — HttpOnly, Secure, SameSite=Lax.',
++          '• oauth_csrf — встановлюється Lookla, необхідний — захищає процес «Увійти через Google» від міжсайтової підробки запиту; присутній лише поки цей процес триває — 10 хвилин — HttpOnly, Secure, SameSite=Lax.',
++          '• NEXT_LOCALE — встановлюється Lookla, необхідний — запам\'ятовує, яку з чотирьох мов сайту ви переглядаєте; містить лише код мови — сесійний (без фіксованого терміну) — не HttpOnly, SameSite=Lax.',
++          '• lookla_consent — встановлюється Lookla, необхідний (записує сам ваш вибір cookie) — зберігає, чи прийняли ви чи відхилили необов\'язкові аналітичні cookie — 180 днів — не HttpOnly (щоб банер і налаштування могли його прочитати), SameSite=Lax, Secure при обслуговуванні через HTTPS.',
++        ],
++      },
++      {
++        heading: '4. Cookie згоди детально',
++        paragraphs: [
++          'lookla_consent зберігає рівно одне з двох значень: «1» (ви прийняли необов\'язкову аналітику) або «0» (ви її відхилили). Він не містить вашого імені, ідентифікатора, часової позначки, вашої IP-адреси, вашого акаунта чи будь-яких інших персональних даних — лише цю одну цифру.',
++        ],
++      },
++      {
++        heading: '5. Cloudflare',
++        paragraphs: [
++          'Lookla використовує Cloudflare перед своїми серверами для доставки контенту та безпеки. Перевірено безпосередньо на живому сайті (нова сесія браузера, звичайний перегляд): Cloudflare не встановила жодного власного cookie під час цієї перевірки — був присутній лише наш власний cookie NEXT_LOCALE. Ми не стверджуємо, що Cloudflare ніколи не встановлює cookie: функції безпеки Cloudflare можуть встановлювати додаткові cookie (наприклад, під час перевірки на бота) за умов, які ми не викликали в цьому тестуванні. Якщо вам показано перевірку безпеки Cloudflare, у рамках неї може бути встановлено cookie від Cloudflare — це поза контролем Lookla і є частиною власного сервісу Cloudflare, а не тим, що налаштовує Lookla.',
++        ],
++      },
++      {
++        heading: '6. Необов\'язкова аналітика — поки неактивна',
++        paragraphs: [
++          'На дату, вказану вгорі цієї сторінки, Lookla не використовує Google Analytics (GA4) чи будь-який інший сервіс аналітики або відстеження аудиторії. Жоден необов\'язковий аналітичний cookie не встановлюється, і жоден запит не надсилається жодному постачальнику аналітики.',
++          'Lookla створила базову підтримку для необов\'язкової згоди на аналітику (цю сторінку та механізм прийняття/відхилення, описаний нижче), але жоден сервіс аналітики не активний на дату цієї політики. Якщо і коли сервіс аналітики буде увімкнено, він запрацює лише після того, як ви активно його приймете — ніколи за замовчуванням і ніколи просто тому, що ви не зробили вибір.',
++        ],
++      },
++      {
++        heading: '7. Як прийняти, відхилити чи змінити ваш вибір',
++        paragraphs: [
++          'Якщо згода на аналітику увімкнена на сайті, під час першого відвідування з\'являється банер, що пропонує «Прийняти аналітику» та «Відхилити аналітику» як два однакових за розміром і помітністю варіанти — обидва закривають банер і записують ваш вибір на 180 днів. Відхилення не обмежує нічого іншого на сайті: пошук, сторінки салонів, карта, кнопки контактів, вхід у систему та повідомлення працюють однаково в обох випадках.',
++          'Ви можете передумати в будь-який момент, використовуючи посилання «Налаштування cookies» у футері сайту, яке знову відкриває той самий вибір — прийнято можна змінити на відхилено, а відхилено — на прийнято, так само легко, як і початковий вибір.',
++        ],
++      },
++      {
++        heading: '8. Керування на рівні браузера',
++        paragraphs: [
++          'Незалежно від вашого власного вибору згоди на Lookla, ваш браузер дозволяє блокувати чи видаляти cookie з будь-якого сайту, включно з Lookla, у власних налаштуваннях конфіденційності/cookie.',
++        ],
++      },
++      {
++        heading: '9. Наслідки блокування необхідних cookie',
++        paragraphs: [
++          'Якщо ви заблокуєте чи видалите необхідні cookie Lookla на рівні браузера, вас буде виведено з системи (або ви не зможете увійти), вибір мови скидатиметься на грецьку під час кожного відвідування, і — якщо ви вже зробили вибір щодо аналітики — цей вибір буде забуто, і банер може з\'явитися знову. Перегляд публічного каталогу салонів сам по собі не вимагає жодних cookie.',
++        ],
++      },
++      {
++        heading: '10. Зміни до цієї політики',
++        paragraphs: [
++          'Оскільки ця сторінка покликана відображати те, що сайт справді робить, вона оновлюватиметься щоразу, коли cookie додається, видаляється чи змінюється — не за фіксованим графіком.',
++        ],
++      },
++      {
++        heading: '11. Політика конфіденційності',
++        paragraphs: [
++          'Повну картину того, які персональні дані обробляє Lookla окрім cookie, див. у Політиці конфіденційності.',
++        ],
++      },
++      {
++        heading: '12. Контакти',
++        paragraphs: ['Питання щодо cookie чи цієї політики: hello@lookla.gr'],
++      },
++    ],
++  },
++};
+diff --git a/frontend/app/[locale]/cookies/page.tsx b/frontend/app/[locale]/cookies/page.tsx
+new file mode 100644
+index 0000000..578a2e6
+--- /dev/null
++++ b/frontend/app/[locale]/cookies/page.tsx
+@@ -0,0 +1,58 @@
++import Link from 'next/link';
++import type { Metadata } from 'next';
++import { COOKIE_POLICY_CONTENT } from './content';
++
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++type Locale = (typeof LOCALES)[number];
++
++function isLocale(value: string): value is Locale {
++  return (LOCALES as readonly string[]).includes(value);
++}
++
++export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
++  const { locale } = await params;
++  const content = COOKIE_POLICY_CONTENT[isLocale(locale) ? locale : 'el'];
++  return { title: content.title };
++}
++
++export default async function CookiePolicyPage({ params }: { params: Promise<{ locale: string }> }) {
++  const { locale } = await params;
++  const resolved: Locale = isLocale(locale) ? locale : 'el';
++  const content = COOKIE_POLICY_CONTENT[resolved];
++  const prefix = resolved === 'el' ? '' : `/${resolved}`;
++
++  return (
++    <div className="min-h-screen bg-gray-50">
++      <header className="bg-white border-b sticky top-0 z-30 px-4 py-3">
++        <div className="max-w-3xl mx-auto flex items-center gap-3">
++          <Link href={prefix || '/'} className="text-gray-400 hover:text-gray-600 text-xl">←</Link>
++          <Link href={prefix || '/'} className="text-pink-600 font-bold text-lg">Lookla</Link>
++        </div>
++      </header>
++
++      <div className="max-w-3xl mx-auto px-4 py-8">
++        <h1 className="text-2xl font-bold text-gray-900 mb-1">{content.title}</h1>
++        <p className="text-sm text-gray-400 mb-6">{content.lastUpdated}</p>
++
++        {content.intro.map((p, i) => (
++          <p key={`intro-${i}`} className="text-gray-700 mb-4 leading-relaxed">{p}</p>
++        ))}
++
++        {content.sections.map((section, si) => (
++          <section key={`section-${si}`} className="mt-8">
++            <h2 className="text-lg font-semibold text-gray-900 mb-3">{section.heading}</h2>
++            {section.paragraphs.map((p, pi) => (
++              <p key={`section-${si}-p-${pi}`} className="text-gray-700 mb-3 leading-relaxed">{p}</p>
++            ))}
++          </section>
++        ))}
++
++        <p className="text-gray-700 mt-8">
++          <Link href={`${prefix}/privacy`} className="underline text-pink-600">
++            {resolved === 'el' ? 'Πολιτική Απορρήτου' : resolved === 'ru' ? 'Политика конфиденциальности' : resolved === 'uk' ? 'Політика конфіденційності' : 'Privacy Policy'}
++          </Link>
++        </p>
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/app/[locale]/layout.tsx b/frontend/app/[locale]/layout.tsx
+index fc3f408..e18723d 100644
+--- a/frontend/app/[locale]/layout.tsx
++++ b/frontend/app/[locale]/layout.tsx
+@@ -2,6 +2,8 @@ import { NextIntlClientProvider } from 'next-intl';
+ import { getMessages, getLocale } from 'next-intl/server';
+ import { notFound } from 'next/navigation';
+ import type { Metadata } from 'next';
++import Footer from '@/components/Footer';
++import CookieConsent from '@/components/CookieConsent';
+ import '../globals.css';
+ 
+ export const metadata: Metadata = {
+@@ -27,6 +29,8 @@ export default async function LocaleLayout({
+       <body>
+         <NextIntlClientProvider messages={messages}>
+           {children}
++          <Footer />
++          <CookieConsent />
+         </NextIntlClientProvider>
+       </body>
+     </html>
+diff --git a/frontend/app/[locale]/masters/page.tsx b/frontend/app/[locale]/masters/page.tsx
+index ec7395e..1b94eae 100644
+--- a/frontend/app/[locale]/masters/page.tsx
++++ b/frontend/app/[locale]/masters/page.tsx
+@@ -1,7 +1,6 @@
+ 'use client';
+ import { useTranslations } from 'next-intl';
+ import Link from 'next/link';
+-import LanguageSwitcher from '@/components/LanguageSwitcher';
+ 
+ const SPECIALTIES: Record<string, string[]> = {
+   el: ['Κομμωτής / Κομμώτρια', 'Τεχνίτης Νυχιών', 'Αισθητικός', 'Μακιγιέρ', 'Εξειδικευμένος Αποτρίχωσης', 'Τεχνίτης Βλεφαρίδων', 'Μασέρ / Μασέζ', 'Τατουάζ & Piercing'],
+@@ -81,14 +80,6 @@ export default function MastersPage({ params }: { params: { locale: string } })
+           </div>
+         </div>
+       </div>
+-
+-      {/* Footer */}
+-      <footer className="border-t border-gray-100 py-8">
+-        <div className="max-w-6xl mx-auto px-4 text-center text-sm text-gray-400">
+-          © 2026 Lookla — Beauty Marketplace Greece
+-          <LanguageSwitcher currentLocale={locale} />
+-        </div>
+-      </footer>
+     </div>
+   );
+ }
+diff --git a/frontend/app/[locale]/page.tsx b/frontend/app/[locale]/page.tsx
+index 57b4d2f..4352a36 100644
+--- a/frontend/app/[locale]/page.tsx
++++ b/frontend/app/[locale]/page.tsx
+@@ -4,7 +4,6 @@ import { resolveHomepageAreas } from '@/lib/areaGrid';
+ import SearchBar from '@/components/SearchBar';
+ import CategoryGrid from '@/components/CategoryGrid';
+ import AreaGrid from '@/components/AreaGrid';
+-import LanguageSwitcher from '@/components/LanguageSwitcher';
+ import Header from '@/components/Header';
+ 
+ export default async function HomePage({
+@@ -69,14 +68,6 @@ export default async function HomePage({
+           ))}
+         </div>
+       </section>
+-
+-      {/* Footer */}
+-      <footer className="border-t border-gray-100 py-8 mt-8">
+-        <div className="max-w-6xl mx-auto px-4 text-center text-sm text-gray-400">
+-          © 2026 Lookla — Beauty Marketplace Greece
+-          <LanguageSwitcher currentLocale={locale} />
+-        </div>
+-      </footer>
+     </div>
+   );
+ }
+diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
+index a5238c4..837e786 100644
+--- a/frontend/app/[locale]/privacy/content.ts
++++ b/frontend/app/[locale]/privacy/content.ts
+@@ -68,12 +68,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Cookies',
+         paragraphs: [
+-          'We use four cookies today, all functional (not advertising or analytics cookies):',
++          'We use five cookies today, all functional (not advertising or analytics cookies):',
+           '• access_token — set when you sign in, expires after 15 minutes, keeps you authenticated. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — set when you sign in, expires after 30 days, used to issue a new access_token without signing in again. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — set only during the "Sign in with Google" flow, expires after 10 minutes, protects against cross-site request forgery. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — remembers which of the four site languages (Greek, English, Russian, Ukrainian) you\'re viewing. Contains only a language code, no personal data.',
+-          'We do not currently use any advertising, tracking, or analytics cookies — see Section 7 for services we do not yet use. A dedicated Cookie Policy and a cookie-consent banner are planned as separate, upcoming work and are not yet part of the site.',
++          '• lookla_consent — records whether you accepted or rejected optional analytics cookies, expires after 180 days. Not HttpOnly (so the consent banner and settings control can read it), Secure when served over HTTPS, SameSite=Lax.',
++          'We do not currently use any advertising, tracking, or analytics cookies — see Section 7 for services we do not yet use. See our Cookie Policy for the complete list, exact lifetimes, and how to accept, reject, or change your choice.',
+         ],
+       },
+       {
+@@ -231,12 +232,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Cookies',
+         paragraphs: [
+-          'Χρησιμοποιούμε σήμερα τέσσερα cookies, όλα λειτουργικά (όχι διαφημιστικά ή αναλυτικά):',
++          'Χρησιμοποιούμε σήμερα πέντε cookies, όλα λειτουργικά (όχι διαφημιστικά ή αναλυτικά):',
+           '• access_token — ορίζεται όταν συνδέεστε, λήγει μετά από 15 λεπτά, σας διατηρεί ταυτοποιημένους. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — ορίζεται όταν συνδέεστε, λήγει μετά από 30 ημέρες, χρησιμοποιείται για την έκδοση νέου access_token χωρίς να χρειάζεται νέα σύνδεση. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — ορίζεται μόνο κατά τη διαδικασία «Σύνδεση με Google», λήγει μετά από 10 λεπτά, προστατεύει από επιθέσεις CSRF. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — θυμάται ποια από τις τέσσερις γλώσσες της ιστοσελίδας (ελληνικά, αγγλικά, ρωσικά, ουκρανικά) προβάλλετε. Περιέχει μόνο κωδικό γλώσσας, όχι προσωπικά δεδομένα.',
+-          'Δεν χρησιμοποιούμε προς το παρόν κανένα διαφημιστικό, ανιχνευτικό ή αναλυτικό cookie — δείτε την Ενότητα 7 για υπηρεσίες που δεν χρησιμοποιούμε ακόμη. Μια ειδική Πολιτική Cookies και ένα banner συναίνεσης cookies σχεδιάζονται ως ξεχωριστή, μελλοντική εργασία και δεν αποτελούν ακόμη μέρος της ιστοσελίδας.',
++          '• lookla_consent — καταγράφει αν αποδεχτήκατε ή απορρίψατε τα προαιρετικά cookies αναλυτικών στοιχείων, λήγει μετά από 180 ημέρες. Όχι HttpOnly (ώστε το banner συναίνεσης και οι ρυθμίσεις να μπορούν να το διαβάσουν), Secure όταν παρέχεται μέσω HTTPS, SameSite=Lax.',
++          'Δεν χρησιμοποιούμε προς το παρόν κανένα διαφημιστικό, ανιχνευτικό ή αναλυτικό cookie — δείτε την Ενότητα 7 για υπηρεσίες που δεν χρησιμοποιούμε ακόμη. Δείτε την Πολιτική Cookies μας για την πλήρη λίστα, τις ακριβείς διάρκειες και το πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας.',
+         ],
+       },
+       {
+@@ -394,12 +396,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Файлы cookie',
+         paragraphs: [
+-          'Сегодня мы используем четыре cookie-файла, все они функциональные (не рекламные и не аналитические):',
++          'Сегодня мы используем пять cookie-файлов, все они функциональные (не рекламные и не аналитические):',
+           '• access_token — устанавливается при входе, истекает через 15 минут, поддерживает вашу аутентификацию. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — устанавливается при входе, истекает через 30 дней, используется для выдачи нового access_token без повторного входа. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — устанавливается только во время входа через Google, истекает через 10 минут, защищает от межсайтовой подделки запроса. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — запоминает, какой из четырёх языков сайта (греческий, английский, русский, украинский) вы просматриваете. Содержит только код языка, без персональных данных.',
+-          'Мы пока не используем никаких рекламных, отслеживающих или аналитических cookie — см. раздел 7 о сервисах, которые мы ещё не используем. Отдельная Политика использования файлов cookie и баннер согласия на cookie запланированы как отдельная будущая работа и пока не являются частью сайта.',
++          '• lookla_consent — записывает, приняли вы или отклонили необязательные аналитические cookie, истекает через 180 дней. Не HttpOnly (чтобы баннер согласия и настройки могли его прочитать), Secure при обслуживании через HTTPS, SameSite=Lax.',
++          'Мы пока не используем никаких рекламных, отслеживающих или аналитических cookie — см. раздел 7 о сервисах, которые мы ещё не используем. Полный список, точные сроки действия и как принять, отклонить или изменить свой выбор см. в нашей Политике использования cookies.',
+         ],
+       },
+       {
+@@ -557,12 +560,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Файли cookie',
+         paragraphs: [
+-          'Сьогодні ми використовуємо чотири файли cookie, усі функціональні (не рекламні й не аналітичні):',
++          'Сьогодні ми використовуємо п\'ять файлів cookie, усі функціональні (не рекламні й не аналітичні):',
+           '• access_token — встановлюється під час входу, спливає через 15 хвилин, підтримує вашу автентифікацію. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — встановлюється під час входу, спливає через 30 днів, використовується для видачі нового access_token без повторного входу. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — встановлюється лише під час входу через Google, спливає через 10 хвилин, захищає від міжсайтової підробки запиту. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — запам\'ятовує, яку з чотирьох мов сайту (грецьку, англійську, російську, українську) ви переглядаєте. Містить лише код мови, без персональних даних.',
+-          'Ми поки не використовуємо жодних рекламних, відстежувальних чи аналітичних cookie — див. розділ 7 про сервіси, які ми ще не використовуємо. Окрема Політика використання файлів cookie та банер згоди на cookie заплановані як окрема майбутня робота і поки не є частиною сайту.',
++          '• lookla_consent — записує, чи прийняли ви чи відхилили необов\'язкові аналітичні cookie, спливає через 180 днів. Не HttpOnly (щоб банер згоди та налаштування могли його прочитати), Secure при обслуговуванні через HTTPS, SameSite=Lax.',
++          'Ми поки не використовуємо жодних рекламних, відстежувальних чи аналітичних cookie — див. розділ 7 про сервіси, які ми ще не використовуємо. Повний список, точні терміни дії та як прийняти, відхилити чи змінити свій вибір див. у нашій Політиці використання cookies.',
+         ],
+       },
+       {
+diff --git a/frontend/components/CookieConsent.tsx b/frontend/components/CookieConsent.tsx
+new file mode 100644
+index 0000000..5dbee64
+--- /dev/null
++++ b/frontend/components/CookieConsent.tsx
+@@ -0,0 +1,105 @@
++'use client';
++import { useCallback, useEffect, useRef, useState } from 'react';
++import Link from 'next/link';
++import { useTranslations, useLocale } from 'next-intl';
++import {
++  getAnalyticsConsent,
++  setAnalyticsConsent,
++  isAnalyticsConsentFeatureEnabled,
++  CONSENT_OPEN_SETTINGS_EVENT,
++  type ConsentValue,
++} from '@/lib/consent';
++
++type Mode = 'hidden' | 'banner' | 'settings';
++
++export default function CookieConsent() {
++  const t = useTranslations('cookieConsent');
++  const locale = useLocale();
++  const prefix = locale === 'el' ? '' : `/${locale}`;
++  const [mode, setMode] = useState<Mode>('hidden');
++  const [, setConsent] = useState<ConsentValue>('unset');
++  const triggerRef = useRef<HTMLElement | null>(null);
++
++  useEffect(() => {
++    if (!isAnalyticsConsentFeatureEnabled()) return;
++
++    const current = getAnalyticsConsent();
++    setConsent(current);
++    if (current === 'unset') setMode('banner');
++
++    function handleOpenSettings(e: Event) {
++      const detail = (e as CustomEvent<{ trigger?: HTMLElement }>).detail;
++      triggerRef.current = detail?.trigger ?? null;
++      setConsent(getAnalyticsConsent());
++      setMode('settings');
++    }
++    window.addEventListener(CONSENT_OPEN_SETTINGS_EVENT, handleOpenSettings);
++    return () => window.removeEventListener(CONSENT_OPEN_SETTINGS_EVENT, handleOpenSettings);
++  }, []);
++
++  const close = useCallback(() => {
++    setMode('hidden');
++    triggerRef.current?.focus();
++  }, []);
++
++  const choose = useCallback((granted: boolean) => {
++    setAnalyticsConsent(granted);
++    setConsent(granted ? 'granted' : 'rejected');
++    close();
++  }, [close]);
++
++  // Escape closes only the reopened settings view — the initial unanswered banner has no dismiss-without-choosing path.
++  useEffect(() => {
++    if (mode !== 'settings') return;
++    function handleKey(e: KeyboardEvent) {
++      if (e.key === 'Escape') close();
++    }
++    window.addEventListener('keydown', handleKey);
++    return () => window.removeEventListener('keydown', handleKey);
++  }, [mode, close]);
++
++  if (mode === 'hidden') return null;
++
++  const isSettings = mode === 'settings';
++
++  return (
++    <div
++      role={isSettings ? 'dialog' : 'region'}
++      aria-label={isSettings ? t('settingsAriaLabel') : t('bannerAriaLabel')}
++      className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 shadow-lg px-4 py-4"
++    >
++      <div className="max-w-3xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3">
++        <p className="text-sm text-gray-700 flex-1">
++          {t('message')}{' '}
++          <Link href={`${prefix}/cookies`} className="underline text-pink-600">{t('policyLink')}</Link>
++        </p>
++        <div className="flex gap-2 shrink-0">
++          <button
++            type="button"
++            onClick={() => choose(false)}
++            className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
++          >
++            {t('reject')}
++          </button>
++          <button
++            type="button"
++            onClick={() => choose(true)}
++            className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
++          >
++            {t('accept')}
++          </button>
++          {isSettings && (
++            <button
++              type="button"
++              onClick={close}
++              aria-label={t('close')}
++              className="px-2 text-gray-400 hover:text-gray-600 text-lg"
++            >
++              ×
++            </button>
++          )}
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/components/Footer.tsx b/frontend/components/Footer.tsx
+new file mode 100644
+index 0000000..674a1e7
+--- /dev/null
++++ b/frontend/components/Footer.tsx
+@@ -0,0 +1,37 @@
++'use client';
++import Link from 'next/link';
++import { useTranslations, useLocale } from 'next-intl';
++import { isAnalyticsConsentFeatureEnabled, CONSENT_OPEN_SETTINGS_EVENT } from '@/lib/consent';
++import LanguageSwitcher from '@/components/LanguageSwitcher';
++
++export default function Footer() {
++  const t = useTranslations('footer');
++  const locale = useLocale();
++  const prefix = locale === 'el' ? '' : `/${locale}`;
++
++  function openCookieSettings(e: React.MouseEvent<HTMLButtonElement>) {
++    window.dispatchEvent(new CustomEvent(CONSENT_OPEN_SETTINGS_EVENT, { detail: { trigger: e.currentTarget } }));
++  }
++
++  return (
++    <footer className="border-t border-gray-100 bg-white py-6 px-4">
++      <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-gray-500">
++        <Link href={`${prefix}/privacy`} className="hover:text-gray-700">{t('privacy')}</Link>
++        <Link href={`${prefix}/cookies`} className="hover:text-gray-700">{t('cookies')}</Link>
++        {isAnalyticsConsentFeatureEnabled() && (
++          <button
++            type="button"
++            onClick={openCookieSettings}
++            className="hover:text-gray-700 underline-offset-2 hover:underline"
++          >
++            {t('cookieSettings')}
++          </button>
++        )}
++      </div>
++      <div className="max-w-6xl mx-auto px-4 pt-4 text-center text-sm text-gray-400">
++        © 2026 Lookla — Beauty Marketplace Greece
++        <LanguageSwitcher currentLocale={locale} />
++      </div>
++    </footer>
++  );
++}
+diff --git a/frontend/lib/consent.test.ts b/frontend/lib/consent.test.ts
+new file mode 100644
+index 0000000..e62d324
+--- /dev/null
++++ b/frontend/lib/consent.test.ts
+@@ -0,0 +1,88 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  parseConsentCookie,
++  CONSENT_COOKIE_NAME,
++  CONSENT_COOKIE_MAX_AGE_SECONDS,
++  CONSENT_CHANGE_EVENT,
++} from './consent';
++
++describe('T-018: parseConsentCookie', () => {
++  test('missing cookie header -> unset', () => {
++    assert.equal(parseConsentCookie(undefined), 'unset');
++    assert.equal(parseConsentCookie(null), 'unset');
++    assert.equal(parseConsentCookie(''), 'unset');
++  });
++
++  test('lookla_consent=1 -> granted', () => {
++    assert.equal(parseConsentCookie('lookla_consent=1'), 'granted');
++    assert.equal(parseConsentCookie('NEXT_LOCALE=en; lookla_consent=1'), 'granted');
++  });
++
++  test('lookla_consent=0 -> rejected', () => {
++    assert.equal(parseConsentCookie('lookla_consent=0'), 'rejected');
++    assert.equal(parseConsentCookie('lookla_consent=0; NEXT_LOCALE=en'), 'rejected');
++  });
++
++  test('invalid/unexpected value -> unset, rejected safely rather than trusted', () => {
++    assert.equal(parseConsentCookie('lookla_consent=yes'), 'unset');
++    assert.equal(parseConsentCookie('lookla_consent=true'), 'unset');
++    assert.equal(parseConsentCookie('lookla_consent='), 'unset');
++    assert.equal(parseConsentCookie('lookla_consent=2'), 'unset');
++  });
++
++  test('cookie name constant is exactly "lookla_consent"', () => {
++    assert.equal(CONSENT_COOKIE_NAME, 'lookla_consent');
++  });
++
++  test('max-age constant is exactly 180 days in seconds', () => {
++    assert.equal(CONSENT_COOKIE_MAX_AGE_SECONDS, 60 * 60 * 24 * 180);
++  });
++
++  test('consent-change event name constant is exported', () => {
++    assert.equal(CONSENT_CHANGE_EVENT, 'lookla:consent-change');
++  });
++});
++
++describe('T-018: setAnalyticsConsent — source inspection (jsdom-style DOM APIs unavailable in node:test)', () => {
++  test('consent.ts source writes Path=/, Max-Age=180-day-seconds, SameSite=Lax, and Secure only in a secure context', async () => {
++    const fs = await import('node:fs');
++    const path = await import('node:path');
++    const { fileURLToPath } = await import('node:url');
++    const here = path.dirname(fileURLToPath(import.meta.url));
++    const source = fs.readFileSync(path.join(here, 'consent.ts'), 'utf-8');
++    assert.ok(source.includes("'Path=/'"));
++    assert.ok(source.includes('CONSENT_COOKIE_MAX_AGE_SECONDS}`'));
++    assert.ok(source.includes("'SameSite=Lax'"));
++    assert.ok(source.includes("attrs.push('Secure')"));
++    assert.ok(source.includes('isSecureContext'), 'Secure must be conditional on protocol, not hardcoded (would break local http:// testing)');
++  });
++
++  test('consent.ts never sets HttpOnly (must be readable by client-side JS per the contract)', async () => {
++    const fs = await import('node:fs');
++    const path = await import('node:path');
++    const { fileURLToPath } = await import('node:url');
++    const here = path.dirname(fileURLToPath(import.meta.url));
++    const source = fs.readFileSync(path.join(here, 'consent.ts'), 'utf-8');
++    assert.ok(!/HttpOnly/i.test(source) || source.includes('Not HttpOnly'), 'consent cookie must not be HttpOnly');
++  });
++
++  test('consent.ts stores only "1"/"0" — no identifier, timestamp, IP, user ID, locale, or fingerprint', async () => {
++    const fs = await import('node:fs');
++    const path = await import('node:path');
++    const { fileURLToPath } = await import('node:url');
++    const here = path.dirname(fileURLToPath(import.meta.url));
++    const source = fs.readFileSync(path.join(here, 'consent.ts'), 'utf-8');
++    assert.ok(!/uuid|randomUUID|Date\.now\(\)|timestamp|fingerprint|userId|user_id/i.test(source), 'consent cookie value must remain a bare "1"/"0", nothing else');
++  });
++
++  test('dispatched event detail shape matches { analytics: boolean }', async () => {
++    const fs = await import('node:fs');
++    const path = await import('node:path');
++    const { fileURLToPath } = await import('node:url');
++    const here = path.dirname(fileURLToPath(import.meta.url));
++    const source = fs.readFileSync(path.join(here, 'consent.ts'), 'utf-8');
++    assert.ok(source.includes('const detail: ConsentChangeEventDetail = { analytics: granted }'));
++    assert.ok(source.includes('CustomEvent<ConsentChangeEventDetail>(CONSENT_CHANGE_EVENT, { detail })'));
++  });
++});
+diff --git a/frontend/lib/consent.ts b/frontend/lib/consent.ts
+new file mode 100644
+index 0000000..b195b19
+--- /dev/null
++++ b/frontend/lib/consent.ts
+@@ -0,0 +1,60 @@
++/**
++ * T-018: canonical analytics-consent contract. Dependency-free by design —
++ * this is a single boolean-shaped preference, not a multi-category CMP.
++ */
++
++export const CONSENT_COOKIE_NAME = 'lookla_consent';
++export const CONSENT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180; // 180 days
++export const CONSENT_CHANGE_EVENT = 'lookla:consent-change';
++/** Dispatched by the footer's "Cookie settings" control; CookieConsent listens for this to reopen. */
++export const CONSENT_OPEN_SETTINGS_EVENT = 'lookla:open-cookie-settings';
++
++/** Reads the analytics-consent feature gate. Unset/not "true" means the banner and settings control stay dormant — T-014 turns this on once GA4 is actually configured. */
++export function isAnalyticsConsentFeatureEnabled(): boolean {
++  return process.env.NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED === 'true';
++}
++
++export type ConsentValue = 'granted' | 'rejected' | 'unset';
++
++export interface ConsentChangeEventDetail {
++  analytics: boolean;
++}
++
++/** Reads the raw `lookla_consent` cookie value out of a `document.cookie`-shaped string. */
++export function parseConsentCookie(cookieString: string | undefined | null): ConsentValue {
++  if (!cookieString) return 'unset';
++  const match = cookieString.split(';').map(s => s.trim()).find(s => s.startsWith(`${CONSENT_COOKIE_NAME}=`));
++  if (!match) return 'unset';
++  const raw = match.slice(CONSENT_COOKIE_NAME.length + 1);
++  if (raw === '1') return 'granted';
++  if (raw === '0') return 'rejected';
++  return 'unset';
++}
++
++/** Reads consent from the live browser `document.cookie`. No-op (returns 'unset') outside the browser. */
++export function getAnalyticsConsent(): ConsentValue {
++  if (typeof document === 'undefined') return 'unset';
++  return parseConsentCookie(document.cookie);
++}
++
++/**
++ * Writes the consent cookie and dispatches `lookla:consent-change`.
++ * Not HttpOnly — the banner, the settings control, and T-014's future GA4
++ * loader all need to read this cookie from client-side JS.
++ */
++export function setAnalyticsConsent(granted: boolean): void {
++  if (typeof document === 'undefined') return;
++  const value = granted ? '1' : '0';
++  const isSecureContext = typeof window !== 'undefined' && window.location.protocol === 'https:';
++  const attrs = [
++    `${CONSENT_COOKIE_NAME}=${value}`,
++    'Path=/',
++    `Max-Age=${CONSENT_COOKIE_MAX_AGE_SECONDS}`,
++    'SameSite=Lax',
++  ];
++  if (isSecureContext) attrs.push('Secure');
++  document.cookie = attrs.join('; ');
++
++  const detail: ConsentChangeEventDetail = { analytics: granted };
++  window.dispatchEvent(new CustomEvent<ConsentChangeEventDetail>(CONSENT_CHANGE_EVENT, { detail }));
++}
+diff --git a/frontend/lib/cookieConsentUi.test.ts b/frontend/lib/cookieConsentUi.test.ts
+new file mode 100644
+index 0000000..ae00d42
+--- /dev/null
++++ b/frontend/lib/cookieConsentUi.test.ts
+@@ -0,0 +1,141 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++
++function read(relPath: string): string {
++  return fs.readFileSync(path.join(frontendRoot, relPath), 'utf-8');
++}
++
++describe('T-018: CookieConsent.tsx — banner gating and behaviour (source-pattern verification; live behaviour re-verified via Playwright in isolated runtime, per T-010 precedent for this codebase\'s test infra)', () => {
++  const source = read('components/CookieConsent.tsx');
++
++  test('is a client component', () => {
++    assert.ok(source.startsWith("'use client';"));
++  });
++
++  test('feature disabled -> no banner: gates on isAnalyticsConsentFeatureEnabled() before ever setting a visible mode', () => {
++    assert.ok(/if \(!isAnalyticsConsentFeatureEnabled\(\)\) return;/.test(source));
++  });
++
++  test('first-visit banner only appears when consent is unset — existing granted/rejected choice suppresses it', () => {
++    assert.ok(/if \(current === 'unset'\) setMode\('banner'\)/.test(source), 'banner must only auto-open for the unset case');
++  });
++
++  test('Accept and Reject are both rendered unconditionally together (same layer, not one gated behind the other)', () => {
++    const rejectIdx = source.indexOf("choose(false)");
++    const acceptIdx = source.indexOf("choose(true)");
++    assert.ok(rejectIdx > -1 && acceptIdx > -1, 'both actions must exist');
++    const between = source.slice(rejectIdx, acceptIdx);
++    assert.ok(!/\{isSettings|\{mode ===/.test(between), 'Accept must not be behind an extra conditional that Reject is not also behind');
++  });
++
++  test('Accept and Reject buttons share an identical className (equal visual weight — no larger/brighter Accept)', () => {
++    const buttonBlocks = [...source.matchAll(/onClick=\{\(\) => choose\((true|false)\)\}[\s\S]{0,200}?className="([^"]+)"/g)];
++    assert.equal(buttonBlocks.length, 2, 'expected exactly one Accept and one Reject button block');
++    const classNames = buttonBlocks.map(m => m[2]);
++    assert.equal(classNames[0], classNames[1], `Accept/Reject className must be identical — got ${JSON.stringify(classNames)}`);
++  });
++
++  test('both actions call setAnalyticsConsent then close() — a single action closes the banner, no separate "continue without choosing" path', () => {
++    assert.ok(/const choose = useCallback\(\(granted: boolean\) => \{\s*setAnalyticsConsent\(granted\);[\s\S]*?close\(\);/.test(source));
++  });
++
++  test('does not use the text "Accept to continue" or any cookie-wall phrasing', () => {
++    assert.ok(!/accept to continue/i.test(source));
++  });
++
++  test('initial mode is "hidden", not pre-granted — no preselected consent', () => {
++    assert.ok(/useState<Mode>\('hidden'\)/.test(source));
++  });
++
++  test('Escape only closes the reopened settings view, not the initial unanswered banner', () => {
++    assert.ok(/if \(mode !== 'settings'\) return;/.test(source));
++    assert.ok(/e\.key === 'Escape'/.test(source));
++  });
++
++  test('close() returns focus to the stored trigger element (footer button) via optional chaining, not an unguarded call', () => {
++    assert.ok(/triggerRef\.current\?\.focus\(\)/.test(source));
++  });
++
++  test('no focus-trap library or manual trap implementation (avoids risk of an incorrectly-implemented trap)', () => {
++    assert.ok(!/focus-trap|trapFocus|inert=/.test(source));
++  });
++
++  test('no background scroll lock (no overflow:hidden / document.body.style manipulation) — must stay a non-blocking bottom banner', () => {
++    assert.ok(!/overflow.*hidden|document\.body\.style/.test(source));
++  });
++
++  test('does not itself listen for lookla:consent-change to load analytics — that remains T-014 scope', () => {
++    assert.ok(!/addEventListener\(CONSENT_CHANGE_EVENT/.test(source), 'T-018 must not react to its own consent-change event by loading anything');
++  });
++
++  test('no GA4 / GTM reference anywhere in the component', () => {
++    assert.ok(!/googletagmanager|gtag\(|google-analytics/i.test(source));
++  });
++});
++
++describe('T-018: Footer.tsx — cookie-settings control', () => {
++  const source = read('components/Footer.tsx');
++
++  test('is a client component', () => {
++    assert.ok(source.startsWith("'use client';"));
++  });
++
++  test('cookie-settings control is gated on the same feature flag as the banner', () => {
++    assert.ok(/isAnalyticsConsentFeatureEnabled\(\)\s*&&/.test(source));
++  });
++
++  test('cookie-settings control is a real <button type="button">, not an href="#" link', () => {
++    assert.ok(/<button\s+type="button"[\s\S]*?openCookieSettings/.test(source));
++    assert.ok(!/href="#"/.test(source));
++  });
++
++  test('dispatches the shared CONSENT_OPEN_SETTINGS_EVENT constant (not a locally-duplicated string, avoiding drift with CookieConsent.tsx)', () => {
++    assert.ok(source.includes("import { isAnalyticsConsentFeatureEnabled, CONSENT_OPEN_SETTINGS_EVENT } from '@/lib/consent'"));
++    assert.ok(source.includes('new CustomEvent(CONSENT_OPEN_SETTINGS_EVENT'));
++  });
++
++  test('always links to Privacy Policy and Cookie Policy regardless of the analytics feature flag', () => {
++    assert.ok(/href=\{`\$\{prefix\}\/privacy`\}/.test(source));
++    assert.ok(/href=\{`\$\{prefix\}\/cookies`\}/.test(source));
++  });
++
++  test('no GA4 / GTM reference anywhere in the component', () => {
++    assert.ok(!/googletagmanager|gtag\(|google-analytics/i.test(source));
++  });
++});
++
++describe('T-018: no consent-gated content blocking (rejecting analytics must not disable site functionality)', () => {
++  test('no component outside consent.ts/CookieConsent.tsx/Footer.tsx reads analytics consent to gate rendering', () => {
++    const searchDirs = ['app', 'components'];
++    const offenders: string[] = [];
++    function walk(dir: string) {
++      for (const entry of fs.readdirSync(path.join(frontendRoot, dir), { withFileTypes: true })) {
++        const rel = path.join(dir, entry.name);
++        if (entry.isDirectory()) { walk(rel); continue; }
++        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
++        if (rel.includes('CookieConsent.tsx') || rel.includes('Footer.tsx')) continue;
++        if (rel.endsWith('.test.ts')) continue;
++        const content = fs.readFileSync(path.join(frontendRoot, rel), 'utf-8');
++        if (/getAnalyticsConsent|isAnalyticsConsentFeatureEnabled/.test(content)) offenders.push(rel);
++      }
++    }
++    for (const d of searchDirs) walk(d);
++    assert.deepEqual(offenders, [], `only CookieConsent.tsx/Footer.tsx may reference the consent gate — found it also in: ${offenders.join(', ')}`);
++  });
++
++  test('no NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED=true is set anywhere in tracked env/config files in this repo', () => {
++    const candidates = ['.env.example', 'next.config.mjs'];
++    for (const c of candidates) {
++      const full = path.join(frontendRoot, c);
++      if (!fs.existsSync(full)) continue;
++      const content = fs.readFileSync(full, 'utf-8');
++      assert.ok(!/NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED\s*=\s*true/.test(content), `${c} must not enable the flag — T-018 ships it dormant, T-014 turns it on`);
++    }
++  });
++});
+diff --git a/frontend/lib/cookiePolicyContent.test.ts b/frontend/lib/cookiePolicyContent.test.ts
+new file mode 100644
+index 0000000..8d4580d
+--- /dev/null
++++ b/frontend/lib/cookiePolicyContent.test.ts
+@@ -0,0 +1,132 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { COOKIE_POLICY_CONTENT } from '../app/[locale]/cookies/content';
++import { PRIVACY_CONTENT } from '../app/[locale]/privacy/content';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++
++describe('T-018: Cookie Policy page exists and is SSR', () => {
++  test('page.tsx exists at app/[locale]/cookies/page.tsx', () => {
++    assert.ok(fs.existsSync(path.join(frontendRoot, 'app', '[locale]', 'cookies', 'page.tsx')));
++  });
++
++  test('page.tsx has no "use client" directive — server component (SSR)', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'cookies', 'page.tsx'), 'utf-8');
++    assert.ok(!source.includes("'use client'"));
++  });
++
++  test('page.tsx exports a default async CookiePolicyPage component', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'cookies', 'page.tsx'), 'utf-8');
++    assert.ok(source.includes('export default async function CookiePolicyPage'));
++  });
++});
++
++describe('T-018: Cookie Policy content covers all 4 locales with matching structure', () => {
++  for (const locale of LOCALES) {
++    test(`${locale} content exists and is non-empty`, () => {
++      const c = COOKIE_POLICY_CONTENT[locale];
++      assert.ok(c.title.length > 0);
++      assert.ok(c.lastUpdated.length > 0);
++      assert.ok(c.intro.length > 0);
++      assert.ok(c.sections.length > 0);
++    });
++
++    test(`${locale} section headings are sequential (1., 2., 3., ...)`, () => {
++      const c = COOKIE_POLICY_CONTENT[locale];
++      const numbers = c.sections.map(s => Number(s.heading.match(/^(\d+)\./)![1]));
++      assert.deepEqual(numbers, Array.from({ length: c.sections.length }, (_, i) => i + 1));
++    });
++  }
++
++  test('all 4 locales have the same number of sections', () => {
++    const counts = LOCALES.map(l => COOKIE_POLICY_CONTENT[l].sections.length);
++    assert.ok(counts.every(c => c === counts[0]), JSON.stringify(counts));
++  });
++});
++
++describe('T-018: controller identity and contact match the Privacy Policy', () => {
++  test('English Cookie Policy names the same controller as the Privacy Policy', () => {
++    const cookieText = JSON.stringify(COOKIE_POLICY_CONTENT.en);
++    const privacyText = JSON.stringify(PRIVACY_CONTENT.en.intro);
++    assert.ok(cookieText.includes('Zhuykov Andrey'));
++    assert.ok(privacyText.includes('Zhuykov Andrey'));
++  });
++
++  for (const locale of LOCALES) {
++    test(`${locale} references hello@lookla.gr`, () => {
++      assert.ok(JSON.stringify(COOKIE_POLICY_CONTENT[locale]).includes('hello@lookla.gr'));
++    });
++  }
++});
++
++describe('T-018: every verified cookie appears exactly once in the table, no speculative cookies', () => {
++  const expectedCookies = ['access_token', 'refresh_token', 'oauth_csrf', 'NEXT_LOCALE', 'lookla_consent'];
++
++  test('English content lists each verified cookie exactly once', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    for (const name of expectedCookies) {
++      const occurrences = (text.match(new RegExp(`• ${name} —`, 'g')) || []).length;
++      assert.equal(occurrences, 1, `${name} should appear exactly once as a table row, found ${occurrences}`);
++    }
++  });
++
++  test('does not list any _ga cookie as currently active', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    assert.ok(!/_ga[,\s]/i.test(text) && !/•\s*_ga/i.test(text), 'must not present a speculative _ga cookie as currently installed');
++  });
++
++  test('GA4 is explicitly described as inactive, not merely absent from the list', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    assert.ok(/does not use Google Analytics \(GA4\)/i.test(text));
++  });
++
++  test('states analytics will only run after active acceptance, never by default', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    assert.ok(/never by default/i.test(text));
++  });
++});
++
++describe('T-018: Cloudflare cookie claims are honestly qualified (verified-absent, not claimed-never)', () => {
++  test('states Cloudflare set no cookie during the actual test performed', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    assert.ok(/did not set any cookie/i.test(text));
++  });
++
++  test('does not claim Cloudflare never sets a cookie under any condition', () => {
++    const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
++    assert.ok(/We are not claiming Cloudflare never sets a cookie/i.test(text));
++  });
++
++  test('does not classify Cloudflare security/challenge cookies as analytics', () => {
++    // Check only the Cloudflare section's own paragraphs, not the whole flattened
++    // sections array — "analytics" legitimately appears in the very next section
++    // (6. Optional analytics), which a substring-spanning regex would false-positive on.
++    const cloudflareSection = COOKIE_POLICY_CONTENT.en.sections.find(s => s.heading.includes('Cloudflare'));
++    assert.ok(cloudflareSection, 'expected a dedicated Cloudflare section');
++    const text = cloudflareSection!.paragraphs.join(' ');
++    assert.ok(!/analytics/i.test(text), 'the Cloudflare section itself must not describe any Cloudflare cookie as analytics');
++  });
++});
++
++describe('T-018: Privacy Policy and Cookie Policy cross-link correctly', () => {
++  test('Cookie Policy links back to the Privacy Policy', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'cookies', 'page.tsx'), 'utf-8');
++    assert.ok(source.includes('/privacy'));
++  });
++
++  test('Privacy Policy references the Cookie Policy for the full cookie list (not "planned")', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
++    assert.ok(/Cookie Policy/i.test(text));
++    assert.ok(!/planned as separate, upcoming work/i.test(text), 'Privacy Policy must no longer describe the Cookie Policy as merely planned — it now exists');
++  });
++
++  test('Privacy Policy describes the lookla_consent cookie now that it exists', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
++    assert.ok(text.includes('lookla_consent'));
++  });
++});
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index cc33c30..192d932 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -257,5 +257,19 @@
+     "language": "Γλώσσα",
+     "not_found_title": "Η σελίδα δεν βρέθηκε",
+     "home": "Αρχική"
++  },
++  "footer": {
++    "privacy": "Πολιτική Απορρήτου",
++    "cookies": "Πολιτική Cookies",
++    "cookieSettings": "Ρυθμίσεις cookies"
++  },
++  "cookieConsent": {
++    "message": "Θα θέλαμε να χρησιμοποιήσουμε προαιρετικά cookies αναλυτικών στοιχείων για να κατανοήσουμε πώς οι επισκέπτες χρησιμοποιούν το Lookla. Αυτό δεν επηρεάζει τη δυνατότητά σας να αναζητάτε, να στέλνετε μηνύματα σε σαλόνια ή να συνδέεστε, ανεξαρτήτως επιλογής.",
++    "policyLink": "Πολιτική Cookies",
++    "accept": "Αποδοχή αναλυτικών",
++    "reject": "Απόρριψη αναλυτικών",
++    "close": "Κλείσιμο",
++    "bannerAriaLabel": "Συναίνεση cookies",
++    "settingsAriaLabel": "Ρυθμίσεις cookies"
+   }
+ }
+\ No newline at end of file
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index c439629..1dca47d 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -257,5 +257,19 @@
+     "language": "Language",
+     "not_found_title": "Page not found",
+     "home": "Home"
++  },
++  "footer": {
++    "privacy": "Privacy Policy",
++    "cookies": "Cookie Policy",
++    "cookieSettings": "Cookie settings"
++  },
++  "cookieConsent": {
++    "message": "We'd like to use optional analytics cookies to understand how visitors use Lookla. This won't affect your ability to search, message salons, or sign in either way.",
++    "policyLink": "Cookie Policy",
++    "accept": "Accept analytics",
++    "reject": "Reject analytics",
++    "close": "Close",
++    "bannerAriaLabel": "Cookie consent",
++    "settingsAriaLabel": "Cookie settings"
+   }
+ }
+\ No newline at end of file
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index abc1abc..da9377b 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -257,5 +257,19 @@
+     "language": "Язык",
+     "not_found_title": "Страница не найдена",
+     "home": "На главную"
++  },
++  "footer": {
++    "privacy": "Политика конфиденциальности",
++    "cookies": "Политика использования cookies",
++    "cookieSettings": "Настройки cookies"
++  },
++  "cookieConsent": {
++    "message": "Мы хотели бы использовать необязательные аналитические cookie, чтобы понимать, как посетители пользуются Lookla. Это не повлияет на вашу возможность искать, писать салонам или входить в аккаунт — независимо от выбора.",
++    "policyLink": "Политика использования cookies",
++    "accept": "Принять аналитику",
++    "reject": "Отклонить аналитику",
++    "close": "Закрыть",
++    "bannerAriaLabel": "Согласие на использование cookies",
++    "settingsAriaLabel": "Настройки cookies"
+   }
+ }
+\ No newline at end of file
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 79db8f7..7cbe823 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -257,5 +257,19 @@
+     "language": "Мова",
+     "not_found_title": "Сторінку не знайдено",
+     "home": "На головну"
++  },
++  "footer": {
++    "privacy": "Політика конфіденційності",
++    "cookies": "Політика використання cookies",
++    "cookieSettings": "Налаштування cookies"
++  },
++  "cookieConsent": {
++    "message": "Ми хотіли б використовувати необов'язкові аналітичні cookie, щоб розуміти, як відвідувачі користуються Lookla. Це не вплине на вашу можливість шукати, писати салонам чи входити в акаунт — незалежно від вибору.",
++    "policyLink": "Політика використання cookies",
++    "accept": "Прийняти аналітику",
++    "reject": "Відхилити аналітику",
++    "close": "Закрити",
++    "bannerAriaLabel": "Згода на використання cookies",
++    "settingsAriaLabel": "Налаштування cookies"
+   }
+ }
+\ No newline at end of file
+diff --git a/frontend/package.json b/frontend/package.json
+index ebcec39..2114e53 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
