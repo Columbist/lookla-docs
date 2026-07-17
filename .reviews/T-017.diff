@@ -1,6 +1,6 @@
 diff --git a/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
 new file mode 100644
-index 0000000..83220ad
+index 0000000..257b4b4
 --- /dev/null
 +++ b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
 @@ -0,0 +1,140 @@
@@ -143,7 +143,7 @@ index 0000000..83220ad
 +
 +## 5. Tracking
 +
-+A private, dated log of data-subject requests, minor-account reports, and quarterly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.
++A private, dated log of data-subject requests, minor-account reports, and monthly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 index aa7fb26..15f88cf 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
@@ -1048,10 +1048,10 @@ index 0000000..fdb2bc6
 +}
 diff --git a/frontend/lib/privacyContent.test.ts b/frontend/lib/privacyContent.test.ts
 new file mode 100644
-index 0000000..ddae3ec
+index 0000000..b153179
 --- /dev/null
 +++ b/frontend/lib/privacyContent.test.ts
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,321 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
@@ -1206,7 +1206,13 @@ index 0000000..ddae3ec
 +    const opsPath = path.join(frontendRoot, '..', 'docs', '04_ARCHITECTURE', 'PRIVACY_OPERATIONS.md');
 +    const text = fs.readFileSync(opsPath, 'utf-8');
 +    assert.ok(/monthly/i.test(text), 'PRIVACY_OPERATIONS.md must state a monthly cleanup cadence');
-+    assert.ok(!/run \*\*quarterly\*\*|Run quarterly/i.test(text), 'must not still say quarterly — a quarterly cadence against a 12-month target allows ~15 months actual retention');
++    // "quarterly" legitimately appears twice within the one explanatory monthly-vs-quarterly
++    // contrast sentence ("Cadence: monthly, not quarterly... A quarterly cadence against a
++    // 12-month target allows...") — that's fine. What must NOT appear is a stale leftover
++    // instruction treating quarterly as the actual operative cadence elsewhere in the doc.
++    for (const stalePattern of [/run \*\*quarterly\*\*/i, /^Run quarterly/im, /quarterly cleanup runs/i, /quarterly\)/i]) {
++      assert.ok(!stalePattern.test(text), `found a stale "quarterly" leftover matching ${stalePattern} — the doc still describes quarterly as the operative cadence somewhere outside the explanatory contrast sentence`);
++    }
 +  });
 +
 +  test('PRIVACY_OPERATIONS.md documents the free-text (messages/notes) manual review step for erasure', () => {
