@@ -672,29 +672,32 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
 
 ---
 
-### T-018 — Create cookie consent banner
-**Priority:** P0 | **Owner:** FE | **Estimate:** 1.5h | **Epic:** EPIC-05
-**Dependencies:** T-017
+### T-018 — Cookie Policy and analytics-consent foundation
+**Priority:** P0 | **Owner:** FE | **Estimate:** 3h | **Epic:** EPIC-05
+**Dependencies:** T-017 ✅ Completed
 
-**Description:** Minimal cookie consent banner. Appears on first visit. Sets `lookla_consent=1` cookie. GA4 script (T-014) checks this cookie before loading.
+**Correction to the original spec below (renamed and rewritten before implementation, per architect review):** the original design was non-compliant on three counts the Hellenic DPA explicitly guards against — it offered only an Accept button with "Accept to continue" phrasing (a cookie wall, not a real choice), had no Reject action at the same level as Accept, and had no way to withdraw consent once given. It also implicitly assumed GA4/T-014 would already exist. None of that is carried forward. GA4 is **not** implemented by this task — see T-014.
 
-**Minimal implementation:**
-```tsx
-// components/CookieConsent.tsx
-// Shows banner at bottom of page on first visit
-// "This site uses cookies for analytics. Accept to continue."
-// Two buttons: "Accept" (sets cookie) and "Privacy Policy" link
-// Banner disappears after accept, does not reappear (30-day cookie)
-```
+**Description:** Build the Cookie Policy page (4 locales) and a dependency-free analytics-consent foundation (cookie contract + banner + persistent settings control) that T-014 can build on. At the end of this task, no analytics script or non-essential analytics cookie exists anywhere on the site — the consent mechanism ships dormant, gated behind a feature flag T-014 turns on only once GA4 is actually configured.
+
+**Pre-write inventory (mandatory phase before any code was written):** every `document.cookie` write, every backend `Set-Cookie`, `localStorage`/`sessionStorage` usage, and Cloudflare-injected cookies were re-verified live — not assumed from the T-017 audit, which the review explicitly required re-checking. Findings: only `NEXT_LOCALE` (frontend, functional) plus `access_token`/`refresh_token`/`oauth_csrf` (backend, all necessary/security) exist; no `localStorage`/`sessionStorage`/`js-cookie` usage anywhere. Google OAuth start was tested live against production (never completing the flow — no account created), confirming `oauth_csrf`'s exact header (`HttpOnly; Max-Age=600; Path=/; SameSite=lax; Secure`). `access_token`/`refresh_token` use the identical `**COOKIE_OPTS` dict as the live-confirmed `oauth_csrf` (`auth.py:28`), so their flags are verified via that shared mechanism plus direct source reading, not a live login — creating a real production account solely to observe an already-verified cookie-setting mechanism was judged an unnecessary write. Cloudflare: tested live against `https://lookla.gr/` (fresh browser context) — no Cloudflare cookie observed under normal browsing; explicitly not claiming one never appears, since Cloudflare's bot-challenge cookies are heuristic-triggered and weren't safely reproducible in this testing.
+
+**Canonical consent contract (`frontend/lib/consent.ts`):** cookie `lookla_consent`, values `1` (granted) / `0` (rejected) / anything else treated as unset. `Path=/`, `Max-Age=15552000` (180 days), `SameSite=Lax`, `Secure` only when served over HTTPS (conditional, not hardcoded — a hardcoded `Secure` would silently break local `http://` testing), **not** `HttpOnly` (the banner, settings control, and T-014's future GA4 loader must read it from client-side JS). Stores only the single digit — no identifier, timestamp, IP, user ID, locale, or fingerprint. A `lookla:consent-change` event (`{ analytics: boolean }` detail) fires on every write, so T-014 can react without reverse-engineering the banner. A separate `lookla:open-cookie-settings` event lets the footer's persistent "Cookie settings" control reopen the same UI later — accept can be changed to reject and back, exactly as easily as the original choice, per the DPA requirement that withdrawal be no harder than consent.
+
+**Feature gate:** `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` — unset or not `"true"` (the shipped default): banner and settings control stay fully dormant, nothing renders. `true`: banner appears when consent is unset, footer settings control becomes visible. This flag is **not** enabled in this task — T-014 turns it on once GA4 is actually configured, per the explicit instruction not to ask users to consent to a service that doesn't exist yet.
+
+**UX contract enforced (and regression-tested):** Accept and Reject render together, unconditionally, with an identical `className` (equal visual weight, equal click cost), no "Accept to continue" text anywhere, no preselected consent, no close icon on the *initial* unanswered banner (Escape and the × control only exist on the reopened settings view), rejecting never gates search/salon pages/map/contact CTAs/auth/messaging/locale selection.
+
+**New global footer:** this is the first footer component in the codebase — previous tickets (T-011, T-020, T-021) each independently deferred "linked in footer" as out-of-scope since none existed. It became a hard functional requirement here (there is no other way to satisfy "withdraw consent as easily as you gave it" without a persistent, always-available control), so it was built now: Privacy Policy link, Cookie Policy link, and the feature-gated "Cookie settings" button, wired into `app/[locale]/layout.tsx` so it appears on every page. Verified via Playwright across representative pages (home, search, salon detail, privacy, cookies) at desktop and 375px for layout regressions before merge.
 
 **Acceptance Criteria:**
-- [ ] Banner appears on first visit (no `lookla_consent` cookie)
-- [ ] Banner disappears after clicking "Accept"
-- [ ] `lookla_consent=1` cookie is set after accept
-- [ ] Banner does not appear on subsequent visits within 30 days
-- [ ] GA4 script only fires after `lookla_consent=1` is set
-- [ ] Banner includes link to `/[locale]/privacy`
-- [ ] Banner is accessible on mobile 375px without blocking salon content
+- [ ] `lookla_consent` cookie contract matches the canonical spec exactly (values, flags, 180-day lifetime, no identifying data)
+- [ ] Accept and Reject are visible simultaneously, equal effort, equal visual weight — no cookie wall, no preselection, no "Accept to continue"
+- [ ] Consent can be withdrawn/changed via the footer "Cookie settings" control, as easily as it was given
+- [ ] Rejecting analytics does not disable any existing site functionality
+- [ ] `/cookies` (el), `/en/cookies`, `/ru/cookies`, `/uk/cookies` return 200, structurally identical, cross-linked with `/privacy`
+- [ ] No GA4/GTM script, no analytics request, no `_ga*` cookie anywhere — `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` is not enabled in production by this task
+- [ ] T-017's Privacy Policy updated for factual consistency only: `lookla_consent` described, Cookie Policy linked instead of described as "planned"
 
 ---
 
