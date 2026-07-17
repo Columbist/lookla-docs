@@ -1,9 +1,9 @@
 diff --git a/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
 new file mode 100644
-index 0000000..6a4c636
+index 0000000..83220ad
 --- /dev/null
 +++ b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,140 @@
 +---
 +title: Privacy Operations — Manual SOPs and Legitimate Interest Assessments
 +status: Approved
@@ -45,16 +45,20 @@ index 0000000..6a4c636
 +- **Rectification:** update the specific field(s) directly (`UPDATE users SET name = :new WHERE id = :id;` etc.) after confirming the correction with the requester.
 +
 +- **Erasure (account deletion), target: 30 days from request.**
-+  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **anonymize in place**, not hard-delete the row:
-+  1. `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, is_active = false WHERE id = :id;`
-+  2. `DELETE FROM email_verifications WHERE user_id = :id;`
-+  3. `DELETE FROM password_resets WHERE user_id = :id;`
-+  4. `DELETE FROM refresh_tokens WHERE user_id = :id;`
-+  5. `UPDATE reports SET reporter_user_id = NULL WHERE reporter_user_id = :id;` (the `reporter_ip` and report content stay, per the report-retention target below and the anti-abuse legitimate interest — only the link to this specific person is removed)
-+  6. Review `salon_owners` rows for this `user_id` manually before touching them — removing a live salon's owner link has a business-visible effect on that salon's "Owner verified" status (T-011). Confirm with the requester whether they also want the salon-owner relationship removed, or only their personal account data.
-+  7. Review `availability_requests`/`appointments` where `client_user_id = :id` — anonymize `client_name`/`client_phone` on those rows the same way as step 1, rather than deleting the row outright (a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with).
++  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **anonymize in place**, not hard-delete the row. This is a checklist, not a single step — every item below must be worked through, not just the `users` row:
++
++  1. **`users` row** — `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, is_active = false WHERE id = :id;` — clears email, password, name, phone, WhatsApp, Viber, avatar, and the Google account ID (`sub`) in one statement, and disables login.
++  2. **Verification/reset tokens** — `DELETE FROM email_verifications WHERE user_id = :id;` and `DELETE FROM password_resets WHERE user_id = :id;`.
++  3. **Sessions** — `DELETE FROM refresh_tokens WHERE user_id = :id;` (also sign the user out by invalidating the `access_token`/`refresh_token` cookies if they still hold an active browser session).
++  4. **Reports** — `UPDATE reports SET reporter_user_id = NULL WHERE reporter_user_id = :id;` (the `reporter_ip` and report content stay, per the report-retention target below and the anti-abuse legitimate interest — only the link to this specific person is removed).
++  5. **Salon-owner claim associations** — review `salon_owners` rows for this `user_id` manually before touching them; removing a live salon's owner link has a business-visible effect on that salon's "Owner verified" status (T-011). Confirm with the requester whether they also want the salon-owner relationship removed, or only their personal account data.
++  6. **Availability requests / appointments** — for rows where `client_user_id = :id`, anonymize `client_name` and `client_phone` on the row itself (same placeholder pattern as step 1), rather than deleting the row outright — a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with. Also check `service_notes`/`reply_text` on these rows for free text — see step 7.
++  7. **Free text — messages and notes, reviewed manually, not auto-scrubbed.** Replacing the `users` row does not remove personal data the person may have *typed into free text* elsewhere — a phone number or full name written directly into a message body or an availability-request note survives step 1 untouched. There is no automated free-text PII scrubber today; this step is a manual read-through, not optional:
++     - Read every `messages.body` where `sender_user_id = :id` (or where the conversation involves this user, if reviewing from the other direction). Where a message contains personal data typed by the requester (a phone number, an email, a full name), redact only that specific text in place (`UPDATE messages SET body = '[redacted]' WHERE id = :message_id;` or a targeted string replacement) — do not delete the surrounding message or conversation, which would remove the other party's legitimate record of what was discussed.
++     - Read `service_notes` and `reply_text` on this user's `availability_requests` rows for the same reason, and redact in place if personal data is found beyond the already-anonymized `client_name`/`client_phone` fields.
++     - Record in the completion log which messages/notes (if any) were redacted, separately from the account-level anonymization — this is a distinct action with its own judgment call, not automatic.
 +  8. Record the completion date in the log.
-+  9. The anonymized row will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
++  9. The anonymized row (and any redacted messages/notes) will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
 +
 +- **Restriction:** set `is_active = false` on the `users` row (already-existing column) to block login/authentication while a dispute is resolved, without deleting anything.
 +
@@ -64,14 +68,14 @@ index 0000000..6a4c636
 +
 +## 2. Periodic retention cleanup (manual, until T-048 automates it)
 +
-+Run **quarterly** (first week of January/April/July/October) by the controller, as a `psql` session against production:
++**Cadence: monthly, not quarterly.** A quarterly cadence against a 12-month target allows actual retention to reach up to ~15 months in the worst case (a row that crosses the 12-month line the day after a cleanup run waits a further 3 months for the next one). A monthly cadence bounds the worst case to ~13 months, which is close enough to the stated 12-month target to be an honest match for a "target" figure rather than a guaranteed exact cutoff. Run on the **1st of every month** by the controller, as a `psql` session against production:
 +
 +1. **Messages/conversations** — `SELECT id, last_message_at FROM conversations WHERE last_message_at < NOW() - INTERVAL '12 months';` review the list, then delete the conversation's `messages` rows and the `conversations` row itself for any where the associated account is already anonymized/inactive, or where both parties' last activity is >12 months old.
 +2. **Availability requests / appointments** — `SELECT id, created_at FROM availability_requests WHERE created_at < NOW() - INTERVAL '12 months';` and the equivalent for `appointments.starts_at`; delete rows past the window.
 +3. **Reports** — `SELECT id, created_at FROM reports WHERE created_at < NOW() - INTERVAL '12 months';` delete rows past the window (this also removes the associated `reporter_ip`).
-+4. **Salon-owner claims** — `salon_owners` currently has no status/end-date column (flagged in T-048), so there is no automatic 12-month clock to run today. Manual trigger only: if a claim is discovered to be abandoned, fraudulent, or superseded (salon changed hands), the controller removes the row on discovery. This is an honest gap, not a silent one — the public policy states the *target*, and this document records that the target is not yet mechanically enforceable for this specific data type until a schema change ships.
++4. **Salon-owner claims** — `salon_owners` currently has no status/end-date column (flagged in T-048), so there is no 12-month clock to run at all for this table — the public policy's wording for claims was corrected (2026-07-17) to reflect this honestly: claim records are retained while the ownership link is active, and removed manually on discovery that a claim is no longer valid, not on a fixed post-end timer. Include a check for obviously-stale claims (e.g. cross-reference against salons that appear closed/duplicate via the `reports` table) in this monthly run as a best-effort discovery mechanism, but do not claim this guarantees timely removal — that requires the schema change tracked in T-048.
 +
-+Record each quarterly run (date executed, row counts affected) in the private log.
++Record each monthly run (date executed, row counts affected) in the private log.
 +
 +---
 +
@@ -85,12 +89,10 @@ index 0000000..6a4c636
 +
 +**Step 2 — Verification.** Request reasonable confirmation from whoever raised the concern, or from the account holder directly (e.g. asking them to confirm their age). This is *not* a formal ID-check process — consistent with the public policy not claiming a technical age-verification system exists. The bar is "reasonable," not "certain."
 +
-+**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them):
-+1. `UPDATE users SET is_active = false WHERE id = :id;` — immediately blocks login.
-+2. Apply the same anonymization steps as account erasure (Section 1 above) to the account's personal data.
-+3. Messages: anonymize the sender's identity on their messages (same pattern as Section 1), rather than deleting message history a salon may still need for context on an existing conversation with an adult on the other side.
-+4. Appointments/availability-requests tied to the account: anonymize the client name/phone; if an appointment is still pending (in the future), the controller manually contacts the salon to inform them the booking is cancelled — there is no automated appointment-cancellation notification today (a gap already disclosed in the public policy's Security section, regarding appointment confirmations generally).
-+5. Any salon-owner claim linked to the account is reviewed separately before touching it, same as Section 1 step 6 — a minor should not be a salon's registered owner, so this case is treated as a priority manual review, not deferred.
++**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them). Work through the full checklist in Section 1 step "Erasure," items 1–7, exactly as for a self-requested erasure — including the mandatory free-text review of this account's messages and availability-request notes (Section 1, item 7), since a minor may have typed a real name, phone number, or other identifying detail directly into a message even though the account profile itself is anonymized. Additionally for this case specifically:
++1. `UPDATE users SET is_active = false WHERE id = :id;` — do this *first*, immediately on confirmation, before working through the rest of the checklist, to stop further use of the account without waiting for the full erasure process to complete.
++2. If an appointment tied to this account is still pending (in the future), the controller manually contacts the salon to inform them the booking is cancelled — there is no automated appointment-cancellation notification today (a gap already disclosed in the public policy's Security section, regarding appointment confirmations generally).
++3. Any salon-owner claim linked to the account is reviewed as a priority, not deferred — a minor should not be a salon's registered owner.
 +
 +**Step 4 — Record** the report date, verification outcome, and actions taken in the private log.
 +
@@ -143,7 +145,7 @@ index 0000000..6a4c636
 +
 +A private, dated log of data-subject requests, minor-account reports, and quarterly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index aa7fb26..5b44ddf 100644
+index aa7fb26..15f88cf 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 @@ -628,19 +628,40 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
@@ -198,7 +200,7 @@ index aa7fb26..5b44ddf 100644
  
  ---
  
-@@ -1166,6 +1187,115 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -1166,6 +1187,116 @@ Sitemap: https://lookla.gr/sitemap.xml
  
  ---
  
@@ -270,18 +272,19 @@ index aa7fb26..5b44ddf 100644
 +**Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
 +**Dependencies:** T-017
 +
-+**Description:** T-017's Privacy Policy states specific retention targets for which no *automated* enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). A manual quarterly cleanup SOP is documented and operational (`docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §2) so the retention targets are currently met by hand — this ticket replaces the quarterly manual `psql` run with a scheduled job. Needed:
++**Description:** T-017's Privacy Policy states specific retention targets for which no *automated* enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). A manual **monthly** cleanup SOP is documented and operational (`docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §2 — deliberately monthly, not quarterly, because a quarterly cadence against a 12-month target allows actual retention up to ~15 months in the worst case; monthly bounds it to ~13 months) so the retention targets are currently met by hand — this ticket replaces the monthly manual `psql` run with a scheduled job. Needed:
 +- Expired/used `email_verifications` and `password_resets` rows — currently just become unusable at `expires_at`, never deleted.
 +- Expired/revoked `refresh_tokens` rows.
 +- `messages`/`conversations` older than 12 months past account closure or last activity.
 +- `availability_requests`/`appointments` older than 12 months past the relevant date.
 +- `reports` (including `reporter_ip`) older than 12 months past submission.
-+- `salon_owners`/`claiming_tokens` older than 12 months past when a claim ends (note: `SalonOwner` currently has no status/end-date column at all — see whether "claim ends" needs a new column, or whether this only applies to abandoned `claiming_tokens`, before implementing).
++- **`salon_owners` schema change**: add a `status`/`ended_at` column (currently absent — `SalonOwner` has no such field at all, confirmed via `backend/app/models/salon.py`). The public policy's wording for claims was corrected (2026-07-17) specifically because this field doesn't exist yet — claims are described as retained while active, removed manually on discovery, not on a fixed post-end timer. This ticket should add the schema field *and* update the policy back to a fixed 12-month-post-end target once it exists and a job enforces it — until then, do not silently let the policy and the schema drift apart again.
 +
 +**Acceptance Criteria:**
 +- [ ] A scheduled job (cron, Celery beat, or equivalent) exists that purges each of the above once past its retention target
 +- [ ] Each job is tested against a fixture with rows both inside and outside the retention window
 +- [ ] Confirm translation-cache columns (`Review.text_en/ru/uk`, `Service.name_en/ru/uk`) need no separate cleanup job — they are columns on the same row as the source content, so they are deleted automatically if/when the source row is deleted; no separate cache table exists
++- [ ] `salon_owners` gains a `status`/`ended_at` column via an Alembic migration, and the Privacy Policy's claim-retention wording is updated back to a fixed 12-month-post-end target once this ships
 +
 +---
 +
@@ -316,7 +319,7 @@ index aa7fb26..5b44ddf 100644
  | Task | Priority | Owner | Hours | Epic | Depends on |
 diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
 new file mode 100644
-index 0000000..52e50d8
+index 0000000..a5238c4
 --- /dev/null
 +++ b/frontend/app/[locale]/privacy/content.ts
 @@ -0,0 +1,665 @@
@@ -335,7 +338,7 @@ index 0000000..52e50d8
 +export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent> = {
 +  en: {
 +    title: 'Privacy Policy',
-+    lastUpdated: '2026-07-16',
++    lastUpdated: '2026-07-17',
 +    intro: [
 +      'This page describes what personal data Lookla ("we", "us") actually collects, stores, and shares today, based on a direct review of the running application — not a generic template.',
 +      'Lookla is a marketplace for beauty salons and independent professionals in Greece.',
@@ -439,7 +442,7 @@ index 0000000..52e50d8
 +          '• Messages — for as long as your account is active, and our target is no longer than 12 months after account closure or the conversation\'s last activity. We do not currently have an automated job that enforces this.',
 +          '• Availability requests and appointment records — our target is 12 months after the relevant date. This feature is not currently reachable through the production frontend (Section 1), and we do not currently have an automated deletion job.',
 +          '• Reports and the IP address recorded with them — our target is 12 months after submission. We do not currently have an automated deletion job for this.',
-+          '• Salon-ownership-claim records — for as long as the claim is active, and our target is 12 months after it ends. We do not currently have an automated deletion job for this.',
++          '• Salon-ownership-claim records — for as long as the ownership link between your account and the salon remains active. We do not yet have a way to record when a claim formally ends, so we cannot currently apply a fixed post-end retention period; until that capability exists, we remove a claim record manually when we become aware it is no longer valid (for example, the salon changes hands or the claim is found to be invalid).',
 +          '• Cached translations of public review/service text — for as long as the corresponding source content remains published; our target is to delete a cached translation when its source content is removed. We do not currently have an automated job that enforces this.',
 +          '• Data already captured in a backup before a deletion request — this ages out automatically as that backup is replaced by the next rotation, at most 7 days later.',
 +          'Where a target above is not yet backed by an automated job, deletion is handled manually today; the corresponding engineering work is tracked separately.',
@@ -498,7 +501,7 @@ index 0000000..52e50d8
 +
 +  el: {
 +    title: 'Πολιτική Απορρήτου',
-+    lastUpdated: '2026-07-16',
++    lastUpdated: '2026-07-17',
 +    intro: [
 +      'Αυτή η σελίδα περιγράφει ποια προσωπικά δεδομένα συλλέγει, αποθηκεύει και μοιράζεται σήμερα το Lookla («εμείς»), με βάση απευθείας έλεγχο της εφαρμογής που λειτουργεί — όχι ένα γενικό πρότυπο.',
 +      'Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα.',
@@ -602,7 +605,7 @@ index 0000000..52e50d8
 +          '• Μηνύματα — για όσο διάστημα ο λογαριασμός σας είναι ενεργός, και ο στόχος μας είναι το πολύ 12 μήνες μετά το κλείσιμο του λογαριασμού ή την τελευταία δραστηριότητα της συνομιλίας. Δεν διαθέτουμε προς το παρόν αυτόματη εργασία που να το επιβάλλει.',
 +          '• Αιτήματα διαθεσιμότητας και εγγραφές ραντεβού — ο στόχος μας είναι 12 μήνες μετά τη σχετική ημερομηνία. Αυτή η λειτουργία δεν είναι προς το παρόν προσβάσιμη μέσω του παραγωγικού frontend (Ενότητα 1), και δεν διαθέτουμε αυτόματη εργασία διαγραφής.',
 +          '• Αναφορές και η διεύθυνση IP που καταγράφεται με αυτές — ο στόχος μας είναι 12 μήνες μετά την υποβολή. Δεν διαθέτουμε προς το παρόν αυτόματη εργασία διαγραφής για αυτό.',
-+          '• Εγγραφές διεκδίκησης ιδιοκτησίας σαλονιού — για όσο διάστημα η διεκδίκηση είναι ενεργή, και ο στόχος μας είναι 12 μήνες μετά τη λήξη της. Δεν διαθέτουμε προς το παρόν αυτόματη εργασία διαγραφής για αυτό.',
++          '• Εγγραφές διεκδίκησης ιδιοκτησίας σαλονιού — για όσο διάστημα ο δεσμός ιδιοκτησίας μεταξύ του λογαριασμού σας και του σαλονιού παραμένει ενεργός. Δεν διαθέτουμε ακόμη τρόπο καταγραφής του πότε μια διεκδίκηση ολοκληρώνεται επίσημα, επομένως δεν μπορούμε προς το παρόν να εφαρμόσουμε σταθερή περίοδο διατήρησης μετά τη λήξη· έως ότου υπάρξει αυτή η δυνατότητα, αφαιρούμε μια εγγραφή διεκδίκησης χειροκίνητα όταν αντιληφθούμε ότι δεν είναι πλέον έγκυρη (για παράδειγμα, το σαλόνι άλλαξε ιδιοκτήτη ή η διεκδίκηση αποδειχθεί άκυρη).',
 +          '• Αποθηκευμένες μεταφράσεις δημόσιου κειμένου αξιολογήσεων/υπηρεσιών — για όσο διάστημα το αντίστοιχο πρωτότυπο περιεχόμενο παραμένει δημοσιευμένο· ο στόχος μας είναι η διαγραφή μιας αποθηκευμένης μετάφρασης όταν αφαιρεθεί το πρωτότυπο περιεχόμενο. Δεν διαθέτουμε προς το παρόν αυτόματη εργασία που να το επιβάλλει.',
 +          '• Δεδομένα που έχουν ήδη καταγραφεί σε αντίγραφο ασφαλείας πριν από ένα αίτημα διαγραφής — αυτά εκπίπτουν αυτόματα καθώς το αντίγραφο ασφαλείας αντικαθίσταται από την επόμενη περιστροφή, το αργότερο σε 7 ημέρες.',
 +          'Όπου ένας στόχος παραπάνω δεν υποστηρίζεται ακόμη από αυτόματη εργασία, η διαγραφή διεκπεραιώνεται σήμερα χειροκίνητα· η αντίστοιχη μηχανική εργασία παρακολουθείται ξεχωριστά.',
@@ -661,7 +664,7 @@ index 0000000..52e50d8
 +
 +  ru: {
 +    title: 'Политика конфиденциальности',
-+    lastUpdated: '2026-07-16',
++    lastUpdated: '2026-07-17',
 +    intro: [
 +      'Эта страница описывает, какие персональные данные Lookla («мы») действительно собирает, хранит и передаёт сегодня — на основе прямой проверки работающего приложения, а не общего шаблона.',
 +      'Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции.',
@@ -765,7 +768,7 @@ index 0000000..52e50d8
 +          '• Сообщения — пока аккаунт активен, и наша цель — не более 12 месяцев после закрытия аккаунта или последней активности переписки. У нас пока нет автоматической задачи, обеспечивающей это.',
 +          '• Запросы на доступное время и записи о визитах — наша цель — 12 месяцев после соответствующей даты. Эта функция пока не доступна через рабочий фронтенд (раздел 1), и у нас пока нет автоматической задачи удаления.',
 +          '• Жалобы и записанный вместе с ними IP-адрес — наша цель — 12 месяцев после подачи. У нас пока нет автоматической задачи удаления для этого.',
-+          '• Записи о подтверждении владения салоном — пока подтверждение активно, и наша цель — 12 месяцев после его завершения. У нас пока нет автоматической задачи удаления для этого.',
++          '• Записи о подтверждении владения салоном — пока связь владения между вашим аккаунтом и салоном остаётся активной. У нас пока нет способа зафиксировать момент официального завершения подтверждения, поэтому мы пока не можем применить фиксированный срок хранения после его завершения; до появления этой возможности мы удаляем запись о подтверждении вручную, когда узнаём, что она больше не действительна (например, салон сменил владельца или подтверждение оказалось недействительным).',
 +          '• Кэшированные переводы публичного текста отзывов/услуг — пока соответствующий исходный контент остаётся опубликованным; наша цель — удалять кэшированный перевод при удалении исходного контента. У нас пока нет автоматической задачи, обеспечивающей это.',
 +          '• Данные, уже попавшие в резервную копию до запроса на удаление, — исчезают автоматически по мере замены этой резервной копии следующей ротацией, максимум через 7 дней.',
 +          'Там, где указанная выше цель пока не обеспечена автоматической задачей, удаление сегодня выполняется вручную; соответствующая инженерная работа отслеживается отдельно.',
@@ -824,7 +827,7 @@ index 0000000..52e50d8
 +
 +  uk: {
 +    title: 'Політика конфіденційності',
-+    lastUpdated: '2026-07-16',
++    lastUpdated: '2026-07-17',
 +    intro: [
 +      'Ця сторінка описує, які персональні дані Lookla («ми») справді збирає, зберігає та передає сьогодні — на основі прямої перевірки застосунку, що працює, а не загального шаблону.',
 +      'Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції.',
@@ -928,7 +931,7 @@ index 0000000..52e50d8
 +          '• Повідомлення — поки акаунт активний, і наша мета — не більше 12 місяців після закриття акаунта або останньої активності листування. У нас поки немає автоматичного завдання, яке б це забезпечувало.',
 +          '• Запити на вільний час і записи про візити — наша мета — 12 місяців після відповідної дати. Ця функція наразі не доступна через робочий фронтенд (розділ 1), і у нас поки немає автоматичного завдання видалення.',
 +          '• Скарги та зафіксована разом з ними IP-адреса — наша мета — 12 місяців після подання. У нас поки немає автоматичного завдання видалення для цього.',
-+          '• Записи про підтвердження власності салону — поки підтвердження активне, і наша мета — 12 місяців після його завершення. У нас поки немає автоматичного завдання видалення для цього.',
++          '• Записи про підтвердження власності салону — поки зв\'язок власності між вашим акаунтом і салоном залишається активним. У нас поки немає способу зафіксувати момент офіційного завершення підтвердження, тому ми поки не можемо застосувати фіксований термін зберігання після його завершення; до появи цієї можливості ми видаляємо запис про підтвердження вручну, коли дізнаємося, що воно більше не дійсне (наприклад, салон змінив власника або підтвердження виявилося недійсним).',
 +          '• Кешовані переклади публічного тексту відгуків/послуг — поки відповідний вихідний контент залишається опублікованим; наша мета — видаляти кешований переклад при видаленні вихідного контенту. У нас поки немає автоматичного завдання, яке б це забезпечувало.',
 +          '• Дані, вже зафіксовані в резервній копії до запиту на видалення, — зникають автоматично в міру заміни цієї резервної копії наступною ротацією, максимум через 7 днів.',
 +          'Там, де зазначена вище мета поки не забезпечена автоматичним завданням, видалення сьогодні виконується вручну; відповідна інженерна робота відстежується окремо.',
@@ -1045,10 +1048,10 @@ index 0000000..fdb2bc6
 +}
 diff --git a/frontend/lib/privacyContent.test.ts b/frontend/lib/privacyContent.test.ts
 new file mode 100644
-index 0000000..0b0e98b
+index 0000000..ddae3ec
 --- /dev/null
 +++ b/frontend/lib/privacyContent.test.ts
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,315 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
@@ -1189,6 +1192,27 @@ index 0000000..0b0e98b
 +  test('does not claim an automated deletion job exists where none does (honesty guard: "we do not currently have an automated" must appear)', () => {
 +    const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
 +    assert.ok(/do not currently have an automated/i.test(text));
++  });
++
++  test('salon-owner-claim retention does not promise a fixed "12 months after it ends" — no operational way to determine when a claim ends today (round-3 architect correction)', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
++    assert.ok(!/claim.{0,40}12 months after it ends/i.test(text), 'must not promise a retention clock the system cannot start');
++    assert.ok(/we do not yet have a way to record when a claim formally ends/i.test(text), 'must state the honest, operationally-accurate claim-retention wording');
++  });
++});
++
++describe('T-017: manual-cleanup cadence in PRIVACY_OPERATIONS.md is monthly, not quarterly (round-3 architect correction)', () => {
++  test('PRIVACY_OPERATIONS.md documents a monthly cleanup cadence', () => {
++    const opsPath = path.join(frontendRoot, '..', 'docs', '04_ARCHITECTURE', 'PRIVACY_OPERATIONS.md');
++    const text = fs.readFileSync(opsPath, 'utf-8');
++    assert.ok(/monthly/i.test(text), 'PRIVACY_OPERATIONS.md must state a monthly cleanup cadence');
++    assert.ok(!/run \*\*quarterly\*\*|Run quarterly/i.test(text), 'must not still say quarterly — a quarterly cadence against a 12-month target allows ~15 months actual retention');
++  });
++
++  test('PRIVACY_OPERATIONS.md documents the free-text (messages/notes) manual review step for erasure', () => {
++    const opsPath = path.join(frontendRoot, '..', 'docs', '04_ARCHITECTURE', 'PRIVACY_OPERATIONS.md');
++    const text = fs.readFileSync(opsPath, 'utf-8');
++    assert.ok(/messages\.body/i.test(text) && /redact/i.test(text), 'must document manual redaction of personal data embedded in free-text messages/notes');
 +  });
 +});
 +
