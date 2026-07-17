@@ -137,4 +137,4 @@ The public policy's Section 2 states five processing activities rely on Lookla's
 
 ## 5. Tracking
 
-A private, dated log of data-subject requests, minor-account reports, and quarterly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.
+A private, dated log of data-subject requests, minor-account reports, and monthly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.
