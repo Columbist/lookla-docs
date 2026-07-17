@@ -1255,18 +1255,19 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
 **Dependencies:** T-017
 
-**Description:** T-017's Privacy Policy states specific retention targets for which no *automated* enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). A manual quarterly cleanup SOP is documented and operational (`docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §2) so the retention targets are currently met by hand — this ticket replaces the quarterly manual `psql` run with a scheduled job. Needed:
+**Description:** T-017's Privacy Policy states specific retention targets for which no *automated* enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). A manual **monthly** cleanup SOP is documented and operational (`docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §2 — deliberately monthly, not quarterly, because a quarterly cadence against a 12-month target allows actual retention up to ~15 months in the worst case; monthly bounds it to ~13 months) so the retention targets are currently met by hand — this ticket replaces the monthly manual `psql` run with a scheduled job. Needed:
 - Expired/used `email_verifications` and `password_resets` rows — currently just become unusable at `expires_at`, never deleted.
 - Expired/revoked `refresh_tokens` rows.
 - `messages`/`conversations` older than 12 months past account closure or last activity.
 - `availability_requests`/`appointments` older than 12 months past the relevant date.
 - `reports` (including `reporter_ip`) older than 12 months past submission.
-- `salon_owners`/`claiming_tokens` older than 12 months past when a claim ends (note: `SalonOwner` currently has no status/end-date column at all — see whether "claim ends" needs a new column, or whether this only applies to abandoned `claiming_tokens`, before implementing).
+- **`salon_owners` schema change**: add a `status`/`ended_at` column (currently absent — `SalonOwner` has no such field at all, confirmed via `backend/app/models/salon.py`). The public policy's wording for claims was corrected (2026-07-17) specifically because this field doesn't exist yet — claims are described as retained while active, removed manually on discovery, not on a fixed post-end timer. This ticket should add the schema field *and* update the policy back to a fixed 12-month-post-end target once it exists and a job enforces it — until then, do not silently let the policy and the schema drift apart again.
 
 **Acceptance Criteria:**
 - [ ] A scheduled job (cron, Celery beat, or equivalent) exists that purges each of the above once past its retention target
 - [ ] Each job is tested against a fixture with rows both inside and outside the retention window
 - [ ] Confirm translation-cache columns (`Review.text_en/ru/uk`, `Service.name_en/ru/uk`) need no separate cleanup job — they are columns on the same row as the source content, so they are deleted automatically if/when the source row is deleted; no separate cache table exists
+- [ ] `salon_owners` gains a `status`/`ended_at` column via an Alembic migration, and the Privacy Policy's claim-retention wording is updated back to a fixed 12-month-post-end target once this ships
 
 ---
 

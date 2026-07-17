@@ -39,16 +39,20 @@ This document is the internal operational backing for the claims made in the pub
 - **Rectification:** update the specific field(s) directly (`UPDATE users SET name = :new WHERE id = :id;` etc.) after confirming the correction with the requester.
 
 - **Erasure (account deletion), target: 30 days from request.**
-  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **anonymize in place**, not hard-delete the row:
-  1. `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, is_active = false WHERE id = :id;`
-  2. `DELETE FROM email_verifications WHERE user_id = :id;`
-  3. `DELETE FROM password_resets WHERE user_id = :id;`
-  4. `DELETE FROM refresh_tokens WHERE user_id = :id;`
-  5. `UPDATE reports SET reporter_user_id = NULL WHERE reporter_user_id = :id;` (the `reporter_ip` and report content stay, per the report-retention target below and the anti-abuse legitimate interest — only the link to this specific person is removed)
-  6. Review `salon_owners` rows for this `user_id` manually before touching them — removing a live salon's owner link has a business-visible effect on that salon's "Owner verified" status (T-011). Confirm with the requester whether they also want the salon-owner relationship removed, or only their personal account data.
-  7. Review `availability_requests`/`appointments` where `client_user_id = :id` — anonymize `client_name`/`client_phone` on those rows the same way as step 1, rather than deleting the row outright (a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with).
+  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **anonymize in place**, not hard-delete the row. This is a checklist, not a single step — every item below must be worked through, not just the `users` row:
+
+  1. **`users` row** — `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, is_active = false WHERE id = :id;` — clears email, password, name, phone, WhatsApp, Viber, avatar, and the Google account ID (`sub`) in one statement, and disables login.
+  2. **Verification/reset tokens** — `DELETE FROM email_verifications WHERE user_id = :id;` and `DELETE FROM password_resets WHERE user_id = :id;`.
+  3. **Sessions** — `DELETE FROM refresh_tokens WHERE user_id = :id;` (also sign the user out by invalidating the `access_token`/`refresh_token` cookies if they still hold an active browser session).
+  4. **Reports** — `UPDATE reports SET reporter_user_id = NULL WHERE reporter_user_id = :id;` (the `reporter_ip` and report content stay, per the report-retention target below and the anti-abuse legitimate interest — only the link to this specific person is removed).
+  5. **Salon-owner claim associations** — review `salon_owners` rows for this `user_id` manually before touching them; removing a live salon's owner link has a business-visible effect on that salon's "Owner verified" status (T-011). Confirm with the requester whether they also want the salon-owner relationship removed, or only their personal account data.
+  6. **Availability requests / appointments** — for rows where `client_user_id = :id`, anonymize `client_name` and `client_phone` on the row itself (same placeholder pattern as step 1), rather than deleting the row outright — a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with. Also check `service_notes`/`reply_text` on these rows for free text — see step 7.
+  7. **Free text — messages and notes, reviewed manually, not auto-scrubbed.** Replacing the `users` row does not remove personal data the person may have *typed into free text* elsewhere — a phone number or full name written directly into a message body or an availability-request note survives step 1 untouched. There is no automated free-text PII scrubber today; this step is a manual read-through, not optional:
+     - Read every `messages.body` where `sender_user_id = :id` (or where the conversation involves this user, if reviewing from the other direction). Where a message contains personal data typed by the requester (a phone number, an email, a full name), redact only that specific text in place (`UPDATE messages SET body = '[redacted]' WHERE id = :message_id;` or a targeted string replacement) — do not delete the surrounding message or conversation, which would remove the other party's legitimate record of what was discussed.
+     - Read `service_notes` and `reply_text` on this user's `availability_requests` rows for the same reason, and redact in place if personal data is found beyond the already-anonymized `client_name`/`client_phone` fields.
+     - Record in the completion log which messages/notes (if any) were redacted, separately from the account-level anonymization — this is a distinct action with its own judgment call, not automatic.
   8. Record the completion date in the log.
-  9. The anonymized row will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
+  9. The anonymized row (and any redacted messages/notes) will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
 
 - **Restriction:** set `is_active = false` on the `users` row (already-existing column) to block login/authentication while a dispute is resolved, without deleting anything.
 
@@ -58,14 +62,14 @@ This document is the internal operational backing for the claims made in the pub
 
 ## 2. Periodic retention cleanup (manual, until T-048 automates it)
 
-Run **quarterly** (first week of January/April/July/October) by the controller, as a `psql` session against production:
+**Cadence: monthly, not quarterly.** A quarterly cadence against a 12-month target allows actual retention to reach up to ~15 months in the worst case (a row that crosses the 12-month line the day after a cleanup run waits a further 3 months for the next one). A monthly cadence bounds the worst case to ~13 months, which is close enough to the stated 12-month target to be an honest match for a "target" figure rather than a guaranteed exact cutoff. Run on the **1st of every month** by the controller, as a `psql` session against production:
 
 1. **Messages/conversations** — `SELECT id, last_message_at FROM conversations WHERE last_message_at < NOW() - INTERVAL '12 months';` review the list, then delete the conversation's `messages` rows and the `conversations` row itself for any where the associated account is already anonymized/inactive, or where both parties' last activity is >12 months old.
 2. **Availability requests / appointments** — `SELECT id, created_at FROM availability_requests WHERE created_at < NOW() - INTERVAL '12 months';` and the equivalent for `appointments.starts_at`; delete rows past the window.
 3. **Reports** — `SELECT id, created_at FROM reports WHERE created_at < NOW() - INTERVAL '12 months';` delete rows past the window (this also removes the associated `reporter_ip`).
-4. **Salon-owner claims** — `salon_owners` currently has no status/end-date column (flagged in T-048), so there is no automatic 12-month clock to run today. Manual trigger only: if a claim is discovered to be abandoned, fraudulent, or superseded (salon changed hands), the controller removes the row on discovery. This is an honest gap, not a silent one — the public policy states the *target*, and this document records that the target is not yet mechanically enforceable for this specific data type until a schema change ships.
+4. **Salon-owner claims** — `salon_owners` currently has no status/end-date column (flagged in T-048), so there is no 12-month clock to run at all for this table — the public policy's wording for claims was corrected (2026-07-17) to reflect this honestly: claim records are retained while the ownership link is active, and removed manually on discovery that a claim is no longer valid, not on a fixed post-end timer. Include a check for obviously-stale claims (e.g. cross-reference against salons that appear closed/duplicate via the `reports` table) in this monthly run as a best-effort discovery mechanism, but do not claim this guarantees timely removal — that requires the schema change tracked in T-048.
 
-Record each quarterly run (date executed, row counts affected) in the private log.
+Record each monthly run (date executed, row counts affected) in the private log.
 
 ---
 
@@ -79,12 +83,10 @@ Referenced by the public policy's Section 12 (Children): *"If we learn that a mi
 
 **Step 2 — Verification.** Request reasonable confirmation from whoever raised the concern, or from the account holder directly (e.g. asking them to confirm their age). This is *not* a formal ID-check process — consistent with the public policy not claiming a technical age-verification system exists. The bar is "reasonable," not "certain."
 
-**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them):
-1. `UPDATE users SET is_active = false WHERE id = :id;` — immediately blocks login.
-2. Apply the same anonymization steps as account erasure (Section 1 above) to the account's personal data.
-3. Messages: anonymize the sender's identity on their messages (same pattern as Section 1), rather than deleting message history a salon may still need for context on an existing conversation with an adult on the other side.
-4. Appointments/availability-requests tied to the account: anonymize the client name/phone; if an appointment is still pending (in the future), the controller manually contacts the salon to inform them the booking is cancelled — there is no automated appointment-cancellation notification today (a gap already disclosed in the public policy's Security section, regarding appointment confirmations generally).
-5. Any salon-owner claim linked to the account is reviewed separately before touching it, same as Section 1 step 6 — a minor should not be a salon's registered owner, so this case is treated as a priority manual review, not deferred.
+**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them). Work through the full checklist in Section 1 step "Erasure," items 1–7, exactly as for a self-requested erasure — including the mandatory free-text review of this account's messages and availability-request notes (Section 1, item 7), since a minor may have typed a real name, phone number, or other identifying detail directly into a message even though the account profile itself is anonymized. Additionally for this case specifically:
+1. `UPDATE users SET is_active = false WHERE id = :id;` — do this *first*, immediately on confirmation, before working through the rest of the checklist, to stop further use of the account without waiting for the full erasure process to complete.
+2. If an appointment tied to this account is still pending (in the future), the controller manually contacts the salon to inform them the booking is cancelled — there is no automated appointment-cancellation notification today (a gap already disclosed in the public policy's Security section, regarding appointment confirmations generally).
+3. Any salon-owner claim linked to the account is reviewed as a priority, not deferred — a minor should not be a salon's registered owner.
 
 **Step 4 — Record** the report date, verification outcome, and actions taken in the private log.
 
