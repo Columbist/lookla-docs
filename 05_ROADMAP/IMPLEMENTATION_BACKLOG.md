@@ -675,6 +675,7 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
 ### T-018 — Cookie Policy and analytics-consent foundation
 **Priority:** P0 | **Owner:** FE | **Estimate:** 3h | **Epic:** EPIC-05
 **Dependencies:** T-017 ✅ Completed
+**Status:** ✅ Completed (2026-07-17) — reviewed, merged to `main` (PR #38), production deployed and verified
 
 **Correction to the original spec below (renamed and rewritten before implementation, per architect review):** the original design was non-compliant on three counts the Hellenic DPA explicitly guards against — it offered only an Accept button with "Accept to continue" phrasing (a cookie wall, not a real choice), had no Reject action at the same level as Accept, and had no way to withdraw consent once given. It also implicitly assumed GA4/T-014 would already exist. None of that is carried forward. GA4 is **not** implemented by this task — see T-014.
 
@@ -688,16 +689,22 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
 
 **UX contract enforced (and regression-tested):** Accept and Reject render together, unconditionally, with an identical `className` (equal visual weight, equal click cost), no "Accept to continue" text anywhere, no preselected consent, no close icon on the *initial* unanswered banner (Escape and the × control only exist on the reopened settings view), rejecting never gates search/salon pages/map/contact CTAs/auth/messaging/locale selection.
 
-**New global footer:** this is the first footer component in the codebase — previous tickets (T-011, T-020, T-021) each independently deferred "linked in footer" as out-of-scope since none existed. It became a hard functional requirement here (there is no other way to satisfy "withdraw consent as easily as you gave it" without a persistent, always-available control), so it was built now: Privacy Policy link, Cookie Policy link, and the feature-gated "Cookie settings" button, wired into `app/[locale]/layout.tsx` so it appears on every page. Verified via Playwright across representative pages (home, search, salon detail, privacy, cookies) at desktop and 375px for layout regressions before merge.
+**New global footer:** this is the first footer component in the codebase — previous tickets (T-011, T-020, T-021) each independently deferred "linked in footer" as out-of-scope since none existed. It became a hard functional requirement here (there is no other way to satisfy "withdraw consent as easily as you gave it" without a persistent, always-available control), so it was built now: Privacy Policy link, Cookie Policy link, and the feature-gated "Cookie settings" button, wired into `app/[locale]/layout.tsx` so it appears on every page. This surfaced a real pre-existing duplication: the homepage and `/masters` each already had their own page-local `<footer>` (copyright + `LanguageSwitcher`); merged that content into the new shared `Footer.tsx` and removed both local copies rather than shipping two stacked footers. Verified via Playwright across representative pages (home, search, salon detail, privacy, cookies) at desktop and 375px, in both feature-flag states, before merge: exactly one `<footer>` element per page, zero overflow, zero console errors.
+
+**Final review findings (2026-07-17, architect review):** independently confirmed via fresh Playwright runs — `Max-Age=15552000` honored by the browser as exactly 180.00 days; the `Secure` flag's conditional logic (`window.location.protocol === 'https:'`) genuinely executes rather than being hardcoded, confirmed absent on `http://` which validates it will be present on real `https://`; focus returns to the *exact* footer trigger element (`document.activeElement === trigger`, not just "some button") after closing the reopened settings view; Cookie Policy §3 and Privacy Policy §5 list identical cookies, lifetimes, and flags with no drift between the two documents.
+
+**Production verification (2026-07-17):** `beauty_web` rebuilt and redeployed alone (API/DB/Redis untouched, uptimes confirmed unchanged; `crawler_worker`'s restart was its own independent scheduled cycle, unrelated to `--no-deps web`; no automatic "Deploy Production" workflow triggered). All 4 `/cookies` locale URLs return 200 in production. Verified via Playwright against the live site across 6 representative pages: exactly one `<footer>` per page with locale-aware Privacy/Cookie Policy links and the copyright/language-switcher content preserved, no banner (feature flag correctly unset in production), only `NEXT_LOCALE` present as a cookie (`lookla_consent` correctly does not self-create), zero GA4/GTM requests, zero console errors, zero horizontal overflow.
+
+**Unrelated infrastructure observation, disclosed for transparency:** during this task's isolated verification, `beauty_web`'s `RestartCount` was found at 7 (clean `ExitCode=0` each time) over the preceding ~5 hours, on a memory-constrained host (1.9GiB total, 146MiB free, 864MiB/2GiB swap in use at the time). Most likely cause: repeated concurrent `npm run build` runs during this task's own local verification work (Next.js builds are memory-heavy) put enough system-wide pressure on the host that the live container (300MB hard limit) was OOM-killed and auto-restarted by its `unless-stopped` policy. No extended downtime resulted. Not investigated further as an in-scope fix for T-018 — flagging as a standing host-memory-pressure risk worth a future look, not something this ticket caused a lasting problem from.
 
 **Acceptance Criteria:**
-- [ ] `lookla_consent` cookie contract matches the canonical spec exactly (values, flags, 180-day lifetime, no identifying data)
-- [ ] Accept and Reject are visible simultaneously, equal effort, equal visual weight — no cookie wall, no preselection, no "Accept to continue"
-- [ ] Consent can be withdrawn/changed via the footer "Cookie settings" control, as easily as it was given
-- [ ] Rejecting analytics does not disable any existing site functionality
-- [ ] `/cookies` (el), `/en/cookies`, `/ru/cookies`, `/uk/cookies` return 200, structurally identical, cross-linked with `/privacy`
-- [ ] No GA4/GTM script, no analytics request, no `_ga*` cookie anywhere — `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` is not enabled in production by this task
-- [ ] T-017's Privacy Policy updated for factual consistency only: `lookla_consent` described, Cookie Policy linked instead of described as "planned"
+- [x] `lookla_consent` cookie contract matches the canonical spec exactly (values, flags, 180-day lifetime, no identifying data)
+- [x] Accept and Reject are visible simultaneously, equal effort, equal visual weight — no cookie wall, no preselection, no "Accept to continue"
+- [x] Consent can be withdrawn/changed via the footer "Cookie settings" control, as easily as it was given
+- [x] Rejecting analytics does not disable any existing site functionality
+- [x] `/cookies` (el), `/en/cookies`, `/ru/cookies`, `/uk/cookies` return 200, structurally identical, cross-linked with `/privacy` — confirmed in production
+- [x] No GA4/GTM script, no analytics request, no `_ga*` cookie anywhere — `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` is not enabled in production by this task — confirmed in production
+- [x] T-017's Privacy Policy updated for factual consistency only: `lookla_consent` described, Cookie Policy linked instead of described as "planned"
 
 ---
 
