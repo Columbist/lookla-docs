@@ -652,7 +652,9 @@ onClick={() => trackContact('phone', salon.id, salon.name)}
 - **International transfers** — provider-specific safeguards (OpenAI Ireland, EU SCCs, EU–US DPF "where applicable"), replacing the generic TODO; Google is described as an independent authentication provider, not labeled as Lookla's processor without contractual evidence.
 - **Remaining factual corrections applied**: Cloudflare's "all traffic passes through" claim replaced with an accurate one acknowledging the origin is also directly reachable (see T-049); token storage clarified as raw, not "or its hash"; exact cookie lifetimes stated (15 min / 30 days / 10 min); availability-requests/appointments disclosed as a backend capability not currently reachable through the production frontend; GPS vs. map-tile-area distinction sharpened; inactive-SDK (Sentry/moderation) discussion trimmed from the public-facing text; Resend fallback recipient-email logging disclosed rather than hidden (see T-050).
 
-New follow-up tickets filed as a direct result of this review: **T-044** (age-confirmation control), **T-045** (Terms of Service, pre-launch blocker), **T-046** (legitimate-interest balancing assessments), **T-047** (account-deletion workflow), **T-048** (retention cleanup jobs), **T-049** (restrict origin to Cloudflare IPs), **T-050** (remove recipient-email logging).
+New follow-up tickets filed as a direct result of this review: **T-044** (age-confirmation control), **T-045** (Terms of Service, pre-launch blocker), **T-046** (legitimate-interest balancing assessments — ✅ completed as a pre-deployment blocker, not deferred), **T-047** (account-deletion workflow — automation of an already-operational manual SOP), **T-048** (retention cleanup jobs — automation of an already-operational manual SOP), **T-049** (restrict origin to Cloudflare IPs), **T-050** (remove recipient-email logging).
+
+**Round 3 (2026-07-17, architect review):** the architect correctly identified that publishing retention/rights commitments backed only by "manual for now" is not itself sufficient — a real operational process must exist on day one, and the legitimate-interest assessments (T-046) must be completed *before* publication, not deferred as backlog polish. Delivered `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md`: a manual data-subject-request SOP (§1, covering access/rectification/erasure/restriction, with concrete `psql`-level steps — anonymize-in-place rather than hard-delete, to avoid breaking FK-referenced conversation history for the other party), a quarterly manual retention-cleanup procedure (§2), a minor-account handling procedure (§3, with a 5-business-day action target distinct from the 1-month rights-request SLA), and the five completed LIAs (§4). T-046 is marked completed; T-047/T-048 are re-scoped as automating an already-operational manual process, not building the capability from zero.
 
 **Acceptance Criteria:**
 - [x] `/privacy` (el), `/en/privacy`, `/ru/privacy`, `/uk/privacy` return 200 (corrected from the original spec's 3-locale list — the site has 4 locales, `uk` included)
@@ -1194,12 +1196,12 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Required:**
 - Add an "I confirm I am 18 or older" checkbox (or equivalent) to the registration form, required to submit.
 - Backend: reject registration if the confirmation is missing (do not need to collect/store an actual birthdate — a confirmation checkbox is sufficient for the approved MVP policy; do not over-engineer a full age-verification/ID-check system, which was explicitly not requested).
-- Document (in `SECURITY.md` or equivalent) the process for the "if we learn a minor created an account" case described in the Privacy Policy — today this would be entirely manual (an admin deletes/restricts the account on request), which is acceptable for MVP but should be written down.
+
+**Already done (not blocking this ticket):** the manual minor-account-handling procedure referenced by the Privacy Policy's Children section is documented and operational — `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §3 (trigger, reviewer, verification, 5-business-day action target, disposition of messages/appointments/salon-owner claims tied to the account, logging). This ticket is only the missing UI/backend confirmation checkbox — the process for what happens *after* a minor is identified already exists independent of it.
 
 **Acceptance Criteria:**
 - [ ] Registration form requires an explicit 18+ confirmation before submission
 - [ ] Backend rejects registration requests missing the confirmation
-- [ ] The manual minor-account-removal process is documented somewhere findable (not just implied by the Privacy Policy)
 
 ---
 
@@ -1217,19 +1219,22 @@ Sitemap: https://lookla.gr/sitemap.xml
 ---
 
 ### T-046 — Document legitimate-interest balancing assessments
-**Priority:** P1 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
+**Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
 **Dependencies:** T-017
+**Status:** ✅ Completed (2026-07-17) — treated as a pre-deployment blocker for T-017, not deferred post-launch work, per architect review
 
-**Description:** T-017's Privacy Policy states that several processing activities rely on Lookla's "legitimate interest" as their GDPR legal basis (approved matrix, 2026-07-16). Stating a legitimate-interest basis in a public policy is not itself the balancing test GDPR expects a controller to have performed — a documented (internal, not necessarily published) assessment is expected to exist. Create one for each of:
-- Public reviewer names and review text (displayed on salon pages)
-- Professional/staff names (displayed on salon/professional pages)
-- Business contact data (salon phone/email/website, displayed publicly)
-- Report/IP anti-abuse processing (`reports.reporter_ip`)
+**Description:** T-017's Privacy Policy states that several processing activities rely on Lookla's "legitimate interest" as their GDPR legal basis. Stating a legitimate-interest basis in a public policy is not itself the balancing test GDPR expects a controller to have performed. The architect reviewing T-017 explicitly required this assessment to exist *before* the policy is published, not as a backlog improvement — a public commitment without the underlying reasoning behind it is not acceptable.
+
+**Delivered:** `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §4, a documented three-part assessment (purpose / necessity / balancing) for each of the five items, each referencing the actual Lookla data and code involved, not a generic template:
+- Public reviewer names and review text
+- Professional/staff names
+- Business contact data
+- Report/IP anti-abuse processing
 - OpenAI translation of public review/service text
 
 **Acceptance Criteria:**
-- [ ] A documented three-part balancing assessment (purpose test / necessity test / balancing test) exists for each of the five items above, stored in internal documentation (e.g. `docs/04_ARCHITECTURE/SECURITY.md` or a new `docs/00_GOVERNANCE/` record)
-- [ ] Each assessment references the actual data involved (not a generic template)
+- [x] A documented three-part balancing assessment exists for each of the five items above
+- [x] Each assessment references the actual data involved (not a generic template)
 
 ---
 
@@ -1237,7 +1242,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
 **Dependencies:** T-017
 
-**Description:** T-017's Privacy Policy states a retention target of deleting account profile data within 30 days of a verified deletion request (approved matrix, 2026-07-16). No such mechanism exists today — confirmed via audit: no `DELETE`/deactivation endpoint for a user's own account exists anywhere in `backend/app/routers`, and no data-export endpoint exists either. Today, "Your rights" requests are necessarily all-manual (email `hello@lookla.gr`); this ticket is about building the underlying capability, not necessarily a self-service UI on day one.
+**Description:** T-017's Privacy Policy states a retention target of deleting account profile data within 30 days of a verified deletion request. No self-service or automated mechanism exists — confirmed via audit: no `DELETE`/deactivation endpoint for a user's own account exists anywhere in `backend/app/routers`, and no data-export endpoint exists either. A manual SOP for executing this by hand (`psql`, run by the controller) is documented in `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §1 and is operational today, so the 30-day commitment is currently met without this ticket — this ticket is about replacing manual `psql` execution with a built (at minimum admin-triggerable) capability, not building the capability from scratch.
 
 **Acceptance Criteria:**
 - [ ] A documented (admin-triggerable at minimum) way to delete or irreversibly anonymize a user's account row, associated `refresh_tokens`, `email_verifications`, `password_resets`
@@ -1250,7 +1255,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
 **Dependencies:** T-017
 
-**Description:** T-017's Privacy Policy states specific retention targets (approved matrix, 2026-07-16) for which no automated enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). Needed:
+**Description:** T-017's Privacy Policy states specific retention targets for which no *automated* enforcement currently exists. Confirmed via audit — zero scheduled cleanup jobs exist anywhere in `backend/app` for any of these tables (only ad-hoc single-row deletes tied to specific user actions, e.g. an owner removing one service). A manual quarterly cleanup SOP is documented and operational (`docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §2) so the retention targets are currently met by hand — this ticket replaces the quarterly manual `psql` run with a scheduled job. Needed:
 - Expired/used `email_verifications` and `password_resets` rows — currently just become unusable at `expires_at`, never deleted.
 - Expired/revoked `refresh_tokens` rows.
 - `messages`/`conversations` older than 12 months past account closure or last activity.
