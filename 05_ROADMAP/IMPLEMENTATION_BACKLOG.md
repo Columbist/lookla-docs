@@ -1335,6 +1335,42 @@ Sitemap: https://lookla.gr/sitemap.xml
 
 ---
 
+### T-051 — Investigate beauty_web restart/OOM root cause
+**Priority:** P1 | **Owner:** OPS/INFRA | **Estimate:** investigation only, no fix | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** ✅ Investigation completed (2026-07-20) — see `docs/06_ENGINEERING/T-051_MEMORY_OOM_INVESTIGATION.md` for the full RCA, live memory-profile experiment, Docker configuration audit, and mitigation comparison matrix. No fix implemented in this ticket, per explicit scope (evidence only).
+
+**Headline finding:** the T-018 note's working assumption ("`beauty_web` OOM-killed by its 300MB limit") is **not supported by any available evidence** — zero kernel/cgroup OOM-kill events exist anywhere in the retained system logs for the entire relevant window, and the July 17 restarts were all clean `exitCode=0` exits, not kills. The exact trigger is now unrecoverable (the container's own logs no longer exist, having been recreated multiple times since). What **is** proven via a live reproduced worst-case build: a from-scratch `docker compose build --no-cache web` takes ~17m43s and pushes this 1.9GiB host to 90% RAM / 70% swap / load average 14+, while `beauty_web` itself — running the whole time — never used more than 25.6 MiB of its 300MB limit. The same build takes ~1m30s on GitHub Actions CI. The bottleneck is host-wide (unconstrained build process competing with ~1GB of already-committed container limits on 1.9GB total RAM), not `beauty_web`'s own configuration.
+
+**Separate finding surfaced during this investigation (not fixed here — see T-052):** `beauty_crawler_worker` has been crash-looping continuously since its creation (2026-07-06) — 210+ restarts, still ongoing — due to a Redis authentication misconfiguration (`docker-compose.yml`'s `crawler_worker`/`crawler` `environment.REDIS_URL` hardcodes a passwordless URL that overrides `.env`'s correct password-bearing one). This means the Celery worker has never successfully consumed a single crawler task since deployment.
+
+**Acceptance Criteria:**
+- [x] RCA performed using real data only (journalctl, dmesg, docker inspect, docker events, cron/systemd audit) — no assumptions
+- [x] Memory profile captured (idle/peak RSS for `beauty_web`, host-wide peak memory/swap/load average) via a live instrumented rebuild
+- [x] Build profile captured (`npm ci`, `next build`, `node_modules` copy, image export each timed separately)
+- [x] Docker configuration audited (memory limits, swap, restart policy, healthchecks, ulimits) for all 6 services
+- [x] Mitigation options compared with pros/cons — nothing implemented
+- [x] Production untouched: no restart, no compose change, no restart-policy change, no kernel/swap change (image was rebuilt for measurement purposes only, never deployed)
+
+---
+
+### T-052 — Fix beauty_crawler_worker Redis authentication crash loop
+**Priority:** P1 | **Owner:** BE/INFRA | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** 🔴 Not started — filed as a direct result of the T-051 investigation
+
+**Description:** `docker-compose.yml`'s `crawler_worker` and `crawler` services both hardcode `environment.REDIS_URL: redis://redis:6379/0` (no password), which overrides the correct, password-bearing `REDIS_URL` supplied via `env_file: .env` (Compose's inline `environment:` always wins over `env_file` for the same key). Since `redis-server` runs with `--requirepass`, every connection attempt from these two services fails authentication. `crawler_worker` (a Celery worker) has been crash-looping as a result since 2026-07-06 — confirmed 210+ restarts and still ongoing — meaning it has **never successfully processed a single crawler task**. `crawler` (the scheduler) uses the identical pattern and should be verified for the same root cause rather than assumed unaffected, despite showing far fewer restarts (13 vs 210+) over the same window.
+
+**Fix:** remove the hardcoded `REDIS_URL` from both services' `environment:` blocks so the correct value flows through from `env_file: .env`, matching how `api` and `db` are already configured correctly.
+
+**Acceptance Criteria:**
+- [ ] `crawler_worker` and `crawler` no longer hardcode `REDIS_URL` in `docker-compose.yml`'s `environment:` block
+- [ ] Both services connect to Redis successfully after redeploy (verified via logs — no more "Authentication required" errors)
+- [ ] `crawler_worker`'s restart count stabilizes (stops climbing) after the fix is deployed
+- [ ] Confirm whether `crawler` (scheduler) was actually affected by the same bug or tolerated it differently, and document which
+
+---
+
 ## Backlog Summary
 
 | Task | Priority | Owner | Hours | Epic | Depends on |
@@ -1380,6 +1416,8 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-037 Unify salon search (post-MVP) | post-MVP | BE | 4 | EPIC-10 | T-035 |
 | T-039 Re-enable CodeQL (blocked on GH Code Security) | P2 | OPS | 0.5 | EPIC-09 | — |
 | T-040 Harden production deployment | P1 | OPS | 2 | EPIC-09 | — |
+| T-051 Investigate beauty_web restart/OOM root cause | P1 | OPS/INFRA | investigation only | EPIC-09 | — |
+| T-052 Fix crawler_worker Redis auth crash loop | P1 | BE/INFRA | 0.5 | EPIC-09 | — |
 | **Total** | | | **~42.25h (M-01)** | | |
 
 ---
