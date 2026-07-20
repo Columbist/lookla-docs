@@ -536,33 +536,34 @@ Localized:
 
 ---
 
-### T-014 — Add GA4 script to Next.js root layout
-**Priority:** P0 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-04
-**Dependencies:** T-013, T-018 (cookie consent must be in place first — see EPIC-05)
+### T-014 — GA4 infrastructure: physically cannot send a request before consent
+**Priority:** P0 | **Owner:** FE | **Estimate:** 1h (revised: ~4h — see correction below) | **Epic:** EPIC-04
+**Dependencies:** T-013, T-018 ✅ Completed
+**Status:** ✅ Completed — page_view infrastructure only, per architect scoping. Product events (contact_action, search, salon_open, etc.) are explicitly out of scope — see T-015.
 
-**Script placement (from FRONTEND_ARCHITECTURE.md):**
-```tsx
-// app/[locale]/layout.tsx
-import Script from 'next/script';
+**Correction to the original spec below (rewritten before implementation, per architect review):** the original spec's own sample code loaded `gtag.js` unconditionally with `strategy="afterInteractive"`, contradicting its own acceptance criterion that the script "does NOT appear if `lookla_consent=0`" — `afterInteractive` fires regardless of consent state; there was no mechanism in the sample that could have honored it. The corrected goal, as re-scoped: build infrastructure that is **physically incapable** of sending any request to Google until consent is granted, not "load unconditionally and hope something suppresses it." Google's official Consent Mode v2 pattern (declare a `consent: default` denied state, then `consent: update` once granted) was deliberately **not** used — that pattern exists for sites that load `gtag.js` unconditionally and need the library itself to suppress network activity pre-consent. Here, the `<script>` tag is never rendered into the DOM until consent is granted, so there is nothing running that needs a declared default; the absence of the script *is* the denial. `gtag('consent', 'update', ...)` is used only for revoke/resume after the script has already loaded once. The original 1h estimate assumed only a layout edit; the actual scope also required building `NEXT_PUBLIC_*` build-time env wiring (Dockerfile `ARG`/`ENV` + `docker-compose.yml` `build.args`) that did not exist anywhere in the repo for any `NEXT_PUBLIC_*` variable before this task.
 
-<Script
-  src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA4_ID}`}
-  strategy="afterInteractive"
-/>
-<Script id="ga4-init" strategy="afterInteractive">
-  {`window.dataLayer=window.dataLayer||[];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js',new Date());
-    gtag('config','${process.env.NEXT_PUBLIC_GA4_ID}');`}
-</Script>
-```
+**Architecture:**
+- `frontend/lib/analytics.ts` — `initGtagIfNeeded()` (idempotent, guarded by a module-level flag), `sendPageView()`, `updateAnalyticsConsent()`, `deleteGa4Cookies()`, `isGa4Configured()`. `send_page_view: false` at config time — GA4's automatic pageview measurement does not see Next.js App Router client-side navigations, so every `page_view` (initial and subsequent) is sent explicitly.
+- `frontend/components/GoogleAnalytics.tsx` — client component, renders `null` unless `isGa4Configured() && isAnalyticsConsentFeatureEnabled()` and consent is granted. `shouldLoadScript` state only ever transitions false→true (never reset), so the `<script>` mounts exactly once per page lifecycle regardless of how many times consent is revoked/re-granted. The first `page_view` fires from the `<Script onLoad>` callback itself (guaranteed post-load), not a separate `useEffect` that could race ahead of script load and silently no-op. A `usePathname()`/`useSearchParams()` effect handles subsequent SPA navigations, guarded against double-firing via a `lastTrackedPath` ref. Wrapped in `<Suspense>` in `layout.tsx` (required for `useSearchParams()` in the App Router).
+- Revoke calls `updateAnalyticsConsent(false)` + `deleteGa4Cookies()` (best-effort `_ga`/`_ga_*` deletion on the current host and, where applicable, the registrable parent domain — `gtag('consent','update',...)` stops future writes but does not clear existing cookies). Re-grant calls `updateAnalyticsConsent(true)` only — does not reload the script or resend the initial `page_view`.
+- **New infrastructure:** `Dockerfile` `ARG`/`ENV` for `NEXT_PUBLIC_GA4_ID` and `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` (defaulting to `""`, safe/inert if unset), `docker-compose.yml`'s `web.build` changed from shorthand `./frontend` to an explicit `context`/`args` block. `NEXT_PUBLIC_*` vars are inlined at Next.js **build time** (webpack `DefinePlugin`), not read at container-start — a `docker-compose.yml` `environment:` entry has zero effect on them, which is why `NEXT_PUBLIC_API_URL` (pre-existing in `environment:`) turned out to be dead/unused config. This change also retroactively completes T-018's `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` wiring gap — that flag previously had no way to be enabled in a real deploy.
+
+**Explicitly out of scope (per architect instruction) — see T-015:** `contact_click`, `search`, `salon_open`, `map_click`, `whatsapp_click`, `phone_click`, `owner_claim`, `booking`, and all other custom/product events. Enforced by a regression test asserting only `analytics.ts`/`GoogleAnalytics.tsx` reference `window.gtag`/`window.dataLayer` anywhere in the codebase.
+
+**Out-of-scope finding, disclosed for transparency:** `SECURITY.md` flags a Content-Security-Policy as "required when adding GA4." No CSP exists anywhere in the stack (nginx, Next.js, or backend) today. Treated as a separate hardening task, not silently folded into this one's scope.
+
+**Safe-by-construction regardless of T-013 status:** the real production `.env` has no `NEXT_PUBLIC_GA4_ID` set (T-013 not done yet). `isGa4Configured()` returns `false` and `GoogleAnalytics` renders `null` whenever the ID is absent, so this ships completely inert in production today — merge/deploy is safe independent of T-013's timeline.
+
+**Verification:** 275/275 unit/source-pattern tests passing (hybrid direct-function + regex-on-source pattern, matching this codebase's established test infra — no jsdom/RTL). Isolated Playwright run (temporary build, placeholder `NEXT_PUBLIC_GA4_ID`, `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED=true`, never deployed) against the exact behavioral contract: 19/19 checks passed — zero requests to `googletagmanager.com`/`google-analytics.com`, no `window.gtag`, no `window.dataLayer`, no `_ga*` cookies before consent; exactly one script tag + one `config()` call + one `page_view` after Accept; SPA navigation via real `<Link>` clicks (not `page.goto` reloads) sends exactly one additional `page_view` per navigation with no re-init; Reject issues `consent update(denied)`, deletes `_ga*` cookies, sends no further `page_view`s, leaves the script tag mounted; re-grant issues `consent update(granted)` only, with no duplicate script load, no duplicate `config()` call, and no duplicate `page_view`.
 
 **Acceptance Criteria:**
-- [ ] GA4 script loaded with `strategy="afterInteractive"` (not blocking render)
-- [ ] GA4 Realtime shows pageview when manually browsing the site
-- [ ] Script does NOT appear if `lookla_consent=0` cookie (conditional load — depends on T-018)
-- [ ] `NEXT_PUBLIC_GA4_ID` is read from env (not hardcoded)
-- [ ] PageSpeed Insights LCP is not degraded by GA4 script
+- [x] No `<script src="googletagmanager.com/...">`, no `window.gtag`, no `window.dataLayer`, no `_ga*` cookies, and zero network requests to Google while consent is absent or rejected
+- [x] After Accept: exactly one `gtag.js` load, GA4 initialized, exactly one `page_view` for the current page, then correct SPA-navigation tracking (one `page_view` per client-side route change, no re-init)
+- [x] After Reject/Withdraw: no further events sent, consent set to `denied`, `_ga*` cookies deleted where possible
+- [x] Re-consent resumes tracking without double-initializing (no duplicate script, no duplicate `page_view`)
+- [x] `NEXT_PUBLIC_GA4_ID` is read from env, wired through Docker build-args (not hardcoded, not silently dead like the pre-existing `NEXT_PUBLIC_API_URL`)
+- [x] No T-015-scoped product event exists anywhere in this task's files
 
 ---
 
