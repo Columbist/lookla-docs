@@ -1357,7 +1357,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-052 — Fix beauty_crawler_worker Redis authentication crash loop
 **Priority:** P1 | **Owner:** BE/INFRA | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
-**Status:** 🟡 Fix implemented, not yet deployed — awaiting review approval before touching production (per explicit instruction: narrow fix only, inventory before any queue/schedule action)
+**Status:** ✅ Completed (2026-07-21) — reviewed, merged to `main`, deployed (only `crawler`/`crawler_worker` rebuilt and recreated; `web`/`api`/`db`/`redis` untouched), production-verified including a controlled end-to-end task run.
 
 **Description:** `docker-compose.yml`'s `crawler_worker` and `crawler` services both hardcoded `environment.REDIS_URL: redis://redis:6379/0` (no password), which overrode the correct, password-bearing `REDIS_URL` supplied via `env_file: .env` (Compose's inline `environment:` always wins over `env_file` for the same key). Since `redis-server` runs with `--requirepass`, every connection attempt from these two services failed authentication.
 
@@ -1378,10 +1378,14 @@ Sitemap: https://lookla.gr/sitemap.xml
 - [x] Confirmed via `docker compose config` that both now resolve to the correct, password-bearing `REDIS_URL` from `.env`
 - [x] Confirmed `crawler` (scheduler) was actually affected by the identical bug, not just `crawler_worker` — verified via live logs, not assumed
 - [x] Confirmed Redis queue is empty before deploy — no backlog-flood risk
-- [ ] **Not yet done (requires deploy approval):** both services connect to Redis successfully after redeploy (verified via logs — no more "Authentication required" errors)
-- [ ] **Not yet done:** `crawler_worker`'s restart count stabilizes (stops climbing) after the fix is deployed
-- [ ] **Not yet done:** one controlled, harmless test task runs successfully end-to-end post-deploy
-- [ ] **Not yet done:** decide, with explicit sign-off, what (if anything) to do about the beat schedule's pending due-dates once workers are healthy again
+- [x] Both services connect to Redis successfully after redeploy — worker log: `Connected to redis://:**@redis:6379/0`; zero `Authentication required`/`NOAUTH`/`WRONGPASS` lines anywhere in either container's logs post-deploy
+- [x] `RestartCount=0` on both containers, stable throughout the observation window (vs. 210+ and climbing before the fix)
+- [x] One controlled, harmless test task (`send_daily_report`) ran successfully end-to-end post-deploy — task ID `661c5123-c085-402f-8871-d3930740d51c`: `received` → `succeeded in 10.9s`, external side effect (Telegram message) delivered exactly once, confirmed no duplicate, queue returned to 0, no `run_google`/`run_google_full` ever invoked
+- [x] Beat schedule's pending due-dates: no action needed — confirmed empirically that Celery's crontab-style scheduler does not catch up on missed windows (two of today's own scheduled jobs, `vrisko-weekly` 02:00 and `xo-weekly` 04:00, had already passed while the system was broken and were correctly skipped rather than queued, matching pre-deploy inventory's theoretical expectation)
+
+**Production verification (2026-07-21):** `crawler`/`crawler_worker` rebuilt (`docker compose build crawler crawler_worker`) and recreated (`docker compose up -d --no-deps crawler crawler_worker`) — `beauty_web`/`beauty_api`/`beauty_db`/`beauty_redis` uptimes confirmed unchanged throughout. Old (still-broken) containers briefly showed `ExitCode=137` during teardown — checked immediately via `journalctl -k`/`dmesg`, confirmed **not** an OOM (`OOMKilled=false`, zero kernel OOM events at that timestamp); this is normal Docker stop escalation (SIGTERM → 10s grace → SIGKILL) against a process that was mid-crash-loop when the recreate was issued, not a new incident. `celery -A beauty_crawler.celery_app inspect registered/active/reserved/scheduled` confirmed a clean slate before the controlled test; `inspect registered` confirmed `send_daily_report` and all crawler tasks correctly registered on the worker.
+
+**Unrelated incident discovered during the controlled test, disclosed for transparency — see T-053:** the worker's HTTP client logged the full Telegram Bot API request URL, including the bot token, in cleartext at INFO level. Not part of T-052's scope; token value never repeated in this record, in commits, or in the diff. Immediate containment (token rotation via BotFather) and a permanent logging fix are tracked separately as **T-053**, filed as P0 Security.
 
 ---
 
