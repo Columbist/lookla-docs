@@ -1392,7 +1392,26 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-053 — Prevent secrets in crawler HTTP logs and rotate exposed Telegram token
 **Priority:** P0 Security | **Owner:** BE/INFRA | **Estimate:** 1h (code fix) + manual token rotation | **Epic:** EPIC-09
 **Dependencies:** None
-**Status:** 🟡 Logging fix implemented and tested; token rotation blocked on the user (requires BotFather account access the coding agent does not have)
+**Status:** ✅ Completed (2026-07-21) — logging fix merged and deployed, token rotated by the user via BotFather, production-verified end to end.
+
+**Incident record:**
+```
+Security Incident
+
+Affected secret:      Telegram Bot Token
+Exposure:              Container runtime logs (INFO-level HTTP request logging)
+Public exposure:       No
+Repository exposure:   No
+Documentation exposure: No
+CI exposure:            No (no plausible path; not independently verified via GitHub API)
+Mitigation:             Token rotated via BotFather (user action, 2026-07-21)
+Preventive fix:         Merged in T-053 (PR #43) — httpx/httpcore/urllib3/requests
+                        pinned to WARNING via Celery's after_setup_logger signal;
+                        RedactingFilter backstop for credential shapes in any
+                        log record regardless of source
+Status:                 Resolved
+```
+Note: this session's own tool-call transcript captured the old (now-revoked) token once, during T-052's live log inspection — disclosed for completeness in T-053's PR description; not independently fixable, and moot once the token was revoked.
 
 **Incident summary:** during T-052's controlled production task, the crawler worker's HTTP client logged the full Telegram Bot API request URL — including the complete bot token, which Telegram's own Bot API design embeds directly in the URL path — in cleartext, at INFO level, to Docker's captured container logs. No token value is recorded in this entry, in any commit, diff, or test fixture.
 
@@ -1440,8 +1459,10 @@ This session's own tool-call transcript (this conversation) also captured the fu
 - [x] 18 new tests, all passing, run against real container dependencies
 - [x] Safe exposure review completed — counts/filenames only, token never printed or repeated
 - [x] Docker log rotation gap documented, not silently fixed under this ticket
-- [ ] **Blocked on user:** BotFather token rotation
-- [ ] **Blocked on the above:** post-rotation production verification (old token invalid, new token works, new token not logged)
+- [x] BotFather token rotation — completed by the user directly in production `.env`, value never entered this session
+- [x] Post-rotation production verification — see below
+
+**Production verification (2026-07-21):** `crawler`/`crawler_worker` rebuilt (picking up T-053's code fix) and recreated with the new token — `beauty_web`/`beauty_api`/`beauty_db`/`beauty_redis` uptimes unchanged throughout, clean recreate with no stuck-container issue this time. `RestartCount=0` on both post-deploy. One controlled `send_daily_report` task run end-to-end: `received` → `succeeded in 17.9s`, log shows the new sanitized status line `Telegram request completed with HTTP 200` (no URL, no token) followed by a truthful `Daily Telegram report sent`; delivered exactly once (task ID appears exactly twice in logs — one `received`, one `succeeded`, not a repeat execution); queue returned to 0. Searched the entire fresh post-deploy log history on both containers for the pattern `/bot[0-9]` (a live token embedded in a URL path would match this): **zero matches on either container.** Zero Redis-auth-error lines anywhere in either log. No `run_google`/`run_google_full` ever received or executed. Old (revoked) token's invalidity is guaranteed by BotFather's `/revoke` semantics — not independently re-tested here, since the agent never retained the old token value to test with by design.
 
 ---
 
