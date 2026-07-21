@@ -1,0 +1,572 @@
+diff --git a/frontend/app/[locale]/cookies/content.ts b/frontend/app/[locale]/cookies/content.ts
+index b8e0c94..7d6da63 100644
+--- a/frontend/app/[locale]/cookies/content.ts
++++ b/frontend/app/[locale]/cookies/content.ts
+@@ -13,7 +13,7 @@ export interface CookiePolicyContent {
+ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePolicyContent> = {
+   en: {
+     title: 'Cookie Policy',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'This page describes what cookies and similar browser storage Lookla actually uses today, and how to accept, reject, or change your choice about the optional ones — based on a direct review of the running site, not a generic template.',
+       'Lookla is operated by Zhuykov Andrey, an individual based in Greece, who acts as the data controller for the data described here. Privacy and cookie questions may be sent to hello@lookla.gr. See the Privacy Policy for the full data-processing picture — this page is specifically about cookies and browser storage.',
+@@ -29,13 +29,13 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         heading: '2. Necessary vs. optional cookies',
+         paragraphs: [
+           'Necessary cookies make the site work — signing in, remembering your language, and recording your cookie choice itself. These are set regardless of any choice you make, because the site cannot function correctly without them (or, for the consent cookie, because recording your choice requires storing that choice somewhere).',
+-          'Optional cookies are not required for the site to function — today that would only be analytics cookies, and none are currently active (see Section 7).',
++          'Optional cookies are not required for the site to function — today that means only the analytics cookies described in Section 6, which are set only after you actively accept them.',
+         ],
+       },
+       {
+-        heading: '3. Cookies currently in use',
++        heading: '3. Necessary cookies',
+         paragraphs: [
+-          'This is the complete, verified list — every cookie Lookla itself sets today, with nothing omitted and nothing speculative added:',
++          'This is the complete, verified list of necessary cookies — the ones set regardless of your analytics choice, with nothing omitted and nothing speculative added. See Section 6 for the separate, optional analytics cookies that are set only after you accept them:',
+           '• access_token — set by Lookla, necessary — keeps you signed in — 15 minutes — HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — set by Lookla, necessary — lets you stay signed in without re-entering your password every 15 minutes — 30 days — HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — set by Lookla, necessary — protects the "Sign in with Google" flow against cross-site request forgery; only present while that flow is in progress — 10 minutes — HttpOnly, Secure, SameSite=Lax.',
+@@ -56,16 +56,18 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         ],
+       },
+       {
+-        heading: '6. Optional analytics — currently inactive',
++        heading: '6. Optional analytics — Google Analytics 4',
+         paragraphs: [
+-          'As of the date at the top of this page, Lookla does not use Google Analytics (GA4) or any other analytics or audience-tracking service. No optional analytics cookie is set, and no request is made to any analytics provider.',
+-          'Lookla has built the underlying support for optional analytics consent (this page, and the accept/reject mechanism described below), but no analytics service is active as of this policy date. If and when an analytics service is enabled, it will only run after you have actively accepted it — never by default, and never because you simply didn\'t make a choice.',
++          'Lookla uses Google Analytics 4 (GA4) as an optional, consent-gated analytics service. The GA4 script does not load, and no cookie described in this section is set, unless you actively accept analytics via the banner or the "Cookie settings" control described in Section 7 — never by default, and never because you simply didn\'t make a choice.',
++          'Once accepted, GA4 may set two first-party cookies: _ga and _ga_<container-id> (the exact suffix of the second name is specific to our GA4 property). According to Google\'s official GA4 documentation, their configured default expiration is up to 2 years, and Lookla explicitly configures this same 2-year value rather than relying on it implicitly. Google\'s documentation separately notes that browsers may impose shorter limits regardless of this configured value — for example, Chrome has publicly documented a cap of about 400 days on cookie lifetimes, and Safari can reduce script-set cookies to about 7 days under certain conditions. Lookla verifies the cookies actually set, and their effective attributes as observed on the live site, during each controlled production activation, and will correct this page if the observed behavior differs from what is stated here.',
++          'GA4 is currently limited to a single event: an anonymous page-view count when you navigate the site. Lookla does not yet send any product-interaction event (such as which contact button you click, or which search filters you use) to GA4 — that is a separate, not-yet-built feature, and this page will be updated before any such event is added.',
++          'If you reject or later withdraw analytics consent, no further data is sent to GA4, and Lookla deletes the _ga and _ga_* cookies where the browser permits it. See the Privacy Policy for how long GA4 retains the data already sent to it, which is a separate setting from the cookie lifetimes described above.',
+         ],
+       },
+       {
+         heading: '7. How to accept, reject, or change your choice',
+         paragraphs: [
+-          'If analytics consent is enabled on the site, a banner appears on your first visit offering "Accept analytics" and "Reject analytics" as two equally-sized, equally-prominent options — both close the banner and record your choice for 180 days. Rejecting does not limit anything else on the site: search, salon pages, the map, contact buttons, signing in, and messaging all work exactly the same either way.',
++          'A banner appears on your first visit offering "Accept analytics" and "Reject analytics" as two equally-sized, equally-prominent options — both close the banner and record your choice for 180 days. Rejecting does not limit anything else on the site: search, salon pages, the map, contact buttons, signing in, and messaging all work exactly the same either way.',
+           'You can change your mind at any time using the "Cookie settings" link in the site footer, which reopens the same choice — accepted can be changed to rejected, and rejected can be changed to accepted, just as easily as the original choice.',
+         ],
+       },
+@@ -102,7 +104,7 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+ 
+   el: {
+     title: 'Πολιτική Cookies',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Αυτή η σελίδα περιγράφει ποια cookies και παρόμοια αποθήκευση προγράμματος περιήγησης χρησιμοποιεί πράγματι το Lookla σήμερα, και πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας για τα προαιρετικά — με βάση απευθείας έλεγχο της ιστοσελίδας που λειτουργεί, όχι ένα γενικό πρότυπο.',
+       'Το Lookla λειτουργείται από τον Zhuykov Andrey, φυσικό πρόσωπο με έδρα στην Ελλάδα, ο οποίος ενεργεί ως υπεύθυνος επεξεργασίας για τα δεδομένα που περιγράφονται εδώ. Ερωτήματα σχετικά με το απόρρητο και τα cookies μπορούν να αποστέλλονται στο hello@lookla.gr. Δείτε την Πολιτική Απορρήτου για την πλήρη εικόνα επεξεργασίας δεδομένων — αυτή η σελίδα αφορά συγκεκριμένα τα cookies και την αποθήκευση προγράμματος περιήγησης.',
+@@ -118,13 +120,13 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         heading: '2. Απαραίτητα έναντι προαιρετικών cookies',
+         paragraphs: [
+           'Τα απαραίτητα cookies κάνουν την ιστοσελίδα να λειτουργεί — σύνδεση, απομνημόνευση της γλώσσας σας, και καταγραφή της ίδιας της επιλογής σας για cookies. Αυτά ορίζονται ανεξαρτήτως οποιασδήποτε επιλογής κάνετε, επειδή η ιστοσελίδα δεν μπορεί να λειτουργήσει σωστά χωρίς αυτά (ή, για το cookie συναίνεσης, επειδή η καταγραφή της επιλογής σας απαιτεί να αποθηκευτεί κάπου αυτή η επιλογή).',
+-          'Τα προαιρετικά cookies δεν είναι απαραίτητα για τη λειτουργία της ιστοσελίδας — σήμερα αυτό θα αφορούσε μόνο cookies αναλυτικών στοιχείων, και κανένα δεν είναι προς το παρόν ενεργό (δείτε Ενότητα 7).',
++          'Τα προαιρετικά cookies δεν είναι απαραίτητα για τη λειτουργία της ιστοσελίδας — σήμερα αυτό αφορά μόνο τα cookies αναλυτικών στοιχείων που περιγράφονται στην Ενότητα 6, τα οποία ορίζονται μόνο αφού τα αποδεχτείτε ενεργά.',
+         ],
+       },
+       {
+-        heading: '3. Cookies που χρησιμοποιούνται σήμερα',
++        heading: '3. Απαραίτητα cookies',
+         paragraphs: [
+-          'Αυτή είναι η πλήρης, επαληθευμένη λίστα — κάθε cookie που ορίζει το ίδιο το Lookla σήμερα, χωρίς παραλείψεις και χωρίς εικασίες:',
++          'Αυτή είναι η πλήρης, επαληθευμένη λίστα των απαραίτητων cookies — αυτά που ορίζονται ανεξαρτήτως της επιλογής σας για αναλυτικά, χωρίς παραλείψεις και χωρίς εικασίες. Δείτε την Ενότητα 6 για τα ξεχωριστά, προαιρετικά cookies αναλυτικών που ορίζονται μόνο αφού τα αποδεχτείτε:',
+           '• access_token — ορίζεται από το Lookla, απαραίτητο — σας διατηρεί συνδεδεμένους — 15 λεπτά — HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — ορίζεται από το Lookla, απαραίτητο — σας επιτρέπει να παραμένετε συνδεδεμένοι χωρίς να εισάγετε ξανά τον κωδικό σας κάθε 15 λεπτά — 30 ημέρες — HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — ορίζεται από το Lookla, απαραίτητο — προστατεύει τη διαδικασία «Σύνδεση με Google» από επιθέσεις CSRF· υπάρχει μόνο όσο διαρκεί αυτή η διαδικασία — 10 λεπτά — HttpOnly, Secure, SameSite=Lax.',
+@@ -145,16 +147,18 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         ],
+       },
+       {
+-        heading: '6. Προαιρετικά αναλυτικά — προς το παρόν ανενεργά',
++        heading: '6. Προαιρετικά αναλυτικά — Google Analytics 4',
+         paragraphs: [
+-          'Κατά την ημερομηνία στην κορυφή αυτής της σελίδας, το Lookla δεν χρησιμοποιεί Google Analytics (GA4) ούτε καμία άλλη υπηρεσία αναλυτικών στοιχείων ή παρακολούθησης κοινού. Δεν ορίζεται κανένα προαιρετικό cookie αναλυτικών, και δεν γίνεται κανένα αίτημα προς οποιονδήποτε πάροχο αναλυτικών.',
+-          'Το Lookla έχει δημιουργήσει την υποκείμενη υποδομή για προαιρετική συναίνεση αναλυτικών (αυτή τη σελίδα, και τον μηχανισμό αποδοχής/απόρριψης που περιγράφεται παρακάτω), αλλά καμία υπηρεσία αναλυτικών δεν είναι ενεργή κατά την ημερομηνία αυτής της πολιτικής. Αν και όταν ενεργοποιηθεί μια υπηρεσία αναλυτικών, θα λειτουργήσει μόνο αφού την αποδεχτείτε ενεργά — ποτέ από προεπιλογή, και ποτέ επειδή απλώς δεν κάνατε επιλογή.',
++          'Το Lookla χρησιμοποιεί το Google Analytics 4 (GA4) ως προαιρετική υπηρεσία αναλυτικών στοιχείων, υπό συναίνεση. Το script του GA4 δεν φορτώνει, και κανένα cookie που περιγράφεται σε αυτή την ενότητα δεν ορίζεται, εκτός αν αποδεχτείτε ενεργά τα αναλυτικά μέσω του banner ή του ελέγχου «Ρυθμίσεις cookies» που περιγράφεται στην Ενότητα 7 — ποτέ από προεπιλογή, και ποτέ επειδή απλώς δεν κάνατε επιλογή.',
++          'Μόλις γίνει αποδοχή, το GA4 ενδέχεται να ορίσει δύο cookies πρώτου μέρους: _ga και _ga_<container-id> (η ακριβής κατάληξη του δεύτερου ονόματος είναι συγκεκριμένη για το property GA4 μας). Σύμφωνα με την επίσημη τεκμηρίωση του GA4 από τη Google, η ρυθμισμένη προεπιλεγμένη λήξη τους είναι έως 2 έτη, και το Lookla ρυθμίζει ρητά αυτή ακριβώς την τιμή των 2 ετών αντί να βασίζεται σε αυτήν σιωπηρά. Η τεκμηρίωση της Google αναφέρει επίσης ξεχωριστά ότι τα προγράμματα περιήγησης ενδέχεται να επιβάλλουν συντομότερα όρια ανεξαρτήτως αυτής της ρυθμισμένης τιμής — για παράδειγμα, το Chrome έχει δημόσια τεκμηριωμένο όριο περίπου 400 ημερών στη διάρκεια ζωής των cookies, και το Safari μπορεί να μειώσει τα cookies που ορίζονται από script σε περίπου 7 ημέρες υπό ορισμένες συνθήκες. Το Lookla επαληθεύει τα cookies που πράγματι ορίζονται, και τα πραγματικά χαρακτηριστικά τους όπως παρατηρούνται στην ενεργή ιστοσελίδα, κατά τη διάρκεια κάθε ελεγχόμενης ενεργοποίησης σε παραγωγή, και θα διορθώσει αυτή τη σελίδα αν η παρατηρούμενη συμπεριφορά διαφέρει από όσα αναφέρονται εδώ.',
++          'Το GA4 περιορίζεται προς το παρόν σε ένα μόνο συμβάν: μια ανώνυμη καταμέτρηση προβολών σελίδας όταν περιηγείστε στην ιστοσελίδα. Το Lookla δεν στέλνει ακόμη κανένα συμβάν αλληλεπίδρασης προϊόντος (όπως ποιο κουμπί επικοινωνίας πατάτε, ή ποια φίλτρα αναζήτησης χρησιμοποιείτε) στο GA4 — αυτό είναι ξεχωριστό χαρακτηριστικό που δεν έχει ακόμη υλοποιηθεί, και αυτή η σελίδα θα ενημερωθεί πριν προστεθεί οποιοδήποτε τέτοιο συμβάν.',
++          'Αν απορρίψετε ή αργότερα ανακαλέσετε τη συναίνεση αναλυτικών, δεν αποστέλλονται άλλα δεδομένα στο GA4, και το Lookla διαγράφει τα cookies _ga και _ga_* όπου το επιτρέπει το πρόγραμμα περιήγησης. Δείτε την Πολιτική Απορρήτου για το πόσο καιρό διατηρεί το GA4 τα δεδομένα που του έχουν ήδη σταλεί, κάτι που είναι ξεχωριστή ρύθμιση από τις διάρκειες ζωής cookie που περιγράφονται παραπάνω.',
+         ],
+       },
+       {
+         heading: '7. Πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας',
+         paragraphs: [
+-          'Αν η συναίνεση αναλυτικών είναι ενεργοποιημένη στην ιστοσελίδα, εμφανίζεται ένα banner στην πρώτη σας επίσκεψη που προσφέρει «Αποδοχή αναλυτικών» και «Απόρριψη αναλυτικών» ως δύο εξίσου μεγάλες, εξίσου εμφανείς επιλογές — και οι δύο κλείνουν το banner και καταγράφουν την επιλογή σας για 180 ημέρες. Η απόρριψη δεν περιορίζει τίποτα άλλο στην ιστοσελίδα: η αναζήτηση, οι σελίδες σαλονιών, ο χάρτης, τα κουμπιά επικοινωνίας, η σύνδεση και τα μηνύματα λειτουργούν ακριβώς το ίδιο και στις δύο περιπτώσεις.',
++          'Εμφανίζεται ένα banner στην πρώτη σας επίσκεψη που προσφέρει «Αποδοχή αναλυτικών» και «Απόρριψη αναλυτικών» ως δύο εξίσου μεγάλες, εξίσου εμφανείς επιλογές — και οι δύο κλείνουν το banner και καταγράφουν την επιλογή σας για 180 ημέρες. Η απόρριψη δεν περιορίζει τίποτα άλλο στην ιστοσελίδα: η αναζήτηση, οι σελίδες σαλονιών, ο χάρτης, τα κουμπιά επικοινωνίας, η σύνδεση και τα μηνύματα λειτουργούν ακριβώς το ίδιο και στις δύο περιπτώσεις.',
+           'Μπορείτε να αλλάξετε γνώμη ανά πάσα στιγμή χρησιμοποιώντας τον σύνδεσμο «Ρυθμίσεις cookies» στο υποσέλιδο της ιστοσελίδας, ο οποίος επανανοίγει την ίδια επιλογή — η αποδοχή μπορεί να αλλάξει σε απόρριψη, και η απόρριψη σε αποδοχή, εξίσου εύκολα όσο η αρχική επιλογή.',
+         ],
+       },
+@@ -191,7 +195,7 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+ 
+   ru: {
+     title: 'Политика использования cookies',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Эта страница описывает, какие cookie и похожее хранилище браузера действительно использует Lookla сегодня, и как принять, отклонить или изменить ваш выбор в отношении необязательных — на основе прямой проверки работающего сайта, а не общего шаблона.',
+       'Lookla управляется физическим лицом — Жуйков Андрей (Zhuykov Andrey), находящимся в Греции, который выступает в качестве контролёра данных, описанных здесь. Вопросы о конфиденциальности и cookie можно направлять на hello@lookla.gr. Полную картину обработки данных см. в Политике конфиденциальности — эта страница посвящена именно cookie и хранилищу браузера.',
+@@ -207,13 +211,13 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         heading: '2. Необходимые и необязательные cookie',
+         paragraphs: [
+           'Необходимые cookie заставляют сайт работать — вход в систему, запоминание вашего языка и запись самого вашего выбора cookie. Они устанавливаются независимо от того, какой выбор вы сделаете, потому что сайт не может корректно работать без них (а для cookie согласия — потому что запись вашего выбора требует где-то этот выбор сохранить).',
+-          'Необязательные cookie не требуются для работы сайта — сегодня это касалось бы только аналитических cookie, и ни один из них пока не активен (см. раздел 7).',
++          'Необязательные cookie не требуются для работы сайта — сегодня это только аналитические cookie, описанные в разделе 6, которые устанавливаются лишь после того, как вы их активно примете.',
+         ],
+       },
+       {
+-        heading: '3. Cookie, используемые сегодня',
++        heading: '3. Необходимые cookie',
+         paragraphs: [
+-          'Это полный, проверенный список — каждый cookie, который сам Lookla устанавливает сегодня, без пропусков и без предположений:',
++          'Это полный, проверенный список необходимых cookie — тех, что устанавливаются независимо от вашего выбора в отношении аналитики, без пропусков и без предположений. Отдельные, необязательные аналитические cookie, устанавливаемые только после вашего согласия, см. в разделе 6:',
+           '• access_token — устанавливается Lookla, необходимый — поддерживает вашу авторизацию — 15 минут — HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — устанавливается Lookla, необходимый — позволяет оставаться авторизованным без повторного ввода пароля каждые 15 минут — 30 дней — HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — устанавливается Lookla, необходимый — защищает процесс «Войти через Google» от межсайтовой подделки запроса; присутствует только пока этот процесс идёт — 10 минут — HttpOnly, Secure, SameSite=Lax.',
+@@ -234,16 +238,18 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         ],
+       },
+       {
+-        heading: '6. Необязательная аналитика — пока неактивна',
++        heading: '6. Необязательная аналитика — Google Analytics 4',
+         paragraphs: [
+-          'На дату, указанную вверху этой страницы, Lookla не использует Google Analytics (GA4) или любой другой сервис аналитики или отслеживания аудитории. Ни один необязательный аналитический cookie не устанавливается, и ни один запрос не отправляется ни одному поставщику аналитики.',
+-          'Lookla создала базовую поддержку для необязательного согласия на аналитику (эту страницу и механизм принятия/отклонения, описанный ниже), но ни один сервис аналитики не активен на дату этой политики. Если и когда сервис аналитики будет включён, он заработает только после того, как вы активно его примете — никогда по умолчанию и никогда просто потому, что вы не сделали выбор.',
++          'Lookla использует Google Analytics 4 (GA4) как необязательный сервис аналитики, работающий только с вашего согласия. Скрипт GA4 не загружается, и ни один cookie, описанный в этом разделе, не устанавливается, пока вы активно не примете аналитику через баннер или элемент управления «Настройки cookies», описанный в разделе 7 — никогда по умолчанию и никогда просто потому, что вы не сделали выбор.',
++          'После принятия GA4 может установить два cookie первой стороны: _ga и _ga_<container-id> (точное окончание второго названия специфично для нашего property GA4). Согласно официальной документации GA4 от Google, их настроенный по умолчанию срок действия составляет до 2 лет, и Lookla явно настраивает именно это значение в 2 года, а не полагается на него неявно. Документация Google отдельно отмечает, что браузеры могут накладывать более короткие ограничения независимо от этого настроенного значения — например, у Chrome публично задокументировано ограничение около 400 дней на срок жизни cookie, а Safari может сокращать установленные скриптом cookie примерно до 7 дней при определённых условиях. Lookla проверяет фактически устанавливаемые cookie и их реальные атрибуты, наблюдаемые на действующем сайте, в ходе каждой контролируемой активации в продакшене, и скорректирует эту страницу, если наблюдаемое поведение будет отличаться от указанного здесь.',
++          'GA4 пока ограничен одним-единственным событием: анонимным подсчётом просмотров страниц при навигации по сайту. Lookla пока не отправляет в GA4 никаких событий взаимодействия с продуктом (например, на какую кнопку контакта вы нажали или какие фильтры поиска использовали) — это отдельная, ещё не реализованная функция, и эта страница будет обновлена до добавления любого такого события.',
++          'Если вы отклоните или позже отзовёте согласие на аналитику, дальнейшие данные в GA4 не отправляются, и Lookla удаляет cookie _ga и _ga_*, где это позволяет браузер. Как долго GA4 хранит уже отправленные ему данные — отдельная настройка от сроков жизни cookie, описанных выше — см. Политику конфиденциальности.',
+         ],
+       },
+       {
+         heading: '7. Как принять, отклонить или изменить ваш выбор',
+         paragraphs: [
+-          'Если согласие на аналитику включено на сайте, при первом посещении появляется баннер, предлагающий «Принять аналитику» и «Отклонить аналитику» как два одинаковых по размеру и заметности варианта — оба закрывают баннер и записывают ваш выбор на 180 дней. Отклонение не ограничивает ничего другого на сайте: поиск, страницы салонов, карта, кнопки контактов, вход в систему и сообщения работают одинаково в обоих случаях.',
++          'При первом посещении появляется баннер, предлагающий «Принять аналитику» и «Отклонить аналитику» как два одинаковых по размеру и заметности варианта — оба закрывают баннер и записывают ваш выбор на 180 дней. Отклонение не ограничивает ничего другого на сайте: поиск, страницы салонов, карта, кнопки контактов, вход в систему и сообщения работают одинаково в обоих случаях.',
+           'Вы можете передумать в любой момент, используя ссылку «Настройки cookies» в подвале сайта, которая заново открывает тот же выбор — принято можно изменить на отклонено, а отклонено — на принято, так же легко, как и первоначальный выбор.',
+         ],
+       },
+@@ -280,7 +286,7 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+ 
+   uk: {
+     title: 'Політика використання cookies',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Ця сторінка описує, які cookie та подібне сховище браузера справді використовує Lookla сьогодні, і як прийняти, відхилити чи змінити ваш вибір щодо необов\'язкових — на основі прямої перевірки застосунку, що працює, а не загального шаблону.',
+       'Lookla керується фізичною особою — Жуйков Андрій (Zhuykov Andrey), що перебуває в Греції, який виступає контролером даних, описаних тут. Питання щодо конфіденційності та cookie можна надсилати на hello@lookla.gr. Повну картину обробки даних див. у Політиці конфіденційності — ця сторінка присвячена саме cookie та сховищу браузера.',
+@@ -296,13 +302,13 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         heading: '2. Необхідні та необов\'язкові cookie',
+         paragraphs: [
+           'Необхідні cookie змушують сайт працювати — вхід у систему, запам\'ятовування вашої мови та запис самого вашого вибору cookie. Вони встановлюються незалежно від того, який вибір ви зробите, оскільки сайт не може коректно працювати без них (а для cookie згоди — оскільки запис вашого вибору вимагає десь цей вибір зберегти).',
+-          'Необов\'язкові cookie не потрібні для роботи сайту — сьогодні це стосувалося б лише аналітичних cookie, і жоден із них поки не активний (див. розділ 7).',
++          'Необов\'язкові cookie не потрібні для роботи сайту — сьогодні це лише аналітичні cookie, описані в розділі 6, які встановлюються лише після того, як ви їх активно приймете.',
+         ],
+       },
+       {
+-        heading: '3. Cookie, які використовуються сьогодні',
++        heading: '3. Необхідні cookie',
+         paragraphs: [
+-          'Це повний, перевірений список — кожен cookie, який сам Lookla встановлює сьогодні, без пропусків і без припущень:',
++          'Це повний, перевірений список необхідних cookie — тих, що встановлюються незалежно від вашого вибору щодо аналітики, без пропусків і без припущень. Окремі, необов\'язкові аналітичні cookie, які встановлюються лише після вашої згоди, див. у розділі 6:',
+           '• access_token — встановлюється Lookla, необхідний — підтримує вашу авторизацію — 15 хвилин — HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — встановлюється Lookla, необхідний — дозволяє залишатися авторизованим без повторного введення пароля кожні 15 хвилин — 30 днів — HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — встановлюється Lookla, необхідний — захищає процес «Увійти через Google» від міжсайтової підробки запиту; присутній лише поки цей процес триває — 10 хвилин — HttpOnly, Secure, SameSite=Lax.',
+@@ -323,16 +329,18 @@ export const COOKIE_POLICY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', CookiePoli
+         ],
+       },
+       {
+-        heading: '6. Необов\'язкова аналітика — поки неактивна',
++        heading: '6. Необов\'язкова аналітика — Google Analytics 4',
+         paragraphs: [
+-          'На дату, вказану вгорі цієї сторінки, Lookla не використовує Google Analytics (GA4) чи будь-який інший сервіс аналітики або відстеження аудиторії. Жоден необов\'язковий аналітичний cookie не встановлюється, і жоден запит не надсилається жодному постачальнику аналітики.',
+-          'Lookla створила базову підтримку для необов\'язкової згоди на аналітику (цю сторінку та механізм прийняття/відхилення, описаний нижче), але жоден сервіс аналітики не активний на дату цієї політики. Якщо і коли сервіс аналітики буде увімкнено, він запрацює лише після того, як ви активно його приймете — ніколи за замовчуванням і ніколи просто тому, що ви не зробили вибір.',
++          'Lookla використовує Google Analytics 4 (GA4) як необов\'язковий сервіс аналітики, що працює лише за вашою згодою. Скрипт GA4 не завантажується, і жоден cookie, описаний у цьому розділі, не встановлюється, доки ви активно не приймете аналітику через банер або елемент керування «Налаштування cookies», описаний у розділі 7 — ніколи за замовчуванням і ніколи просто тому, що ви не зробили вибір.',
++          'Після прийняття GA4 може встановити два cookie першої сторони: _ga та _ga_<container-id> (точне закінчення другої назви специфічне для нашого property GA4). Згідно з офіційною документацією GA4 від Google, їхній налаштований за замовчуванням термін дії становить до 2 років, і Lookla явно налаштовує саме це значення в 2 роки, а не покладається на нього неявно. Документація Google окремо зазначає, що браузери можуть накладати коротші обмеження незалежно від цього налаштованого значення — наприклад, у Chrome публічно задокументовано обмеження близько 400 днів на термін життя cookie, а Safari може скорочувати встановлені скриптом cookie приблизно до 7 днів за певних умов. Lookla перевіряє фактично встановлювані cookie та їхні реальні атрибути, що спостерігаються на чинному сайті, під час кожної контрольованої активації в продакшені, і скоригує цю сторінку, якщо спостережувана поведінка відрізнятиметься від зазначеної тут.',
++          'GA4 наразі обмежений однією подією: анонімним підрахунком переглядів сторінок під час навігації сайтом. Lookla поки не надсилає до GA4 жодних подій взаємодії з продуктом (наприклад, яку кнопку контакту ви натиснули або які фільтри пошуку використали) — це окрема, ще не реалізована функція, і ця сторінка буде оновлена до додавання будь-якої такої події.',
++          'Якщо ви відхилите або пізніше відкличете згоду на аналітику, подальші дані до GA4 не надсилаються, і Lookla видаляє cookie _ga та _ga_*, де це дозволяє браузер. Як довго GA4 зберігає вже надіслані йому дані — окреме налаштування від термінів життя cookie, описаних вище — див. Політику конфіденційності.',
+         ],
+       },
+       {
+         heading: '7. Як прийняти, відхилити чи змінити ваш вибір',
+         paragraphs: [
+-          'Якщо згода на аналітику увімкнена на сайті, під час першого відвідування з\'являється банер, що пропонує «Прийняти аналітику» та «Відхилити аналітику» як два однакових за розміром і помітністю варіанти — обидва закривають банер і записують ваш вибір на 180 днів. Відхилення не обмежує нічого іншого на сайті: пошук, сторінки салонів, карта, кнопки контактів, вхід у систему та повідомлення працюють однаково в обох випадках.',
++          'Під час першого відвідування з\'являється банер, що пропонує «Прийняти аналітику» та «Відхилити аналітику» як два однакових за розміром і помітністю варіанти — обидва закривають банер і записують ваш вибір на 180 днів. Відхилення не обмежує нічого іншого на сайті: пошук, сторінки салонів, карта, кнопки контактів, вхід у систему та повідомлення працюють однаково в обох випадках.',
+           'Ви можете передумати в будь-який момент, використовуючи посилання «Налаштування cookies» у футері сайту, яке знову відкриває той самий вибір — прийнято можна змінити на відхилено, а відхилено — на прийнято, так само легко, як і початковий вибір.',
+         ],
+       },
+diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
+index 837e786..005f269 100644
+--- a/frontend/app/[locale]/privacy/content.ts
++++ b/frontend/app/[locale]/privacy/content.ts
+@@ -13,7 +13,7 @@ export interface PrivacyContent {
+ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent> = {
+   en: {
+     title: 'Privacy Policy',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'This page describes what personal data Lookla ("we", "us") actually collects, stores, and shares today, based on a direct review of the running application — not a generic template.',
+       'Lookla is a marketplace for beauty salons and independent professionals in Greece.',
+@@ -46,7 +46,8 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Public salon, professional, and review directory data — our legitimate interest in operating a public beauty-business directory.',
+           '• Translation of public review and service text — our legitimate interest in providing a multilingual directory.',
+           '• Legal requests, disputes, and legal claims — compliance with a legal obligation, or our legitimate interest, depending on the situation.',
+-          'Where we rely on legitimate interests, you have the right to object to that processing — see Section 11 (Your rights).',
++          '• Optional analytics (Google Analytics 4) — consent. This only runs if you actively accept it; see Section 5 (Cookies), Section 6 (Third parties), and our Cookie Policy for what this involves and how to withdraw.',
++          'Where we rely on legitimate interests, you have the right to object to that processing — see Section 11 (Your rights). Where we rely on consent, you may withdraw it at any time, as described in Section 11.',
+         ],
+       },
+       {
+@@ -68,13 +69,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Cookies',
+         paragraphs: [
+-          'We use five cookies today, all functional (not advertising or analytics cookies):',
++          'Five cookies are functional and set regardless of any choice you make:',
+           '• access_token — set when you sign in, expires after 15 minutes, keeps you authenticated. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — set when you sign in, expires after 30 days, used to issue a new access_token without signing in again. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — set only during the "Sign in with Google" flow, expires after 10 minutes, protects against cross-site request forgery. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — remembers which of the four site languages (Greek, English, Russian, Ukrainian) you\'re viewing. Contains only a language code, no personal data.',
+           '• lookla_consent — records whether you accepted or rejected optional analytics cookies, expires after 180 days. Not HttpOnly (so the consent banner and settings control can read it), Secure when served over HTTPS, SameSite=Lax.',
+-          'We do not currently use any advertising, tracking, or analytics cookies — see Section 7 for services we do not yet use. See our Cookie Policy for the complete list, exact lifetimes, and how to accept, reject, or change your choice.',
++          'Two further cookies are optional and are set only if you actively accept analytics: _ga and _ga_<container-id>, set by Google Analytics 4 — see Section 6 and our Cookie Policy for what they are, their documented default lifetime, and how to reject or withdraw. We do not use any advertising or tracking cookie — see Section 7 for other services we do not use. See our Cookie Policy for the complete list and how to accept, reject, or change your analytics choice.',
+         ],
+       },
+       {
+@@ -85,12 +86,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           'Resend — transactional emails (registration verification, password reset, salon-claim verification codes) are sent through Resend, a third-party email delivery service. Resend receives the recipient\'s email address and the email content.',
+           'Cloudflare — Lookla normally uses Cloudflare as its public content-delivery, storage, and security provider. Requests made through the public Lookla domain pass through Cloudflare. The origin infrastructure may also be technically reachable directly. Cloudflare also hosts salon photos we\'ve gathered from public sources (not user-uploaded photos) via Cloudflare R2 storage.',
+           'OpenStreetMap and CARTO — the interactive map loads map tiles directly from these providers in your browser. As with any map service, this means your IP address and the map area you\'re viewing are visible to these providers when the map loads. We do not use Google Maps.',
++          'Google Analytics 4 (Google) — optional, consent-gated analytics; the script does not run, and no data is sent, unless you actively accept it via the cookie banner or the "Cookie settings" control. When active, it currently sends only an anonymous page-view count when you navigate the site — no product-interaction events (Section 1 lists what we collect elsewhere; GA4 does not currently receive any of it). Google Signals, Ads Personalization, and any advertising-audience feature are disabled on our GA4 property. See our Cookie Policy for the specific cookies involved and how to withdraw.',
+         ],
+       },
+       {
+         heading: '7. Services we do not currently use',
+         paragraphs: [
+-          'To avoid any ambiguity: as of the date at the top of this page, we do not use Google Analytics (GA4) or any other analytics or audience-tracking service, and we do not use reCAPTCHA. If either of these changes, this page will be updated before the change goes live.',
++          'To avoid any ambiguity: as of the date at the top of this page, we do not use reCAPTCHA. If this changes, this page will be updated before the change goes live. (Google Analytics 4 is no longer listed here — see Section 6 — but remains inactive unless you actively consent to it.)',
+         ],
+       },
+       {
+@@ -102,6 +104,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Resend — transfers outside the EEA may rely on the EU Standard Contractual Clauses, and the EU–US Data Privacy Framework where applicable.',
+           '• Google — processes the Sign-In interaction under its own privacy terms, as described in Section 6.',
+           '• OpenStreetMap and CARTO — your browser contacts these providers directly, as described in Section 6.',
++          '• Google Analytics — where you have actively accepted optional analytics (Section 6), Google may process the resulting data outside the EEA; transfers may rely on the EU Standard Contractual Clauses and Google\'s own data-processing terms for GA4 customers, where applicable.',
+           'These safeguards depend on each provider\'s current legal framework and may change over time; we do not guarantee that any specific transfer mechanism remains in effect indefinitely.',
+         ],
+       },
+@@ -121,6 +124,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Salon-ownership-claim records — for as long as the ownership link between your account and the salon remains active. We do not yet have a way to record when a claim formally ends, so we cannot currently apply a fixed post-end retention period; until that capability exists, we remove a claim record manually when we become aware it is no longer valid (for example, the salon changes hands or the claim is found to be invalid).',
+           '• Cached translations of public review/service text — for as long as the corresponding source content remains published; our target is to delete a cached translation when its source content is removed. We do not currently have an automated job that enforces this.',
+           '• Data already captured in a backup before a deletion request — this ages out automatically as that backup is replaced by the next rotation, at most 7 days later.',
++          '• Optional analytics data (Google Analytics) — where you have actively accepted analytics, GA4 retains event and user-level data for 2 months, after which Google deletes it automatically; this is a setting we control in GA4 and is separate from the _ga/_ga_<container-id> cookie lifetimes described in Section 5 and our Cookie Policy.',
+           'Where a target above is not yet backed by an automated job, deletion is handled manually today; the corresponding engineering work is tracked separately.',
+         ],
+       },
+@@ -177,7 +181,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   el: {
+     title: 'Πολιτική Απορρήτου',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Αυτή η σελίδα περιγράφει ποια προσωπικά δεδομένα συλλέγει, αποθηκεύει και μοιράζεται σήμερα το Lookla («εμείς»), με βάση απευθείας έλεγχο της εφαρμογής που λειτουργεί — όχι ένα γενικό πρότυπο.',
+       'Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα.',
+@@ -210,7 +214,8 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Δημόσια δεδομένα καταλόγου σαλονιών, επαγγελματιών και αξιολογήσεων — έννομο συμφέρον μας για τη λειτουργία ενός δημόσιου καταλόγου επιχειρήσεων ομορφιάς.',
+           '• Μετάφραση δημόσιου κειμένου αξιολογήσεων και υπηρεσιών — έννομο συμφέρον μας για την παροχή πολύγλωσσου καταλόγου.',
+           '• Νομικά αιτήματα, διαφορές και νομικές αξιώσεις — συμμόρφωση με νομική υποχρέωση, ή έννομο συμφέρον μας, ανάλογα με την περίπτωση.',
+-          'Όπου βασιζόμαστε σε έννομα συμφέροντα, έχετε το δικαίωμα να αντιταχθείτε σε αυτή την επεξεργασία — δείτε την Ενότητα 11 (Τα δικαιώματά σας).',
++          '• Προαιρετικά αναλυτικά στοιχεία (Google Analytics 4) — συγκατάθεση. Λειτουργεί μόνο αν το αποδεχτείτε ενεργά· δείτε την Ενότητα 5 (Cookies), την Ενότητα 6 (Τρίτοι) και την Πολιτική Cookies μας για τι περιλαμβάνει και πώς να το ανακαλέσετε.',
++          'Όπου βασιζόμαστε σε έννομα συμφέροντα, έχετε το δικαίωμα να αντιταχθείτε σε αυτή την επεξεργασία — δείτε την Ενότητα 11 (Τα δικαιώματά σας). Όπου βασιζόμαστε σε συγκατάθεση, μπορείτε να την ανακαλέσετε ανά πάσα στιγμή, όπως περιγράφεται στην Ενότητα 11.',
+         ],
+       },
+       {
+@@ -232,13 +237,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Cookies',
+         paragraphs: [
+-          'Χρησιμοποιούμε σήμερα πέντε cookies, όλα λειτουργικά (όχι διαφημιστικά ή αναλυτικά):',
++          'Πέντε cookies είναι λειτουργικά και ορίζονται ανεξαρτήτως της επιλογής σας:',
+           '• access_token — ορίζεται όταν συνδέεστε, λήγει μετά από 15 λεπτά, σας διατηρεί ταυτοποιημένους. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — ορίζεται όταν συνδέεστε, λήγει μετά από 30 ημέρες, χρησιμοποιείται για την έκδοση νέου access_token χωρίς να χρειάζεται νέα σύνδεση. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — ορίζεται μόνο κατά τη διαδικασία «Σύνδεση με Google», λήγει μετά από 10 λεπτά, προστατεύει από επιθέσεις CSRF. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — θυμάται ποια από τις τέσσερις γλώσσες της ιστοσελίδας (ελληνικά, αγγλικά, ρωσικά, ουκρανικά) προβάλλετε. Περιέχει μόνο κωδικό γλώσσας, όχι προσωπικά δεδομένα.',
+           '• lookla_consent — καταγράφει αν αποδεχτήκατε ή απορρίψατε τα προαιρετικά cookies αναλυτικών στοιχείων, λήγει μετά από 180 ημέρες. Όχι HttpOnly (ώστε το banner συναίνεσης και οι ρυθμίσεις να μπορούν να το διαβάσουν), Secure όταν παρέχεται μέσω HTTPS, SameSite=Lax.',
+-          'Δεν χρησιμοποιούμε προς το παρόν κανένα διαφημιστικό, ανιχνευτικό ή αναλυτικό cookie — δείτε την Ενότητα 7 για υπηρεσίες που δεν χρησιμοποιούμε ακόμη. Δείτε την Πολιτική Cookies μας για την πλήρη λίστα, τις ακριβείς διάρκειες και το πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας.',
++          'Δύο επιπλέον cookies είναι προαιρετικά και ορίζονται μόνο αν αποδεχτείτε ενεργά τα αναλυτικά: _ga και _ga_<container-id>, που ορίζονται από το Google Analytics 4 — δείτε την Ενότητα 6 και την Πολιτική Cookies μας για το τι είναι, την τεκμηριωμένη προεπιλεγμένη διάρκεια ζωής τους, και πώς να απορρίψετε ή να ανακαλέσετε τη συγκατάθεση. Δεν χρησιμοποιούμε κανένα διαφημιστικό ή ανιχνευτικό cookie — δείτε την Ενότητα 7 για άλλες υπηρεσίες που δεν χρησιμοποιούμε. Δείτε την Πολιτική Cookies μας για την πλήρη λίστα και το πώς να αποδεχτείτε, να απορρίψετε ή να αλλάξετε την επιλογή σας για αναλυτικά.',
+         ],
+       },
+       {
+@@ -249,12 +254,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           'Resend — τα συναλλακτικά email (επαλήθευση εγγραφής, επαναφορά κωδικού, κωδικοί επαλήθευσης διεκδίκησης σαλονιού) αποστέλλονται μέσω της Resend, μιας υπηρεσίας παράδοσης email τρίτου μέρους. Η Resend λαμβάνει τη διεύθυνση email του παραλήπτη και το περιεχόμενο του email.',
+           'Cloudflare — το Lookla χρησιμοποιεί κανονικά την Cloudflare ως πάροχο δημόσιας παράδοσης περιεχομένου, αποθήκευσης και ασφάλειας. Τα αιτήματα μέσω του δημόσιου τομέα Lookla διέρχονται από την Cloudflare. Η υποδομή προέλευσης ενδέχεται επίσης να είναι τεχνικά προσβάσιμη απευθείας. Η Cloudflare φιλοξενεί επίσης φωτογραφίες σαλονιών που έχουμε συλλέξει από δημόσιες πηγές (όχι φωτογραφίες που ανέβασαν χρήστες) μέσω αποθήκευσης Cloudflare R2.',
+           'OpenStreetMap και CARTO — ο διαδραστικός χάρτης φορτώνει πλακίδια χάρτη απευθείας από αυτούς τους παρόχους στο πρόγραμμα περιήγησής σας. Όπως με κάθε υπηρεσία χάρτη, αυτό σημαίνει ότι η διεύθυνση IP σας και η περιοχή του χάρτη που προβάλλετε είναι ορατές σε αυτούς τους παρόχους κατά τη φόρτωση του χάρτη. Δεν χρησιμοποιούμε Google Maps.',
++          'Google Analytics 4 (Google) — προαιρετικά αναλυτικά στοιχεία, υπό συναίνεση· το script δεν εκτελείται, και δεν αποστέλλονται δεδομένα, εκτός αν το αποδεχτείτε ενεργά μέσω του banner cookies ή του ελέγχου «Ρυθμίσεις cookies». Όταν είναι ενεργό, στέλνει προς το παρόν μόνο μια ανώνυμη καταμέτρηση προβολών σελίδας όταν περιηγείστε στην ιστοσελίδα — κανένα συμβάν αλληλεπίδρασης προϊόντος (η Ενότητα 1 απαριθμεί τι συλλέγουμε αλλού· το GA4 δεν λαμβάνει προς το παρόν τίποτα από αυτά). Τα Σήματα Google (Google Signals), η Εξατομίκευση Διαφημίσεων και οποιαδήποτε λειτουργία διαφημιστικού κοινού είναι απενεργοποιημένα στο property GA4 μας. Δείτε την Πολιτική Cookies μας για τα συγκεκριμένα cookies και το πώς να ανακαλέσετε.',
+         ],
+       },
+       {
+         heading: '7. Υπηρεσίες που δεν χρησιμοποιούμε προς το παρόν',
+         paragraphs: [
+-          'Για την αποφυγή κάθε ασάφειας: κατά την ημερομηνία στην κορυφή αυτής της σελίδας, δεν χρησιμοποιούμε Google Analytics (GA4) ούτε καμία άλλη υπηρεσία αναλυτικών στοιχείων ή παρακολούθησης κοινού, και δεν χρησιμοποιούμε reCAPTCHA. Αν κάτι από αυτά αλλάξει, αυτή η σελίδα θα ενημερωθεί πριν τεθεί σε ισχύ η αλλαγή.',
++          'Για την αποφυγή κάθε ασάφειας: κατά την ημερομηνία στην κορυφή αυτής της σελίδας, δεν χρησιμοποιούμε reCAPTCHA. Αν αυτό αλλάξει, αυτή η σελίδα θα ενημερωθεί πριν τεθεί σε ισχύ η αλλαγή. (Το Google Analytics 4 δεν αναφέρεται πλέον εδώ — δείτε την Ενότητα 6 — αλλά παραμένει ανενεργό εκτός αν συναινέσετε ενεργά.)',
+         ],
+       },
+       {
+@@ -266,6 +272,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Resend — οι μεταφορές εκτός ΕΟΧ ενδέχεται να βασίζονται στις Τυποποιημένες Συμβατικές Ρήτρες της ΕΕ, και στο Πλαίσιο Απορρήτου Δεδομένων ΕΕ–ΗΠΑ όπου ισχύει.',
+           '• Google — επεξεργάζεται την αλληλεπίδραση Sign-In βάσει των δικών της όρων απορρήτου, όπως περιγράφεται στην Ενότητα 6.',
+           '• OpenStreetMap και CARTO — το πρόγραμμα περιήγησής σας επικοινωνεί απευθείας με αυτούς τους παρόχους, όπως περιγράφεται στην Ενότητα 6.',
++          '• Google Analytics — όπου έχετε αποδεχτεί ενεργά τα προαιρετικά αναλυτικά (Ενότητα 6), η Google ενδέχεται να επεξεργαστεί τα προκύπτοντα δεδομένα εκτός ΕΟΧ· οι μεταφορές ενδέχεται να βασίζονται στις Τυποποιημένες Συμβατικές Ρήτρες της ΕΕ και στους δικούς της όρους επεξεργασίας δεδομένων για πελάτες GA4, όπου ισχύει.',
+           'Αυτές οι διασφαλίσεις εξαρτώνται από το τρέχον νομικό πλαίσιο κάθε παρόχου και ενδέχεται να αλλάξουν με την πάροδο του χρόνου· δεν εγγυόμαστε ότι κάποιος συγκεκριμένος μηχανισμός μεταφοράς θα παραμείνει σε ισχύ επ\' αόριστον.',
+         ],
+       },
+@@ -285,6 +292,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Εγγραφές διεκδίκησης ιδιοκτησίας σαλονιού — για όσο διάστημα ο δεσμός ιδιοκτησίας μεταξύ του λογαριασμού σας και του σαλονιού παραμένει ενεργός. Δεν διαθέτουμε ακόμη τρόπο καταγραφής του πότε μια διεκδίκηση ολοκληρώνεται επίσημα, επομένως δεν μπορούμε προς το παρόν να εφαρμόσουμε σταθερή περίοδο διατήρησης μετά τη λήξη· έως ότου υπάρξει αυτή η δυνατότητα, αφαιρούμε μια εγγραφή διεκδίκησης χειροκίνητα όταν αντιληφθούμε ότι δεν είναι πλέον έγκυρη (για παράδειγμα, το σαλόνι άλλαξε ιδιοκτήτη ή η διεκδίκηση αποδειχθεί άκυρη).',
+           '• Αποθηκευμένες μεταφράσεις δημόσιου κειμένου αξιολογήσεων/υπηρεσιών — για όσο διάστημα το αντίστοιχο πρωτότυπο περιεχόμενο παραμένει δημοσιευμένο· ο στόχος μας είναι η διαγραφή μιας αποθηκευμένης μετάφρασης όταν αφαιρεθεί το πρωτότυπο περιεχόμενο. Δεν διαθέτουμε προς το παρόν αυτόματη εργασία που να το επιβάλλει.',
+           '• Δεδομένα που έχουν ήδη καταγραφεί σε αντίγραφο ασφαλείας πριν από ένα αίτημα διαγραφής — αυτά εκπίπτουν αυτόματα καθώς το αντίγραφο ασφαλείας αντικαθίσταται από την επόμενη περιστροφή, το αργότερο σε 7 ημέρες.',
++          '• Προαιρετικά δεδομένα αναλυτικών (Google Analytics) — όπου έχετε αποδεχτεί ενεργά τα αναλυτικά, το GA4 διατηρεί δεδομένα συμβάντων και δεδομένα σε επίπεδο χρήστη για 2 μήνες, μετά τα οποία η Google τα διαγράφει αυτόματα· αυτή είναι μια ρύθμιση που ελέγχουμε εμείς στο GA4 και είναι ξεχωριστή από τη διάρκεια ζωής των cookies _ga/_ga_<container-id> που περιγράφεται στην Ενότητα 5 και στην Πολιτική Cookies μας.',
+           'Όπου ένας στόχος παραπάνω δεν υποστηρίζεται ακόμη από αυτόματη εργασία, η διαγραφή διεκπεραιώνεται σήμερα χειροκίνητα· η αντίστοιχη μηχανική εργασία παρακολουθείται ξεχωριστά.',
+         ],
+       },
+@@ -341,7 +349,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   ru: {
+     title: 'Политика конфиденциальности',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Эта страница описывает, какие персональные данные Lookla («мы») действительно собирает, хранит и передаёт сегодня — на основе прямой проверки работающего приложения, а не общего шаблона.',
+       'Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции.',
+@@ -374,7 +382,8 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Публичные данные каталога салонов, специалистов и отзывов — наш законный интерес в работе публичного каталога бьюти-бизнесов.',
+           '• Перевод публичного текста отзывов и услуг — наш законный интерес в предоставлении многоязычного каталога.',
+           '• Юридические запросы, споры и юридические претензии — соблюдение юридического обязательства либо наш законный интерес, в зависимости от ситуации.',
+-          'Там, где мы опираемся на законный интерес, у вас есть право возразить против такой обработки — см. раздел 11 (Ваши права).',
++          '• Необязательная аналитика (Google Analytics 4) — согласие. Работает только если вы активно её примете; см. раздел 5 (Cookie), раздел 6 (Третьи стороны) и нашу Политику использования cookies о том, что это включает и как отозвать согласие.',
++          'Там, где мы опираемся на законный интерес, у вас есть право возразить против такой обработки — см. раздел 11 (Ваши права). Там, где мы опираемся на согласие, вы можете отозвать его в любой момент, как описано в разделе 11.',
+         ],
+       },
+       {
+@@ -396,13 +405,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Файлы cookie',
+         paragraphs: [
+-          'Сегодня мы используем пять cookie-файлов, все они функциональные (не рекламные и не аналитические):',
++          'Пять cookie-файлов функциональные и устанавливаются независимо от вашего выбора:',
+           '• access_token — устанавливается при входе, истекает через 15 минут, поддерживает вашу аутентификацию. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — устанавливается при входе, истекает через 30 дней, используется для выдачи нового access_token без повторного входа. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — устанавливается только во время входа через Google, истекает через 10 минут, защищает от межсайтовой подделки запроса. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — запоминает, какой из четырёх языков сайта (греческий, английский, русский, украинский) вы просматриваете. Содержит только код языка, без персональных данных.',
+           '• lookla_consent — записывает, приняли вы или отклонили необязательные аналитические cookie, истекает через 180 дней. Не HttpOnly (чтобы баннер согласия и настройки могли его прочитать), Secure при обслуживании через HTTPS, SameSite=Lax.',
+-          'Мы пока не используем никаких рекламных, отслеживающих или аналитических cookie — см. раздел 7 о сервисах, которые мы ещё не используем. Полный список, точные сроки действия и как принять, отклонить или изменить свой выбор см. в нашей Политике использования cookies.',
++          'Ещё два cookie необязательные и устанавливаются только если вы активно примете аналитику: _ga и _ga_<container-id>, устанавливаемые Google Analytics 4 — см. раздел 6 и нашу Политику использования cookies о том, что это такое, их задокументированном сроке действия по умолчанию и как отклонить или отозвать согласие. Мы не используем никаких рекламных или отслеживающих cookie — см. раздел 7 о других сервисах, которые мы не используем. Полный список и как принять, отклонить или изменить свой выбор в отношении аналитики см. в нашей Политике использования cookies.',
+         ],
+       },
+       {
+@@ -413,12 +422,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           'Resend — транзакционные письма (подтверждение регистрации, сброс пароля, коды подтверждения владения салоном) отправляются через Resend, стороннюю службу доставки email. Resend получает адрес email получателя и содержимое письма.',
+           'Cloudflare — Lookla обычно использует Cloudflare как поставщика публичной доставки контента, хранения и безопасности. Запросы через публичный домен Lookla проходят через Cloudflare. Исходная инфраструктура также технически может быть доступна напрямую. Cloudflare также хранит фотографии салонов, собранные из публичных источников (не загруженные пользователями), через хранилище Cloudflare R2.',
+           'OpenStreetMap и CARTO — интерактивная карта загружает тайлы карты напрямую от этих провайдеров в вашем браузере. Как и с любым картографическим сервисом, это означает, что ваш IP-адрес и просматриваемая область карты видны этим провайдерам при загрузке карты. Мы не используем Google Maps.',
++          'Google Analytics 4 (Google) — необязательная аналитика, работающая только с вашего согласия; скрипт не запускается, и данные не отправляются, пока вы активно не примете это через баннер cookie или элемент управления «Настройки cookies». При активации на данный момент отправляется только анонимный подсчёт просмотров страниц при навигации по сайту — никаких событий взаимодействия с продуктом (раздел 1 перечисляет, что мы собираем в остальном; GA4 пока ничего из этого не получает). Сигналы Google (Google Signals), персонализация рекламы и любые функции рекламной аудитории отключены в нашем property GA4. Полный список конкретных cookie и как отозвать согласие см. в нашей Политике использования cookies.',
+         ],
+       },
+       {
+         heading: '7. Сервисы, которые мы пока не используем',
+         paragraphs: [
+-          'Чтобы исключить любую двусмысленность: на дату, указанную вверху этой страницы, мы не используем Google Analytics (GA4) или любой другой сервис аналитики или отслеживания аудитории, и мы не используем reCAPTCHA. Если что-либо из этого изменится, эта страница будет обновлена до вступления изменения в силу.',
++          'Чтобы исключить любую двусмысленность: на дату, указанную вверху этой страницы, мы не используем reCAPTCHA. Если это изменится, эта страница будет обновлена до вступления изменения в силу. (Google Analytics 4 больше не указан здесь — см. раздел 6 — но остаётся неактивным, пока вы активно не дадите согласие.)',
+         ],
+       },
+       {
+@@ -430,6 +440,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Resend — передачи за пределы ЕЭЗ могут опираться на Стандартные договорные положения ЕС, и на Рамочное соглашение о конфиденциальности данных ЕС–США, где применимо.',
+           '• Google — обрабатывает взаимодействие Sign-In согласно собственным условиям конфиденциальности, как описано в разделе 6.',
+           '• OpenStreetMap и CARTO — ваш браузер напрямую обращается к этим провайдерам, как описано в разделе 6.',
++          '• Google Analytics — там, где вы активно приняли необязательную аналитику (раздел 6), Google может обрабатывать полученные данные за пределами ЕЭЗ; передачи могут опираться на Стандартные договорные положения ЕС и собственные условия обработки данных Google для клиентов GA4, где применимо.',
+           'Эти гарантии зависят от текущей правовой базы каждого провайдера и могут меняться со временем; мы не гарантируем, что какой-либо конкретный механизм передачи будет действовать бессрочно.',
+         ],
+       },
+@@ -449,6 +460,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Записи о подтверждении владения салоном — пока связь владения между вашим аккаунтом и салоном остаётся активной. У нас пока нет способа зафиксировать момент официального завершения подтверждения, поэтому мы пока не можем применить фиксированный срок хранения после его завершения; до появления этой возможности мы удаляем запись о подтверждении вручную, когда узнаём, что она больше не действительна (например, салон сменил владельца или подтверждение оказалось недействительным).',
+           '• Кэшированные переводы публичного текста отзывов/услуг — пока соответствующий исходный контент остаётся опубликованным; наша цель — удалять кэшированный перевод при удалении исходного контента. У нас пока нет автоматической задачи, обеспечивающей это.',
+           '• Данные, уже попавшие в резервную копию до запроса на удаление, — исчезают автоматически по мере замены этой резервной копии следующей ротацией, максимум через 7 дней.',
++          '• Необязательные данные аналитики (Google Analytics) — там, где вы активно приняли аналитику, GA4 хранит данные о событиях и на уровне пользователя в течение 2 месяцев, после чего Google удаляет их автоматически; это настройка, которую мы контролируем в GA4, отдельная от сроков жизни cookie _ga/_ga_<container-id>, описанных в разделе 5 и в нашей Политике использования cookies.',
+           'Там, где указанная выше цель пока не обеспечена автоматической задачей, удаление сегодня выполняется вручную; соответствующая инженерная работа отслеживается отдельно.',
+         ],
+       },
+@@ -505,7 +517,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   uk: {
+     title: 'Політика конфіденційності',
+-    lastUpdated: '2026-07-17',
++    lastUpdated: '2026-07-21',
+     intro: [
+       'Ця сторінка описує, які персональні дані Lookla («ми») справді збирає, зберігає та передає сьогодні — на основі прямої перевірки застосунку, що працює, а не загального шаблону.',
+       'Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції.',
+@@ -538,7 +550,8 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Публічні дані каталогу салонів, фахівців і відгуків — наш законний інтерес у роботі публічного каталогу б\'юті-бізнесів.',
+           '• Переклад публічного тексту відгуків і послуг — наш законний інтерес у наданні багатомовного каталогу.',
+           '• Юридичні запити, спори та юридичні претензії — дотримання юридичного зобов\'язання або наш законний інтерес, залежно від ситуації.',
+-          'Там, де ми покладаємося на законний інтерес, ви маєте право заперечити проти такої обробки — див. розділ 11 (Ваші права).',
++          '• Необов\'язкова аналітика (Google Analytics 4) — згода. Працює лише якщо ви активно її приймете; див. розділ 5 (Cookie), розділ 6 (Треті сторони) та нашу Політику використання cookies про те, що це включає і як відкликати згоду.',
++          'Там, де ми покладаємося на законний інтерес, ви маєте право заперечити проти такої обробки — див. розділ 11 (Ваші права). Там, де ми покладаємося на згоду, ви можете відкликати її в будь-який момент, як описано в розділі 11.',
+         ],
+       },
+       {
+@@ -560,13 +573,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+       {
+         heading: '5. Файли cookie',
+         paragraphs: [
+-          'Сьогодні ми використовуємо п\'ять файлів cookie, усі функціональні (не рекламні й не аналітичні):',
++          'П\'ять файлів cookie функціональні і встановлюються незалежно від вашого вибору:',
+           '• access_token — встановлюється під час входу, спливає через 15 хвилин, підтримує вашу автентифікацію. HttpOnly, Secure, SameSite=Lax.',
+           '• refresh_token — встановлюється під час входу, спливає через 30 днів, використовується для видачі нового access_token без повторного входу. HttpOnly, Secure, SameSite=Lax.',
+           '• oauth_csrf — встановлюється лише під час входу через Google, спливає через 10 хвилин, захищає від міжсайтової підробки запиту. HttpOnly, Secure, SameSite=Lax.',
+           '• NEXT_LOCALE — запам\'ятовує, яку з чотирьох мов сайту (грецьку, англійську, російську, українську) ви переглядаєте. Містить лише код мови, без персональних даних.',
+           '• lookla_consent — записує, чи прийняли ви чи відхилили необов\'язкові аналітичні cookie, спливає через 180 днів. Не HttpOnly (щоб банер згоди та налаштування могли його прочитати), Secure при обслуговуванні через HTTPS, SameSite=Lax.',
+-          'Ми поки не використовуємо жодних рекламних, відстежувальних чи аналітичних cookie — див. розділ 7 про сервіси, які ми ще не використовуємо. Повний список, точні терміни дії та як прийняти, відхилити чи змінити свій вибір див. у нашій Політиці використання cookies.',
++          'Ще два cookie необов\'язкові й встановлюються лише якщо ви активно приймете аналітику: _ga та _ga_<container-id>, які встановлює Google Analytics 4 — див. розділ 6 та нашу Політику використання cookies про те, що це таке, їхній задокументований термін дії за замовчуванням, і як відхилити чи відкликати згоду. Ми не використовуємо жодних рекламних чи відстежувальних cookie — див. розділ 7 про інші сервіси, які ми не використовуємо. Повний список і як прийняти, відхилити чи змінити свій вибір щодо аналітики див. у нашій Політиці використання cookies.',
+         ],
+       },
+       {
+@@ -577,12 +590,13 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           'Resend — транзакційні листи (підтвердження реєстрації, скидання пароля, коди підтвердження власності салону) надсилаються через Resend, стороння служба доставки email. Resend отримує адресу email отримувача та вміст листа.',
+           'Cloudflare — Lookla зазвичай використовує Cloudflare як постачальника публічної доставки контенту, зберігання та безпеки. Запити через публічний домен Lookla проходять через Cloudflare. Вихідна інфраструктура також технічно може бути доступна безпосередньо. Cloudflare також зберігає фотографії салонів, зібрані з публічних джерел (не завантажені користувачами), через сховище Cloudflare R2.',
+           'OpenStreetMap і CARTO — інтерактивна карта завантажує тайли карти безпосередньо від цих провайдерів у вашому браузері. Як і з будь-яким картографічним сервісом, це означає, що ваша IP-адреса та область карти, яку ви переглядаєте, видимі цим провайдерам під час завантаження карти. Ми не використовуємо Google Maps.',
++          'Google Analytics 4 (Google) — необов\'язкова аналітика, що працює лише за вашою згодою; скрипт не запускається, і дані не надсилаються, доки ви активно не приймете це через банер cookie або елемент керування «Налаштування cookies». У разі активації наразі надсилається лише анонімний підрахунок переглядів сторінок під час навігації сайтом — жодних подій взаємодії з продуктом (розділ 1 перелічує, що ми збираємо в іншому; GA4 наразі нічого з цього не отримує). Сигнали Google (Google Signals), персоналізація реклами та будь-які функції рекламної аудиторії вимкнені в нашому property GA4. Повний список конкретних cookie та як відкликати згоду див. у нашій Політиці використання cookies.',
+         ],
+       },
+       {
+         heading: '7. Сервіси, які ми поки не використовуємо',
+         paragraphs: [
+-          'Щоб виключити будь-яку двозначність: на дату, вказану вгорі цієї сторінки, ми не використовуємо Google Analytics (GA4) чи будь-який інший сервіс аналітики або відстеження аудиторії, і ми не використовуємо reCAPTCHA. Якщо щось із цього зміниться, ця сторінка буде оновлена до набуття чинності зміни.',
++          'Щоб виключити будь-яку двозначність: на дату, вказану вгорі цієї сторінки, ми не використовуємо reCAPTCHA. Якщо це зміниться, ця сторінка буде оновлена до набуття чинності зміни. (Google Analytics 4 більше не вказаний тут — див. розділ 6 — але залишається неактивним, доки ви активно не дасте згоду.)',
+         ],
+       },
+       {
+@@ -594,6 +608,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Resend — передачі за межі ЄЕП можуть спиратися на Стандартні договірні положення ЄС, і на Рамкову угоду про конфіденційність даних ЄС–США, де застосовно.',
+           '• Google — обробляє взаємодію Sign-In згідно з власними умовами конфіденційності, як описано в розділі 6.',
+           '• OpenStreetMap і CARTO — ваш браузер безпосередньо звертається до цих провайдерів, як описано в розділі 6.',
++          '• Google Analytics — там, де ви активно прийняли необов\'язкову аналітику (розділ 6), Google може обробляти отримані дані за межами ЄЕП; передачі можуть спиратися на Стандартні договірні положення ЄС та власні умови обробки даних Google для клієнтів GA4, де застосовно.',
+           'Ці гарантії залежать від чинної правової бази кожного провайдера і можуть змінюватися з часом; ми не гарантуємо, що якийсь конкретний механізм передачі залишатиметься чинним безстроково.',
+         ],
+       },
+@@ -613,6 +628,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+           '• Записи про підтвердження власності салону — поки зв\'язок власності між вашим акаунтом і салоном залишається активним. У нас поки немає способу зафіксувати момент офіційного завершення підтвердження, тому ми поки не можемо застосувати фіксований термін зберігання після його завершення; до появи цієї можливості ми видаляємо запис про підтвердження вручну, коли дізнаємося, що воно більше не дійсне (наприклад, салон змінив власника або підтвердження виявилося недійсним).',
+           '• Кешовані переклади публічного тексту відгуків/послуг — поки відповідний вихідний контент залишається опублікованим; наша мета — видаляти кешований переклад при видаленні вихідного контенту. У нас поки немає автоматичного завдання, яке б це забезпечувало.',
+           '• Дані, вже зафіксовані в резервній копії до запиту на видалення, — зникають автоматично в міру заміни цієї резервної копії наступною ротацією, максимум через 7 днів.',
++          '• Необов\'язкові дані аналітики (Google Analytics) — там, де ви активно прийняли аналітику, GA4 зберігає дані про події та на рівні користувача протягом 2 місяців, після чого Google видаляє їх автоматично; це налаштування, яке ми контролюємо в GA4, окреме від термінів дії cookie _ga/_ga_<container-id>, описаних у розділі 5 та в нашій Політиці використання cookies.',
+           'Там, де зазначена вище мета поки не забезпечена автоматичним завданням, видалення сьогодні виконується вручну; відповідна інженерна робота відстежується окремо.',
+         ],
+       },
+diff --git a/frontend/lib/analytics.test.ts b/frontend/lib/analytics.test.ts
+index b6e7bd6..2e1d9e7 100644
+--- a/frontend/lib/analytics.test.ts
++++ b/frontend/lib/analytics.test.ts
+@@ -33,6 +33,10 @@ describe('T-014: analytics.ts source — no Consent Mode "default" dance (script
+     assert.ok(/send_page_view:\s*false/.test(source));
+   });
+ 
++  test('config call sets cookie_expires to 63072000s (2 years) explicitly — matches Google\'s documented _ga/_ga_<container-id> default rather than relying on it implicitly', () => {
++    assert.ok(/cookie_expires:\s*63072000/.test(source));
++  });
++
+   test('initGtagIfNeeded is idempotent (guarded by a module-level flag)', () => {
+     assert.ok(/if \(initialized\) return;/.test(source));
+   });
+diff --git a/frontend/lib/analytics.ts b/frontend/lib/analytics.ts
+index ba75f46..a1b4e79 100644
+--- a/frontend/lib/analytics.ts
++++ b/frontend/lib/analytics.ts
+@@ -43,7 +43,10 @@ export function initGtagIfNeeded(): void {
+     window.dataLayer!.push(args);
+   };
+   window.gtag('js', new Date());
+-  window.gtag('config', GA4_MEASUREMENT_ID, { send_page_view: false });
++  // cookie_expires matches Google's own documented default for _ga/_ga_<container-id>
++  // (2 years = 63072000s) explicitly, rather than relying on gtag.js's implicit default,
++  // so the Cookie Policy's stated lifetime is actually configured, not just assumed.
++  window.gtag('config', GA4_MEASUREMENT_ID, { send_page_view: false, cookie_expires: 63072000 });
+   initialized = true;
+ }
+ 
+diff --git a/frontend/lib/cookiePolicyContent.test.ts b/frontend/lib/cookiePolicyContent.test.ts
+index 8d4580d..d35896c 100644
+--- a/frontend/lib/cookiePolicyContent.test.ts
++++ b/frontend/lib/cookiePolicyContent.test.ts
+@@ -75,20 +75,36 @@ describe('T-018: every verified cookie appears exactly once in the table, no spe
+     }
+   });
+ 
+-  test('does not list any _ga cookie as currently active', () => {
++  test('T-014 Stage 2: _ga and _ga_<container-id> are described, but only as consent-gated (never as unconditional table rows like the necessary cookies)', () => {
+     const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
+-    assert.ok(!/_ga[,\s]/i.test(text) && !/•\s*_ga/i.test(text), 'must not present a speculative _ga cookie as currently installed');
++    assert.ok(/_ga/i.test(text), 'GA4 cookies must now be described since analytics is available');
++    assert.ok(!/•\s*_ga/i.test(text), '_ga must not appear as a "•" table-row entry like the necessary cookies — it belongs in the consent-gated prose section, not the unconditional list');
+   });
+ 
+-  test('GA4 is explicitly described as inactive, not merely absent from the list', () => {
++  test('T-014 Stage 2: GA4 is described as optional and consent-gated, not as an unconditionally active or unconditionally absent service', () => {
+     const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
+-    assert.ok(/does not use Google Analytics \(GA4\)/i.test(text));
++    assert.ok(/Google Analytics 4/i.test(text));
++    assert.ok(/does not load, and no cookie.*unless you actively accept/i.test(text.replace(/\\n/g, ' ')) || /unless you actively accept analytics/i.test(text));
+   });
+ 
+   test('states analytics will only run after active acceptance, never by default', () => {
+     const text = JSON.stringify(COOKIE_POLICY_CONTENT.en.sections);
+     assert.ok(/never by default/i.test(text));
+   });
++
++  test('T-014 Stage 2: cookie_expires is configured explicitly in code, matching the "up to 2 years" documented default the policy states', () => {
++    const analyticsSource = fs.readFileSync(path.join(frontendRoot, 'lib', 'analytics.ts'), 'utf-8');
++    assert.ok(/cookie_expires:\s*63072000/.test(analyticsSource), 'lib/analytics.ts must explicitly set cookie_expires to 63072000s (2 years) rather than relying on gtag.js\'s implicit default');
++  });
++
++  test('T-014 Stage 2: does not assert Secure/SameSite/exact Domain/exact expiry for _ga* as verified fact — only cites Google\'s documented defaults, pending real production measurement', () => {
++    const gaSection = COOKIE_POLICY_CONTENT.en.sections.find(s => s.paragraphs.some(p => p.includes('_ga_<container-id>')));
++    assert.ok(gaSection, 'expected a section describing the _ga/_ga_<container-id> cookies');
++    const text = gaSection!.paragraphs.join(' ');
++    assert.ok(/official GA4 documentation/i.test(text), 'must attribute the cookie lifetime claim to Google\'s documentation, not an independent measurement');
++    assert.ok(/verifies the cookies actually set.*during each controlled production activation/i.test(text.replace(/\n/g, ' ')), 'must commit to verifying real behavior during production activation, not just asserting the documented default as fact');
++    assert.ok(!/Secure,\s*SameSite=Lax/.test(text), '_ga/_ga_<container-id> must not be asserted with the same confident Secure/SameSite attribute string used for Lookla\'s own necessary cookies, since these are gtag.js-set and not independently verified yet');
++  });
+ });
+ 
+ describe('T-018: Cloudflare cookie claims are honestly qualified (verified-absent, not claimed-never)', () => {
+diff --git a/frontend/lib/privacyContent.test.ts b/frontend/lib/privacyContent.test.ts
+index b153179..35c9466 100644
+--- a/frontend/lib/privacyContent.test.ts
++++ b/frontend/lib/privacyContent.test.ts
+@@ -298,10 +298,20 @@ describe('T-017: remaining factual corrections applied', () => {
+ });
+ 
+ describe('T-017 non-regression: does not overstate data collection (original audit findings)', () => {
+-  test('does not claim GA4 / Google Analytics is in use', () => {
++  test('does not make an unconditional GA4/Google Analytics usage claim (must always be framed as consent-gated)', () => {
+     const allText = LOCALES.map(l => JSON.stringify(PRIVACY_CONTENT[l])).join('\n');
+-    assert.ok(!/we use google analytics/i.test(allText));
+-    assert.ok(!/we use ga4/i.test(allText));
++    // T-014 Stage 2: GA4 is now real and described, but the policy must never assert
++    // it as an unconditional fact the way T-017 originally forbade — it must always
++    // be tied to consent/acceptance language, not a bare "we use X" statement.
++    assert.ok(!/we use google analytics(?!.*consent)/i.test(allText));
++    assert.ok(!/we use ga4(?!.*consent)/i.test(allText));
++  });
++
++  test('T-014 Stage 2: every GA4 mention in the English Privacy Policy is consent-gated language, not an unconditional claim', () => {
++    const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
++    assert.ok(/Google Analytics 4/i.test(text), 'GA4 must now be described since it is a real, consent-gated feature');
++    assert.ok(/consent/i.test(text));
++    assert.ok(/actively accept/i.test(text) || /actively consent/i.test(text));
+   });
+ 
+   test('messaging/booking PII disclosure still present (per the live /account/messages + /api/chat audit finding)', () => {
