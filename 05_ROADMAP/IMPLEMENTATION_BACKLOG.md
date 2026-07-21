@@ -1389,6 +1389,62 @@ Sitemap: https://lookla.gr/sitemap.xml
 
 ---
 
+### T-053 — Prevent secrets in crawler HTTP logs and rotate exposed Telegram token
+**Priority:** P0 Security | **Owner:** BE/INFRA | **Estimate:** 1h (code fix) + manual token rotation | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** 🟡 Logging fix implemented and tested; token rotation blocked on the user (requires BotFather account access the coding agent does not have)
+
+**Incident summary:** during T-052's controlled production task, the crawler worker's HTTP client logged the full Telegram Bot API request URL — including the complete bot token, which Telegram's own Bot API design embeds directly in the URL path — in cleartext, at INFO level, to Docker's captured container logs. No token value is recorded in this entry, in any commit, diff, or test fixture.
+
+**Root cause, confirmed by direct inspection (not assumed):** every one of `celery_app.py`'s 9 task wrappers (and most spider modules) calls `logging.basicConfig(level=logging.INFO)`. In practice this call is already a no-op by the time any task runs — Celery's own logging bootstrap (driven by the `--loglevel=info` flag in `docker-compose.yml`'s `command:`) has already attached a handler to the root logger before any task code executes, and `logging.basicConfig()` does nothing once `root.handlers` is non-empty. The real mechanism: Celery's `--loglevel=info` sets root's effective level to INFO, `httpx`'s internal logger (`httpx`/`httpcore`) has no explicit level of its own and inherits INFO by propagation, and httpx logs `"HTTP Request: {method} {url} ..."` at INFO by design — including any credential embedded directly in the URL.
+
+**A second, structurally identical instance was found while investigating, currently latent (not yet triggered):** `crawler/beauty_crawler/spiders/facebook.py`'s Google Custom Search fallback passes its API key as a URL query parameter (`params={"key": api_key, ...}`) to `httpx.get(...)`, which would leak identically the moment it's configured. Checked directly: `GOOGLE_SEARCH_API_KEY`/`GOOGLE_CSE_CX`/`SERPER_API_KEY` are all currently unset in production `.env`, so this code path is presently inert. `FOURSQUARE_API_KEY` and `GOOGLE_PLACES_API_KEY` (both set) are passed via HTTP headers (`Authorization`, `X-Goog-Api-Key`), which httpx's default INFO-level request log does not include — confirmed not exposed by this mechanism. `DB_PASSWORD` is embedded in the SQLAlchemy connection URL (`models.py`) but SQLAlchemy's `echo` is not enabled, so it is not actively logged via that path.
+
+**Fix implemented (`crawler/beauty_crawler/log_redaction.py`, new):**
+1. `harden_logger()` pins `httpx`/`httpcore`/`urllib3`/`requests` loggers to `WARNING`, wired in via Celery's `after_setup_logger`/`after_setup_task_logger` signals (the correct hook for this Celery version — `after_setup_root_logger` does not exist in Celery 5.4, confirmed directly against the running container rather than assumed) in `celery_app.py`. This is the primary fix: the noisy request-level INFO logging never fires.
+2. `RedactingFilter`, a `logging.Filter` attached to every handler on the Celery-configured logger, scrubs known credential shapes from any log record's final formatted message regardless of which logger produced it — a backstop for exception/error messages that could still embed a credential-bearing URL even at WARNING/ERROR level (e.g., `telegram_notify.py`'s own `logger.error("Telegram send error: %s", e)`, where httpx's exception `str()` representations typically include the full request URL). Covers: Telegram bot tokens in URL paths, `key=`/`api_key=`/`token=`/`access_token=` query parameters, `Authorization` header values, and `user:password@` credentials in `redis://`/`rediss://`/`postgres(ql)://` URLs.
+3. `telegram_notify.py`: added a sanitized success log (`"Telegram request completed with HTTP %s", resp.status_code`) and fixed `send_daily_report()` unconditionally logging "Daily Telegram report sent" regardless of whether `send()` actually returned `True` — it now logs success/failure truthfully, matching what the redaction requirement implied should exist (real status, no raw URL).
+
+**Not changed:** business logic, Telegram delivery behavior (verified via mocked tests — same `httpx.post` call, same arguments, same return semantics), Docker log rotation (flagged as a separate infra concern below, not implemented here per explicit scope).
+
+**Tests added** (`crawler/beauty_crawler/test_log_redaction.py`, `test_telegram_notify.py`, 18 tests, all passing — run directly inside the crawler container against real dependencies): Telegram tokens (multiple distinct fake shapes, not one fixture) redacted from URL paths; `key`/`api_key`/`token`/`access_token` query parameters redacted; `Authorization` header values redacted; `redis://`/`postgresql://` embedded passwords redacted; sanitized status messages (e.g., "Telegram request completed with HTTP 200") pass through **unchanged** (redaction doesn't over-match); `RedactingFilter` never suppresses a record, only scrubs it; `harden_logger()` correctly pins noisy loggers and is idempotent (no duplicate filters on repeated calls); `send()`/`send_daily_report()` behavior (arguments, return values, real vs. fabricated success logging) verified unchanged via mocks, zero real network calls.
+
+**Safe exposure review (counts/filenames only, no token value ever printed or repeated):**
+- Current `beauty_crawler_worker` container log: 1 match (the known T-052 test occurrence)
+- `beauty_crawler` (scheduler) log: 0
+- Other/removed container log files on disk: 0 beyond the current container's own file (already counted above)
+- `journald`: 0
+- Crawler app log directory (bind-mounted): 0
+- Root shell history: 0
+- This repository's full history, all commits, all branches: 0
+- `docs/.reviews/` diff artifacts: 0
+- `/opt/backup` (DB dumps only, unrelated to app logs): 0
+- Public `lookla-docs` repository, full history: 0 (verified directly via a fresh clone)
+- CI logs: not independently verified via the GitHub API — no plausible exposure path exists, since the token was never part of any commit, diff, or workflow trigger; noted honestly as unverified rather than claimed
+
+This session's own tool-call transcript (this conversation) also captured the full token once, when its logs were inspected live during T-052's verification — disclosed for completeness; not something retroactively fixable, but part of the honest exposure surface.
+
+**Immediate containment — blocked on the user, coding agent has no Telegram/BotFather access:**
+1. Revoke and regenerate the bot token via BotFather (user action required)
+2. Update only the private production `.env` — recommend doing this directly via SSH so the token never enters this chat session at all, rather than pasting it here
+3. Once done, the agent will recreate only `crawler`/`crawler_worker` (`docker compose up -d --no-deps --force-recreate crawler crawler_worker`, no rebuild needed for an `.env`-only change) and verify: old token invalid, new token delivers one controlled message successfully, new token does not appear in any newly generated log line
+
+**Docker logging configuration audit (documented, not changed — a broader compose change belongs in its own infra ticket, consistent with T-050's existing unbounded-`beauty_api`-logs finding):** confirmed via `docker inspect` — `beauty_crawler_worker` uses the default `json-file` driver with an empty `Config` (no `max-size`/`max-file`); no `/etc/docker/daemon.json` exists, so no daemon-wide default either. Log growth is currently unbounded for every service on this host, not just the crawler.
+
+**Acceptance Criteria:**
+- [x] Exact logger/root cause identified via direct inspection, not assumed (Celery's `--loglevel` bootstrap + httpx's INFO-level request logging, not the red-herring `logging.basicConfig()` calls, which are already no-ops)
+- [x] Third-party HTTP transport loggers pinned to WARNING in production
+- [x] Redaction filter covers bot tokens, generic credential query params, Authorization headers, Redis/DB credential URLs — tested against multiple distinct fake values, not one fixture
+- [x] Sanitized application-level status logging preserved/improved (real success/failure, no raw URL)
+- [x] Application/Telegram-delivery behavior unchanged, verified via mocked tests
+- [x] 18 new tests, all passing, run against real container dependencies
+- [x] Safe exposure review completed — counts/filenames only, token never printed or repeated
+- [x] Docker log rotation gap documented, not silently fixed under this ticket
+- [ ] **Blocked on user:** BotFather token rotation
+- [ ] **Blocked on the above:** post-rotation production verification (old token invalid, new token works, new token not logged)
+
+---
+
 ## Backlog Summary
 
 | Task | Priority | Owner | Hours | Epic | Depends on |
@@ -1436,6 +1492,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 | T-040 Harden production deployment | P1 | OPS | 2 | EPIC-09 | — |
 | T-051 Investigate beauty_web restart/OOM root cause | P1 | OPS/INFRA | investigation only | EPIC-09 | — |
 | T-052 Fix crawler_worker Redis auth crash loop | P1 | BE/INFRA | 0.5 | EPIC-09 | — |
+| T-053 Prevent secrets in crawler HTTP logs + rotate Telegram token | P0 Security | BE/INFRA | 1 (+ manual rotation) | EPIC-09 | — |
 | **Total** | | | **~42.25h (M-01)** | | |
 
 ---
