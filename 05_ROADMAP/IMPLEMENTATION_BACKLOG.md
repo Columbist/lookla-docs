@@ -1357,17 +1357,31 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-052 — Fix beauty_crawler_worker Redis authentication crash loop
 **Priority:** P1 | **Owner:** BE/INFRA | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
-**Status:** 🔴 Not started — filed as a direct result of the T-051 investigation
+**Status:** 🟡 Fix implemented, not yet deployed — awaiting review approval before touching production (per explicit instruction: narrow fix only, inventory before any queue/schedule action)
 
-**Description:** `docker-compose.yml`'s `crawler_worker` and `crawler` services both hardcode `environment.REDIS_URL: redis://redis:6379/0` (no password), which overrides the correct, password-bearing `REDIS_URL` supplied via `env_file: .env` (Compose's inline `environment:` always wins over `env_file` for the same key). Since `redis-server` runs with `--requirepass`, every connection attempt from these two services fails authentication. `crawler_worker` (a Celery worker) has been crash-looping as a result since 2026-07-06 — confirmed 210+ restarts and still ongoing — meaning it has **never successfully processed a single crawler task**. `crawler` (the scheduler) uses the identical pattern and should be verified for the same root cause rather than assumed unaffected, despite showing far fewer restarts (13 vs 210+) over the same window.
+**Description:** `docker-compose.yml`'s `crawler_worker` and `crawler` services both hardcoded `environment.REDIS_URL: redis://redis:6379/0` (no password), which overrode the correct, password-bearing `REDIS_URL` supplied via `env_file: .env` (Compose's inline `environment:` always wins over `env_file` for the same key). Since `redis-server` runs with `--requirepass`, every connection attempt from these two services failed authentication.
 
-**Fix:** remove the hardcoded `REDIS_URL` from both services' `environment:` blocks so the correct value flows through from `env_file: .env`, matching how `api` and `db` are already configured correctly.
+**Confirmed via live logs (not assumed) — both services are affected identically:**
+- `crawler_worker` (Celery worker): crash-looping since creation (2026-07-06), 210+ restarts, still ongoing at investigation time. Has never successfully processed a single task.
+- `crawler` (the scheduler, running `celery beat` via `scheduler.py`'s subprocess wrapper): hits the identical `kombu.exceptions.OperationalError: Authentication required.` on every tick. Shows far fewer Docker-level restarts (13, not 210+) only because `scheduler.py` catches the subprocess failure and retries internally rather than letting the container itself exit — the underlying `celery beat` process is failing just as badly.
+
+**Pre-fix inventory (mandatory before touching anything, per instruction):**
+- Redis `celery` queue depth: **0** (`LLEN celery`). Only 3 keys exist total, all Kombu exchange/binding metadata — no actual task payloads. Since producers face the identical auth failure, nothing has ever successfully queued. **No backlog exists to flood after the fix.**
+- `celerybeat-schedule` (the local persistent schedule-state file, bind-mounted from the host, GDBM/shelve format) has been continuously updated throughout — celery beat's own "last run" bookkeeping is intact and survives the restart loop. Celery's crontab-style `PersistentScheduler` fires an entry once when it next becomes due, not as a catch-up burst for missed periods — so no flood of "missed" runs is expected on restart. This is standard `PersistentScheduler` behavior, not independently verified by reading the shelve file's contents; it should still be watched directly during the post-deploy controlled test, not assumed with certainty.
+- The beat schedule includes **cost-bearing external API calls**: `run_google` (~$9/run, monthly) and `run_google_full` (~$16/run, quarterly). The controlled post-deploy test task must be a free/harmless one (e.g., a lightweight non-Google spider or `send_daily_report`), never one of the Google Places jobs, to avoid an unintended charge during verification.
+- `api` has the **identical-looking** hardcoded `REDIS_URL` bug (`docker-compose.yml`), but `backend/app/core/config.py`'s `redis_url` setting is dead code — never imported or used anywhere in the backend (same class of dead-config finding as T-014's `NEXT_PUBLIC_API_URL`). This is why `beauty_api` shows zero Redis errors despite an identical config pattern: nothing ever calls it. **Not fixed under T-052** (out of its narrow scope) — flagged here so T-033 (slowapi → Redis migration) fixes it at the same time it actually wires Redis into the API, rather than reintroducing this exact bug.
+
+**Fix implemented:** removed the hardcoded `REDIS_URL` from both `crawler` and `crawler_worker`'s `environment:` blocks in `docker-compose.yml` so the correct value flows through from `env_file: .env`. No business logic changed. Verified via `docker compose config` that both services now resolve to the correct password-bearing `REDIS_URL`.
 
 **Acceptance Criteria:**
-- [ ] `crawler_worker` and `crawler` no longer hardcode `REDIS_URL` in `docker-compose.yml`'s `environment:` block
-- [ ] Both services connect to Redis successfully after redeploy (verified via logs — no more "Authentication required" errors)
-- [ ] `crawler_worker`'s restart count stabilizes (stops climbing) after the fix is deployed
-- [ ] Confirm whether `crawler` (scheduler) was actually affected by the same bug or tolerated it differently, and document which
+- [x] `crawler_worker` and `crawler` no longer hardcode `REDIS_URL` in `docker-compose.yml`'s `environment:` block
+- [x] Confirmed via `docker compose config` that both now resolve to the correct, password-bearing `REDIS_URL` from `.env`
+- [x] Confirmed `crawler` (scheduler) was actually affected by the identical bug, not just `crawler_worker` — verified via live logs, not assumed
+- [x] Confirmed Redis queue is empty before deploy — no backlog-flood risk
+- [ ] **Not yet done (requires deploy approval):** both services connect to Redis successfully after redeploy (verified via logs — no more "Authentication required" errors)
+- [ ] **Not yet done:** `crawler_worker`'s restart count stabilizes (stops climbing) after the fix is deployed
+- [ ] **Not yet done:** one controlled, harmless test task runs successfully end-to-end post-deploy
+- [ ] **Not yet done:** decide, with explicit sign-off, what (if anything) to do about the beat schedule's pending due-dates once workers are healthy again
 
 ---
 
