@@ -521,7 +521,17 @@ Localized:
 ### T-013 — Create GA4 property and obtain tracking ID
 **Priority:** P0 | **Owner:** OPS | **Estimate:** 0.5h (revised: needs a human with Google Analytics admin access — see below) | **Epic:** EPIC-04
 **Dependencies:** None (operations task, not code)
-**Status:** 🔴 Blocked — Google Analytics admin access is not available to the coding agent (no browser session, no Google credentials). Original steps below were a stub that assumed API-key-style access; this is a console/UI task a human must complete. Correction to the original spec: it also skipped GA4's privacy-relevant settings (Enhanced Measurement, Google Signals, Ads Personalization, data retention, internal-traffic handling) entirely — those are captured below because Stage 2 activation should not silently inherit GA4's defaults (Google Signals and Ads Personalization default to a state that is not privacy-minimal).
+**Status:** ✅ Completed (2026-07-21) — real GA4 property and web stream created by the user (coding agent has no Google account access, so this was always a human console task — see below), all privacy-relevant settings configured and confirmed. Original steps below were a stub that assumed API-key-style access. Correction to the original spec: it also skipped GA4's privacy-relevant settings (Enhanced Measurement, Google Signals, Ads Personalization, data retention, internal-traffic handling) entirely — those are captured below because Stage 2 activation should not silently inherit GA4's defaults (Google Signals and Ads Personalization default to a state that is not privacy-minimal).
+
+**Actual configuration, as executed:**
+- **Ownership:** new, dedicated Google account created specifically for this property (not reused from an existing account with other projects' data) — clean separation, no legacy account-level Data Sharing Settings inherited.
+- **Property + stream:** created; real Measurement ID obtained. Per this checklist's own rule, the ID is **not** written into this file or any other repo/public-docs file — held only for direct entry into production `.env` at Stage 2 activation.
+- **Enhanced Measurement** ("Улучшенная статистика" in the Russian console UI — same feature, different localized label than expected): confirmed disabled, verified by the user re-checking the toggle's actual position after an initial mix-up.
+- **Google Signals** ("Сигналы Google"): confirmed disabled, same re-verification.
+- **Data Sharing Settings:** all unchecked at account-creation time (new account, so nothing to inherit from unrelated prior projects).
+- **No Google Ads link, no Search Console link, no BigQuery export, no advertising audiences** — none configured during setup.
+- **Data retention:** event data and user data both aligned to **2 months** (the shortest GA4 offers), reset-on-new-activity **disabled**.
+- **Internal/developer traffic filter:** not configured — no stable IP available for a reliable rule. Documented here as an accepted limitation, not an oversight.
 
 **Correct sequencing (per architect review, supersedes the original T-013→T-015 order in earlier planning docs):** T-013 (this ticket) → **T-014 Stage 2 activation** (separate explicit approval, not part of this ticket) → T-015 (product events). T-014 Stage 1 (dormant infrastructure) already shipped and is verified in production — see T-014 above.
 
@@ -532,21 +542,21 @@ Localized:
 3. **Create the production web stream** — name `Lookla Production`, URL `https://lookla.gr`, exactly one stream. Record stream name, stream ID, and the Measurement ID (`G-XXXXXXXXXX`). Do not commit the Measurement ID to Git or public docs — store it only in the production `.env` (see wiring below).
 4. **Enhanced Measurement** — recommended: disable entirely. T-014 already sends `page_view` explicitly with `send_page_view: false`; any Enhanced Measurement page-view/history tracking left on would double-count. If any sub-feature (site search, form interactions, video, downloads, outbound clicks, scroll) is left on, document why and prove it doesn't duplicate T-014/T-015 events or transmit unreviewed free-text data (GA4's built-in site-search tracking can capture raw query strings).
 5. **Privacy-safe configuration** — verify and record: Google Signals disabled, Ads Personalization disabled, user-provided data collection disabled, data-sharing settings minimized, no Google Ads link, no Search Console link (unless separately approved), BigQuery export disabled (unless separately approved), no advertising audiences, cross-domain measurement disabled, internal-traffic filter decision documented.
-6. **Data retention** — choose the shortest practical event-data retention that still supports Lookla's analytics needs; record the setting and whether it resets on new activity. **"14 months" (currently written into `MILESTONE_M01.md` and `RELEASE_CHECKLIST.md`) is a prior planning-stage assumption, not a confirmed setting** — no GA4 property has ever existed to have a retention period, so nothing has actually been chosen yet. The source of truth is whatever value is actually selected in GA4 Admin → Data Settings → Data Retention when this ticket is unblocked. Once chosen, update **all** of the following to match, in the same change: this checklist (this line), `MILESTONE_M01.md`, `RELEASE_CHECKLIST.md`, the Stage 2 Privacy Policy draft (§10 below), and the Stage 2 Cookie Policy draft (§10 below). Do not edit the live Privacy Policy yet — that happens at Stage 2 activation.
+6. **Data retention — decided: 2 months, for both event data and user data, reset-on-new-activity disabled.** The "14 months" previously written into `MILESTONE_M01.md` and `RELEASE_CHECKLIST.md` was a prior planning-stage assumption, not a confirmed setting — corrected in both files in this same change to match the actual decision. The Stage 2 Privacy Policy and Cookie Policy drafts (§10 below) must state 2 months, not 14, whenever they're written.
 7. **Internal/developer traffic** — decide: stable-IP-based internal traffic definition (only if IPs are genuinely stable), a documented dev/test filtering mechanism, or explicitly leave unfiltered and document the limitation. Test any filter before setting it to "Active" (GA4 filters are not reversible after data is dropped).
 8. **DebugView validation plan** — prepare a *temporary, controlled* validation method for Stage 2 (a separately built temporary image, or an explicit short activation window) to confirm: one initial `page_view`, one event per SPA navigation, no event before consent, no duplicates, withdrawal stops measurement, regrant resumes it, no private query parameters leak into event params, advertising consent stays denied. Do not leave GA4 DebugView/debug mode enabled for ordinary production visitors.
 9. **Secret/build wiring (already confirmed from the live host, no admin access needed for this part):** production `.env` (`/root/beauty-gr/.env` on the deploy host, gitignored, not in this diff) currently has **no** `NEXT_PUBLIC_GA4_ID` or `NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` line at all. `docker-compose.yml`'s `web.build.args` (added in T-014) already reads both as `${NEXT_PUBLIC_GA4_ID:-}` / `${NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED:-}` — no docker-compose.yml changes needed at Stage 2. Activation is: add both lines to that `.env` file, then rebuild `beauty_web` (they are build-time-inlined values — a running container will not pick them up without a rebuild, per T-014's architecture). No fallback/default ID exists anywhere in source.
 10. **Stage 2 policy changes (draft only, do not deploy under this ticket)** — Cookie Policy needs to describe GA4 as optional/consent-gated, name Google as provider, state purpose, list the actual observed `_ga`/`_ga_*` cookies and measured lifetimes, describe consent/withdrawal, note international transfers, and state that prior transmissions can't be retracted by later withdrawal. Privacy Policy needs an analytics data-category section, purpose, legal basis (consent), Google as recipient, transfer safeguards, the retention setting from step 6, withdrawal rights, and a statement that no tracking happens before consent. Do not state GA4 is active anywhere while Stage 2 remains disabled.
 
 **Acceptance Criteria:**
-- [ ] Real GA4 property + production web stream exist (not placeholder `G-XXXXXXXXXX`) — **blocked, needs human GA4 admin access**
-- [ ] Enhanced Measurement configuration reviewed and documented (disabled, or justified exception with no duplication proven)
-- [ ] Google Signals, Ads Personalization, data-sharing, BigQuery, Search Console, Google Ads link all reviewed and recorded
-- [ ] Data retention period chosen and recorded
-- [ ] Internal/developer traffic decision recorded
-- [ ] Measurement ID stored only in the production `.env`, never committed to Git or public docs
-- [ ] Stage 2 Privacy/Cookie Policy changes drafted (not deployed)
-- [ ] DebugView validation plan prepared (not left enabled for real visitors)
+- [x] Real GA4 property + production web stream exist (not placeholder `G-XXXXXXXXXX`)
+- [x] Enhanced Measurement configuration reviewed and documented — disabled, confirmed via re-check
+- [x] Google Signals, Ads Personalization, data-sharing, BigQuery, Search Console, Google Ads link all reviewed and recorded — none enabled/linked
+- [x] Data retention period chosen and recorded — 2 months (event + user data), reset disabled
+- [x] Internal/developer traffic decision recorded — not configured, no stable IP, documented as an accepted limitation
+- [x] Measurement ID stored only in the production `.env`, never committed to Git or public docs — not written anywhere in this repo; will be added directly to `.env` at Stage 2 activation
+- [ ] **Not yet done:** Stage 2 Privacy/Cookie Policy changes drafted (not deployed) — needed before Stage 2 goes live, not before T-013 closes
+- [ ] **Not yet done:** DebugView validation plan finalized for the Stage 2 activation window
 
 **Explicitly out of scope for this ticket:** any application code change, backend/database change, rebuilding or redeploying `beauty_web`, enabling GA4 for real visitors, committing a Measurement ID, T-014 Stage 2 activation itself, T-015 product events.
 
@@ -731,17 +741,18 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
 
 ### T-019 — Configure GA4 data privacy settings
 **Priority:** P0 | **Owner:** OPS | **Estimate:** 0.25h | **Epic:** EPIC-05
-**Dependencies:** T-013
+**Dependencies:** T-013 ✅ Completed
+**Status:** ✅ Completed — superseded by T-013, which already executed and recorded this same configuration (data retention, Google Signals) during property creation, per the architect-directed correction that folded GA4's privacy settings into T-013 rather than leaving them for a separate pass. Original steps below kept for historical reference; two are stale or outdated.
 
-**Dashboard tasks (not code):**
-1. GA4 Admin → Data Settings → Data Retention → set to 14 months
-2. GA4 Admin → Data Streams → lookla.gr → configure Google signals → Disable (reduces PII risk)
-3. GA4 property: IP anonymization (enabled by default in GA4; verify)
-4. GA4 Admin → Account → User management → add `columb@europe.com` as admin
+**Dashboard tasks (not code) — original stub, corrected:**
+1. ~~GA4 Admin → Data Settings → Data Retention → set to 14 months~~ — done in T-013, actual value **2 months** (event + user data), not 14
+2. GA4 Admin → Data Streams → lookla.gr → configure Google signals → Disable — done in T-013
+3. ~~GA4 property: IP anonymization (enabled by default in GA4; verify)~~ — outdated Universal Analytics-era concept; GA4 has no such toggle
+4. GA4 Admin → Account → User management → add admin — the property was created under a dedicated new Google account owned directly by the project owner; no separate admin-add step was needed
 
 **Acceptance Criteria:**
-- [ ] GA4 data retention = 14 months (screenshot for documentation)
-- [ ] IP anonymization: verified active (default in GA4 since 2022)
+- [x] GA4 data retention = **2 months** (not 14 — corrected)
+- [x] ~~IP anonymization: verified active~~ — not applicable to GA4, removed as a real criterion
 
 ---
 

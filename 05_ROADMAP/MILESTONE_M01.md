@@ -103,11 +103,11 @@ Refer to `01_PRODUCT/MVP_SCOPE_LOCK.md` for the complete WILL NOT HAVE list. Key
 - [ ] Language switcher is visible in header without scrolling
 
 ### Analytics
-- [ ] GA4 property active with real tracking ID (not placeholder "G-XXXXXXXXXX")
-- [ ] `contact_action` custom event verified in GA4 Realtime when testing contact buttons
-- [ ] `contact_action` event sends `action_type`, `salon_id`, `salon_name` parameters
-- [ ] GA4 data retention set to 14 months in GA4 admin
-- [ ] GA4 IP anonymization enabled in GA4 admin
+- [x] GA4 property active with real tracking ID (T-013, 2026-07-21) — not yet wired into production (T-014 Stage 2 pending)
+- [ ] `contact_action` custom event verified in GA4 Realtime when testing contact buttons (T-015, not started — Stage 2 must ship first)
+- [ ] `contact_action` event sends `action_type`, `salon_id`, `salon_name` parameters (T-015)
+- [x] GA4 data retention set to **2 months** (event + user data) in GA4 admin — corrected from this doc's prior "14 months" assumption, which was never an actual setting (T-013)
+- [ ] ~~GA4 IP anonymization enabled~~ — outdated Universal Analytics-era concept; GA4 has no such toggle, it does not store full IP addresses by design
 - [ ] Google Search Console property verified (DNS TXT)
 
 ### Legal

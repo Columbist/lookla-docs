@@ -123,16 +123,16 @@ implementation_status: N/A — gate document; must be fully checked before produ
 
 ## Section 5 — Analytics
 
-- [ ] [BLOCKER] GA4 Measurement ID is live (not placeholder)
-- [ ] [BLOCKER] GA4 Realtime shows pageview event when browsing the site
-- [ ] [BLOCKER] Clicking "Call salon" fires `contact_action` event in GA4 Realtime
-- [ ] [BLOCKER] Clicking "Message on WhatsApp" fires `contact_action` event with `action_type: whatsapp`
-- [ ] [BLOCKER] Clicking "Visit website" fires `contact_action` event with `action_type: website`
-- [ ] Each `contact_action` event includes `salon_id` and `salon_name` parameters
-- [ ] Admin user session is filtered out from GA4 (verify by checking "Filters" in GA4 Admin)
+- [x] GA4 Measurement ID is live (not placeholder) — obtained via T-013 (2026-07-21); **not yet wired into production**, that's T-014 Stage 2, still pending
+- [ ] [BLOCKER] GA4 Realtime shows pageview event when browsing the site (blocked on T-014 Stage 2)
+- [ ] [BLOCKER] Clicking "Call salon" fires `contact_action` event in GA4 Realtime (blocked on T-015, not started)
+- [ ] [BLOCKER] Clicking "Message on WhatsApp" fires `contact_action` event with `action_type: whatsapp` (T-015)
+- [ ] [BLOCKER] Clicking "Visit website" fires `contact_action` event with `action_type: website` (T-015)
+- [ ] Each `contact_action` event includes `salon_id` and `salon_name` parameters (T-015)
+- [x] Internal/developer traffic filter — decided in T-013: not configured, no stable IP available; documented as an accepted limitation, not a pending TODO
 - [ ] Google Search Console: property verified
-- [ ] GA4 data retention = 14 months (verify in GA4 Admin → Data Settings → Data Retention)
-- [ ] GA4 `contact_action` custom event appears in GA4 → Events list (may take 24h; verify event definition)
+- [x] GA4 data retention = **2 months** (event + user data) — corrected from this doc's prior "14 months" assumption (T-013, 2026-07-21)
+- [ ] GA4 `contact_action` custom event appears in GA4 → Events list (may take 24h; verify event definition) (T-015)
 
 ---
 
