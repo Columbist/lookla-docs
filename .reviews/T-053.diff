@@ -1,0 +1,409 @@
+diff --git a/crawler/beauty_crawler/celery_app.py b/crawler/beauty_crawler/celery_app.py
+index 0b08926..35f48f0 100644
+--- a/crawler/beauty_crawler/celery_app.py
++++ b/crawler/beauty_crawler/celery_app.py
+@@ -4,6 +4,9 @@ import os
+ 
+ from celery import Celery
+ from celery.schedules import crontab
++from celery.signals import after_setup_logger, after_setup_task_logger
++
++from .log_redaction import harden_logger
+ 
+ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+ 
+@@ -18,6 +21,12 @@ app.conf.update(
+     worker_redirect_stdouts_level="INFO",
+ )
+ 
++
++@after_setup_logger.connect
++@after_setup_task_logger.connect
++def _harden_celery_logger(logger, **kwargs):
++    harden_logger(logger)
++
+ # ─── Periodic schedule ────────────────────────────────────────────────────────
+ app.conf.beat_schedule = {
+     # Daily Telegram report at 09:00 Athens time
+diff --git a/crawler/beauty_crawler/log_redaction.py b/crawler/beauty_crawler/log_redaction.py
+new file mode 100644
+index 0000000..0312368
+--- /dev/null
++++ b/crawler/beauty_crawler/log_redaction.py
+@@ -0,0 +1,64 @@
++"""Logging hardening for the crawler/crawler_worker Celery processes.
++
++httpx (and httpcore, its transport layer) log the full request URL at
++INFO level by design. Some of this codebase's own outbound requests
++carry credentials directly in the URL (Telegram's Bot API embeds the
++token in the URL path; a Google Custom Search fallback in facebook.py
++passes its key as a query parameter) — Celery's own logging setup
++(driven by `--loglevel=info`) makes those loggers' output reach the
++container's logs. Two independent layers of defense are applied:
++
++1. Third-party HTTP client loggers are pinned to WARNING, so their
++   request-level INFO logging never fires in the first place.
++2. A redaction filter scrubs known credential shapes from any log
++   record that still reaches a handler, regardless of which logger
++   produced it — a backstop for exceptions/error messages that may
++   embed a credential-bearing URL even at WARNING/ERROR level.
++"""
++import logging
++import re
++
++NOISY_HTTP_LOGGERS = ("httpx", "httpcore", "urllib3", "requests")
++
++_PATTERNS = [
++    # Telegram bot token embedded in a URL path segment: /bot<id>:<secret>/
++    (re.compile(r"(/bot)\d+:[A-Za-z0-9_-]+"), r"\1<redacted>"),
++    # Credential-shaped query parameters (key=, api_key=, token=, access_token=)
++    (re.compile(r"([?&](?:key|api_key|token|access_token)=)[^&\s]+", re.IGNORECASE), r"\1<redacted>"),
++    # Authorization header values, if ever formatted into a log message
++    (re.compile(r"(Authorization[\"']?\s*[:=]\s*[\"']?)(?:Bearer\s+)?\S+", re.IGNORECASE), r"\1<redacted>"),
++    # user:password@ in redis://, rediss://, postgres(ql)(+driver):// URLs
++    (re.compile(r"((?:redis|rediss|postgres(?:ql)?(?:\+\w+)?)://[^:/\s@]*:)[^@\s]+(@)"), r"\1<redacted>\2"),
++]
++
++
++def redact(text: str) -> str:
++    for pattern, replacement in _PATTERNS:
++        text = pattern.sub(replacement, text)
++    return text
++
++
++class RedactingFilter(logging.Filter):
++    """Scrubs known credential shapes from the final formatted log message."""
++
++    def filter(self, record: logging.LogRecord) -> bool:
++        try:
++            message = record.getMessage()
++        except Exception:
++            return True
++        redacted = redact(message)
++        if redacted != message:
++            record.msg = redacted
++            record.args = ()
++        return True
++
++
++def harden_logger(logger: logging.Logger) -> None:
++    """Quiets noisy HTTP client loggers and attaches redaction to every
++    handler on the given logger. Idempotent — safe to call more than once
++    (Celery fires after_setup_logger/after_setup_task_logger per logger)."""
++    for name in NOISY_HTTP_LOGGERS:
++        logging.getLogger(name).setLevel(logging.WARNING)
++    for handler in logger.handlers:
++        if not any(isinstance(f, RedactingFilter) for f in handler.filters):
++            handler.addFilter(RedactingFilter())
+diff --git a/crawler/beauty_crawler/telegram_notify.py b/crawler/beauty_crawler/telegram_notify.py
+index fbc8aff..04009bb 100644
+--- a/crawler/beauty_crawler/telegram_notify.py
++++ b/crawler/beauty_crawler/telegram_notify.py
+@@ -26,6 +26,7 @@ def send(text: str) -> bool:
+             timeout=10,
+         )
+         resp.raise_for_status()
++        logger.info("Telegram request completed with HTTP %s", resp.status_code)
+         return True
+     except Exception as e:
+         logger.error("Telegram send error: %s", e)
+@@ -99,8 +100,10 @@ def daily_report() -> str:
+ def send_daily_report():
+     try:
+         report = daily_report()
+-        send(report)
+-        logger.info("Daily Telegram report sent")
++        if send(report):
++            logger.info("Daily Telegram report sent")
++        else:
++            logger.warning("Daily Telegram report was not sent (see prior log line for reason)")
+     except Exception as e:
+         logger.error("Failed to build/send daily report: %s", e)
+         send(f"<b>Beauty-GR</b> — ошибка при формировании отчёта:\n<code>{e}</code>")
+diff --git a/crawler/beauty_crawler/test_log_redaction.py b/crawler/beauty_crawler/test_log_redaction.py
+new file mode 100644
+index 0000000..af7dfd5
+--- /dev/null
++++ b/crawler/beauty_crawler/test_log_redaction.py
+@@ -0,0 +1,131 @@
++"""T-053: proves credential shapes are scrubbed from log messages before
++they reach a handler, and that non-credential status messages pass through
++unchanged. Uses clearly fake tokens/passwords only."""
++import logging
++import unittest
++
++from .log_redaction import RedactingFilter, harden_logger, redact
++
++
++class RedactTelegramTokenTests(unittest.TestCase):
++    def test_bot_token_in_url_path_is_redacted(self):
++        msg = "HTTP Request: POST https://api.telegram.org/bot111222333:AAHexampleFakeToken0987654321zyx/sendMessage \"HTTP/1.1 200 OK\""
++        out = redact(msg)
++        self.assertNotIn("AAHexampleFakeToken", out)
++        self.assertIn("/bot<redacted>", out)
++
++    def test_multiple_distinct_token_shapes_are_all_redacted(self):
++        # Different bot IDs and different secret lengths/charsets — not a
++        # single-fixture regex that only happens to match one example.
++        cases = [
++            "https://api.telegram.org/bot123:short-Fake1/sendMessage",
++            "https://api.telegram.org/bot999999999:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/sendMessage",
++            "https://api.telegram.org/bot1:a_b-C9zZ/getMe",
++        ]
++        for url in cases:
++            with self.subTest(url=url):
++                out = redact(url)
++                self.assertNotRegex(out, r"/bot\d+:[A-Za-z0-9_-]+")
++                self.assertIn("/bot<redacted>", out)
++
++
++class RedactQueryParamTests(unittest.TestCase):
++    def test_key_and_api_key_and_token_params_are_redacted(self):
++        cases = {
++            "https://www.googleapis.com/customsearch/v1?key=FAKEKEY123&cx=abc": "key=<redacted>",
++            "https://example.com/x?api_key=FAKESECRETXYZ&q=1": "api_key=<redacted>",
++            "https://example.com/x?token=FAKE.TOKEN.VALUE": "token=<redacted>",
++            "https://example.com/x?access_token=FAKEACCESS999": "access_token=<redacted>",
++        }
++        for url, expect_fragment in cases.items():
++            with self.subTest(url=url):
++                out = redact(url)
++                self.assertIn(expect_fragment, out)
++                self.assertNotIn("FAKEKEY123", out)
++                self.assertNotIn("FAKESECRETXYZ", out)
++                self.assertNotIn("FAKE.TOKEN.VALUE", out)
++                self.assertNotIn("FAKEACCESS999", out)
++
++
++class RedactAuthorizationHeaderTests(unittest.TestCase):
++    def test_bearer_authorization_header_is_redacted(self):
++        msg = "Authorization: Bearer FAKEBEARERTOKEN1234567890"
++        out = redact(msg)
++        self.assertNotIn("FAKEBEARERTOKEN1234567890", out)
++
++    def test_authorization_dict_style_is_redacted(self):
++        msg = "headers={'Authorization': 'FAKERAWKEYVALUE'}"
++        out = redact(msg)
++        self.assertNotIn("FAKERAWKEYVALUE", out)
++
++
++class RedactConnectionUrlTests(unittest.TestCase):
++    def test_redis_url_password_is_redacted(self):
++        msg = "Connected to redis://:FAKEREDISPASSWORD@redis:6379/0"
++        out = redact(msg)
++        self.assertNotIn("FAKEREDISPASSWORD", out)
++        self.assertIn("redis://:<redacted>@redis:6379/0", out)
++
++    def test_postgres_url_password_is_redacted(self):
++        msg = "postgresql+psycopg2://beauty:FAKEDBPASSWORD@db:5432/beauty_gr"
++        out = redact(msg)
++        self.assertNotIn("FAKEDBPASSWORD", out)
++        self.assertIn("postgresql+psycopg2://beauty:<redacted>@db:5432/beauty_gr", out)
++
++
++class SanitizedStatusMessagesPassThroughTests(unittest.TestCase):
++    def test_sanitized_success_message_is_unchanged(self):
++        msg = "Telegram request completed with HTTP 200"
++        self.assertEqual(redact(msg), msg)
++
++    def test_plain_informational_message_is_unchanged(self):
++        msg = "Daily Telegram report sent"
++        self.assertEqual(redact(msg), msg)
++
++
++class RedactingFilterTests(unittest.TestCase):
++    def _make_record(self, msg, args=()):
++        return logging.LogRecord(
++            name="httpx", level=logging.INFO, pathname=__file__, lineno=1,
++            msg=msg, args=args, exc_info=None,
++        )
++
++    def test_filter_scrubs_record_message_in_place(self):
++        record = self._make_record(
++            "HTTP Request: POST https://api.telegram.org/bot42:FAKETOKENVALUE/sendMessage \"HTTP/1.1 200 OK\""
++        )
++        result = RedactingFilter().filter(record)
++        self.assertTrue(result, "filter must never suppress the record, only scrub it")
++        self.assertNotIn("FAKETOKENVALUE", record.getMessage())
++
++    def test_filter_leaves_clean_records_untouched(self):
++        record = self._make_record("celery@worker ready.")
++        RedactingFilter().filter(record)
++        self.assertEqual(record.getMessage(), "celery@worker ready.")
++
++
++class HardenLoggerTests(unittest.TestCase):
++    def test_noisy_http_loggers_are_pinned_to_warning(self):
++        for name in ("httpx", "httpcore", "urllib3", "requests"):
++            logging.getLogger(name).setLevel(logging.DEBUG)
++
++        dummy = logging.getLogger("test-harden-logger")
++        dummy.handlers = [logging.StreamHandler()]
++        harden_logger(dummy)
++
++        for name in ("httpx", "httpcore", "urllib3", "requests"):
++            self.assertEqual(logging.getLogger(name).level, logging.WARNING)
++
++    def test_harden_logger_is_idempotent_no_duplicate_filters(self):
++        dummy = logging.getLogger("test-harden-logger-idempotent")
++        dummy.handlers = [logging.StreamHandler()]
++        harden_logger(dummy)
++        harden_logger(dummy)
++        filter_count = sum(
++            1 for f in dummy.handlers[0].filters if isinstance(f, RedactingFilter)
++        )
++        self.assertEqual(filter_count, 1)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/crawler/beauty_crawler/test_telegram_notify.py b/crawler/beauty_crawler/test_telegram_notify.py
+new file mode 100644
+index 0000000..10c1855
+--- /dev/null
++++ b/crawler/beauty_crawler/test_telegram_notify.py
+@@ -0,0 +1,69 @@
++"""T-053: proves the logging changes did not alter send()/send_daily_report()
++behavior — same httpx call, same return semantics, same delivery outcome.
++No real network access; httpx.post is mocked."""
++import logging
++import unittest
++from unittest.mock import MagicMock, patch
++
++from . import telegram_notify
++
++
++class SendBehaviorUnchangedTests(unittest.TestCase):
++    def test_send_returns_false_when_credentials_missing(self):
++        with patch.object(telegram_notify, "BOT_TOKEN", ""), \
++             patch.object(telegram_notify, "CHAT_ID", "123"):
++            self.assertFalse(telegram_notify.send("hello"))
++
++    @patch("beauty_crawler.telegram_notify.httpx.post")
++    def test_send_posts_to_telegram_and_returns_true_on_success(self, mock_post):
++        mock_resp = MagicMock()
++        mock_resp.status_code = 200
++        mock_resp.raise_for_status.return_value = None
++        mock_post.return_value = mock_resp
++
++        with patch.object(telegram_notify, "BOT_TOKEN", "fake-token"), \
++             patch.object(telegram_notify, "CHAT_ID", "fake-chat-id"):
++            result = telegram_notify.send("test message")
++
++        self.assertTrue(result)
++        mock_post.assert_called_once()
++        _, kwargs = mock_post.call_args
++        self.assertEqual(kwargs["json"]["text"], "test message")
++        self.assertEqual(kwargs["json"]["chat_id"], "fake-chat-id")
++
++    @patch("beauty_crawler.telegram_notify.httpx.post")
++    def test_send_returns_false_and_logs_on_http_error(self, mock_post):
++        mock_post.side_effect = Exception("boom")
++        with patch.object(telegram_notify, "BOT_TOKEN", "fake-token"), \
++             patch.object(telegram_notify, "CHAT_ID", "fake-chat-id"):
++            result = telegram_notify.send("test message")
++        self.assertFalse(result)
++
++
++class SendDailyReportTruthfulLoggingTests(unittest.TestCase):
++    """T-053 also fixed send_daily_report() unconditionally logging
++    "sent" regardless of whether send() actually succeeded — verify the
++    log now reflects the real outcome, without changing what gets sent."""
++
++    @patch("beauty_crawler.telegram_notify.daily_report")
++    @patch("beauty_crawler.telegram_notify.send")
++    def test_logs_success_only_when_send_returns_true(self, mock_send, mock_report):
++        mock_report.return_value = "report text"
++        mock_send.return_value = True
++        with self.assertLogs(telegram_notify.logger, level="INFO") as cm:
++            telegram_notify.send_daily_report()
++        self.assertTrue(any("sent" in line for line in cm.output))
++        mock_send.assert_called_once_with("report text")
++
++    @patch("beauty_crawler.telegram_notify.daily_report")
++    @patch("beauty_crawler.telegram_notify.send")
++    def test_logs_warning_when_send_returns_false(self, mock_send, mock_report):
++        mock_report.return_value = "report text"
++        mock_send.return_value = False
++        with self.assertLogs(telegram_notify.logger, level="WARNING") as cm:
++            telegram_notify.send_daily_report()
++        self.assertTrue(any("not sent" in line for line in cm.output))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 5b211e4..44b2be4 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1389,6 +1389,62 @@ Sitemap: https://lookla.gr/sitemap.xml
+ 
+ ---
+ 
++### T-053 — Prevent secrets in crawler HTTP logs and rotate exposed Telegram token
++**Priority:** P0 Security | **Owner:** BE/INFRA | **Estimate:** 1h (code fix) + manual token rotation | **Epic:** EPIC-09
++**Dependencies:** None
++**Status:** 🟡 Logging fix implemented and tested; token rotation blocked on the user (requires BotFather account access the coding agent does not have)
++
++**Incident summary:** during T-052's controlled production task, the crawler worker's HTTP client logged the full Telegram Bot API request URL — including the complete bot token, which Telegram's own Bot API design embeds directly in the URL path — in cleartext, at INFO level, to Docker's captured container logs. No token value is recorded in this entry, in any commit, diff, or test fixture.
++
++**Root cause, confirmed by direct inspection (not assumed):** every one of `celery_app.py`'s 9 task wrappers (and most spider modules) calls `logging.basicConfig(level=logging.INFO)`. In practice this call is already a no-op by the time any task runs — Celery's own logging bootstrap (driven by the `--loglevel=info` flag in `docker-compose.yml`'s `command:`) has already attached a handler to the root logger before any task code executes, and `logging.basicConfig()` does nothing once `root.handlers` is non-empty. The real mechanism: Celery's `--loglevel=info` sets root's effective level to INFO, `httpx`'s internal logger (`httpx`/`httpcore`) has no explicit level of its own and inherits INFO by propagation, and httpx logs `"HTTP Request: {method} {url} ..."` at INFO by design — including any credential embedded directly in the URL.
++
++**A second, structurally identical instance was found while investigating, currently latent (not yet triggered):** `crawler/beauty_crawler/spiders/facebook.py`'s Google Custom Search fallback passes its API key as a URL query parameter (`params={"key": api_key, ...}`) to `httpx.get(...)`, which would leak identically the moment it's configured. Checked directly: `GOOGLE_SEARCH_API_KEY`/`GOOGLE_CSE_CX`/`SERPER_API_KEY` are all currently unset in production `.env`, so this code path is presently inert. `FOURSQUARE_API_KEY` and `GOOGLE_PLACES_API_KEY` (both set) are passed via HTTP headers (`Authorization`, `X-Goog-Api-Key`), which httpx's default INFO-level request log does not include — confirmed not exposed by this mechanism. `DB_PASSWORD` is embedded in the SQLAlchemy connection URL (`models.py`) but SQLAlchemy's `echo` is not enabled, so it is not actively logged via that path.
++
++**Fix implemented (`crawler/beauty_crawler/log_redaction.py`, new):**
++1. `harden_logger()` pins `httpx`/`httpcore`/`urllib3`/`requests` loggers to `WARNING`, wired in via Celery's `after_setup_logger`/`after_setup_task_logger` signals (the correct hook for this Celery version — `after_setup_root_logger` does not exist in Celery 5.4, confirmed directly against the running container rather than assumed) in `celery_app.py`. This is the primary fix: the noisy request-level INFO logging never fires.
++2. `RedactingFilter`, a `logging.Filter` attached to every handler on the Celery-configured logger, scrubs known credential shapes from any log record's final formatted message regardless of which logger produced it — a backstop for exception/error messages that could still embed a credential-bearing URL even at WARNING/ERROR level (e.g., `telegram_notify.py`'s own `logger.error("Telegram send error: %s", e)`, where httpx's exception `str()` representations typically include the full request URL). Covers: Telegram bot tokens in URL paths, `key=`/`api_key=`/`token=`/`access_token=` query parameters, `Authorization` header values, and `user:password@` credentials in `redis://`/`rediss://`/`postgres(ql)://` URLs.
++3. `telegram_notify.py`: added a sanitized success log (`"Telegram request completed with HTTP %s", resp.status_code`) and fixed `send_daily_report()` unconditionally logging "Daily Telegram report sent" regardless of whether `send()` actually returned `True` — it now logs success/failure truthfully, matching what the redaction requirement implied should exist (real status, no raw URL).
++
++**Not changed:** business logic, Telegram delivery behavior (verified via mocked tests — same `httpx.post` call, same arguments, same return semantics), Docker log rotation (flagged as a separate infra concern below, not implemented here per explicit scope).
++
++**Tests added** (`crawler/beauty_crawler/test_log_redaction.py`, `test_telegram_notify.py`, 18 tests, all passing — run directly inside the crawler container against real dependencies): Telegram tokens (multiple distinct fake shapes, not one fixture) redacted from URL paths; `key`/`api_key`/`token`/`access_token` query parameters redacted; `Authorization` header values redacted; `redis://`/`postgresql://` embedded passwords redacted; sanitized status messages (e.g., "Telegram request completed with HTTP 200") pass through **unchanged** (redaction doesn't over-match); `RedactingFilter` never suppresses a record, only scrubs it; `harden_logger()` correctly pins noisy loggers and is idempotent (no duplicate filters on repeated calls); `send()`/`send_daily_report()` behavior (arguments, return values, real vs. fabricated success logging) verified unchanged via mocks, zero real network calls.
++
++**Safe exposure review (counts/filenames only, no token value ever printed or repeated):**
++- Current `beauty_crawler_worker` container log: 1 match (the known T-052 test occurrence)
++- `beauty_crawler` (scheduler) log: 0
++- Other/removed container log files on disk: 0 beyond the current container's own file (already counted above)
++- `journald`: 0
++- Crawler app log directory (bind-mounted): 0
++- Root shell history: 0
++- This repository's full history, all commits, all branches: 0
++- `docs/.reviews/` diff artifacts: 0
++- `/opt/backup` (DB dumps only, unrelated to app logs): 0
++- Public `lookla-docs` repository, full history: 0 (verified directly via a fresh clone)
++- CI logs: not independently verified via the GitHub API — no plausible exposure path exists, since the token was never part of any commit, diff, or workflow trigger; noted honestly as unverified rather than claimed
++
++This session's own tool-call transcript (this conversation) also captured the full token once, when its logs were inspected live during T-052's verification — disclosed for completeness; not something retroactively fixable, but part of the honest exposure surface.
++
++**Immediate containment — blocked on the user, coding agent has no Telegram/BotFather access:**
++1. Revoke and regenerate the bot token via BotFather (user action required)
++2. Update only the private production `.env` — recommend doing this directly via SSH so the token never enters this chat session at all, rather than pasting it here
++3. Once done, the agent will recreate only `crawler`/`crawler_worker` (`docker compose up -d --no-deps --force-recreate crawler crawler_worker`, no rebuild needed for an `.env`-only change) and verify: old token invalid, new token delivers one controlled message successfully, new token does not appear in any newly generated log line
++
++**Docker logging configuration audit (documented, not changed — a broader compose change belongs in its own infra ticket, consistent with T-050's existing unbounded-`beauty_api`-logs finding):** confirmed via `docker inspect` — `beauty_crawler_worker` uses the default `json-file` driver with an empty `Config` (no `max-size`/`max-file`); no `/etc/docker/daemon.json` exists, so no daemon-wide default either. Log growth is currently unbounded for every service on this host, not just the crawler.
++
++**Acceptance Criteria:**
++- [x] Exact logger/root cause identified via direct inspection, not assumed (Celery's `--loglevel` bootstrap + httpx's INFO-level request logging, not the red-herring `logging.basicConfig()` calls, which are already no-ops)
++- [x] Third-party HTTP transport loggers pinned to WARNING in production
++- [x] Redaction filter covers bot tokens, generic credential query params, Authorization headers, Redis/DB credential URLs — tested against multiple distinct fake values, not one fixture
++- [x] Sanitized application-level status logging preserved/improved (real success/failure, no raw URL)
++- [x] Application/Telegram-delivery behavior unchanged, verified via mocked tests
++- [x] 18 new tests, all passing, run against real container dependencies
++- [x] Safe exposure review completed — counts/filenames only, token never printed or repeated
++- [x] Docker log rotation gap documented, not silently fixed under this ticket
++- [ ] **Blocked on user:** BotFather token rotation
++- [ ] **Blocked on the above:** post-rotation production verification (old token invalid, new token works, new token not logged)
++
++---
++
+ ## Backlog Summary
+ 
+ | Task | Priority | Owner | Hours | Epic | Depends on |
+@@ -1436,6 +1492,7 @@ Sitemap: https://lookla.gr/sitemap.xml
+ | T-040 Harden production deployment | P1 | OPS | 2 | EPIC-09 | — |
+ | T-051 Investigate beauty_web restart/OOM root cause | P1 | OPS/INFRA | investigation only | EPIC-09 | — |
+ | T-052 Fix crawler_worker Redis auth crash loop | P1 | BE/INFRA | 0.5 | EPIC-09 | — |
++| T-053 Prevent secrets in crawler HTTP logs + rotate Telegram token | P0 Security | BE/INFRA | 1 (+ manual rotation) | EPIC-09 | — |
+ | **Total** | | | **~42.25h (M-01)** | | |
+ 
+ ---
