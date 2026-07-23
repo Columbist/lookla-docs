@@ -1058,18 +1058,33 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
-### T-042 — Distinguish Reviews empty and API error states
-**Priority:** P2 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-09
+### T-042 — Unified loading/empty/error/success state pattern (SQC-01A)
+**Priority:** P0 (reprioritized from P2 — first ticket of the SQC-01A UX-foundation phase, per architect direction 2026-07-23) | **Owner:** FE | **Estimate:** 1h (revised: ~3h — scope expanded from Reviews-only to a shared primitive reused across Services, Reviews, and search results) | **Epic:** EPIC-09
 **Dependencies:** None
+**Status:** Implemented (branch `feat/T-042-unified-async-states`), pending independent review.
 
-**Description:** `SALON.md` documents two distinct states for the Reviews section — "No reviews available" (empty) and "Could not load reviews" with a retry link (API error) — but the current `useLazySection` hook in `SalonDetailClient.tsx` doesn't distinguish them: a failed fetch is caught and treated identically to a genuinely-empty result (`.catch(() => setLoading(false))`, leaving `data` as `[]`). In practice, the whole Reviews section (including its heading) renders nothing at all in either case — neither documented empty-state message actually appears. Found during T-012's implementation (its `googleReviewsSourceLabel` disclosure correctly stays hidden in both cases, since it only checks `reviewCount > 0`, but that's a side effect of the same missing error state, not a fix for it).
+**Original scope (superseded, expanded per architect instruction):** the original ticket only covered Reviews (and, per its own acceptance criteria, Services). Before implementation, the architect asked not to build a one-off fix scoped to those two sections, but a single reusable Loading/Empty/Error/Success pattern — since the identical gap (a failed fetch silently collapsing into "empty," with no way for a user to distinguish "nothing here" from "something broke") also existed, unfixed and undocumented, on the search page's list and map results (`searchError`/`mapError` state was added by T-015 purely for analytics gating and was never wired into the UI at all).
+
+**Architecture:**
+- `lib/asyncState.ts` — `AsyncStatus = 'loading'|'empty'|'error'|'success'` + pure `deriveAsyncStatus(loading, error, isEmpty)`. Precedence: loading > error > empty > success (a stale error/empty must not flash during a retry; a failed fetch is never reported as "genuinely nothing here").
+- `components/AsyncSection.tsx` — the single place an `AsyncStatus` becomes UI. Deliberately unstyled/unopinionated (no fetch/analytics logic, no hardcoded className) — each call site supplies its own loading skeleton, empty message, and error message+retry, since Services/Reviews cards and the search results grid have different containers. What's shared is the state machine, not the markup.
+- `SalonDetailClient.tsx`'s `useLazySection` now tracks a distinct `error` boolean (a non-`ok` HTTP response throws, rather than being silently `.json()`-parsed as if it were valid data — the same latent bug class as the fix below) and exposes a `retry` function (re-runs the same IntersectionObserver-triggered fetch on demand, not a full page reload). Services and Reviews both render through `<AsyncSection status={...}>`, with the section heading now visible in the empty/error states too (previously the whole section, heading included, rendered nothing in either case).
+- `search/page.tsx`'s list and map fetches were refactored into `useCallback`-wrapped `loadSalons`/`loadMapSalons` (previously inline in `useEffect`, with no way to manually retry) — same `!response.ok` fix applied (a 500 with a JSON error body was previously indistinguishable from a genuine empty result, since `d.items || []` / `Array.isArray(d) ? d : []` both silently produce an empty array from a non-array error payload). The list view's existing friendly empty-state copy ("no salons in this area" + Clear filters button) is preserved unchanged; only the new error branch is new.
+- T-015's `search_results_view` tracking effect is untouched — it still gates on the raw `loading`/`searchError`/`mapLoading`/`mapError` booleans directly, not on the new `listStatus`/`mapStatus` derived values.
+
+**New translation keys (all 4 locales):** `salon.servicesNotAvailable`, `salon.servicesLoadError`, `salon.reviewsNotAvailable`, `salon.reviewsLoadError`, `salon.retry`; `search.results_load_error`, `search.map_load_error`, `search.retry`.
+
+**Verification:** 381/381 frontend tests passing (28 new for T-042 — `asyncState.test.ts` for the pure precedence logic, `AsyncSection.test.tsx` for the dispatch order, extended `salonDetail.test.ts` and a new `searchPage.test.ts` for the wiring, plus locale-key-parity checks across all 4 locales). `npm run lint` and `npm run build` both clean, no new warnings.
 
 **Acceptance Criteria:**
-- [ ] `useLazySection` (or a similar mechanism) tracks a distinct error state, not just loading/data
-- [ ] Zero reviews (genuine empty result) shows "No reviews available"
-- [ ] Failed reviews fetch shows "Could not load reviews" with a retry link
-- [ ] Same distinction applied to Services, which shares the identical `useLazySection` hook and has the same gap (`"Service information not available"` per `SALON.md`, also not currently implemented)
-- [ ] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states
+- [x] A shared `loading`/`empty`/`error`/`success` primitive exists (`lib/asyncState.ts` + `components/AsyncSection.tsx`), not a Reviews-specific fix
+- [x] `useLazySection` (Services/Reviews) tracks a distinct error state, not just loading/data
+- [x] Zero reviews (genuine empty result) shows "No reviews available for this salon"; zero services shows "Service information not available for this salon"
+- [x] Failed reviews/services fetch shows "Could not load reviews"/"Could not load services" with a retry action
+- [x] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states (unchanged: `!loading && reviewCount > 0`)
+- [x] Same pattern applied to search results (list and map) — not originally in scope, added per architect instruction: failed `/api/salons`/`/api/salons/map` requests now show a distinct "Could not load results"/"Could not load the map" message with retry, instead of silently looking like a zero-result search
+- [ ] Production verification — pending
+- [ ] Independent review — pending
 
 ---
 
