@@ -95,10 +95,10 @@ index c55aaa8..6229c63 100644
  ---
  
 diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
-index 7e39ff8..c39e370 100644
+index 7e39ff8..eeb546c 100644
 --- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
 +++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
-@@ -1,11 +1,13 @@
+@@ -1,11 +1,14 @@
  'use client';
  import Link from 'next/link';
 -import { useState, useEffect, useRef } from 'react';
@@ -110,10 +110,11 @@ index 7e39ff8..c39e370 100644
  import ContactButtons from '@/components/ContactButtons';
 +import AsyncSection from '@/components/AsyncSection';
 +import { deriveAsyncStatus } from '@/lib/asyncState';
++import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
  import { shouldShowReviewSourceLabel } from '@/lib/reviewsSection';
  import { getVerificationLabelKey } from '@/lib/verificationLabel';
  
-@@ -26,16 +28,37 @@ function TranslatedBadge({ locale }: { locale: string }) {
+@@ -26,16 +29,37 @@ function TranslatedBadge({ locale }: { locale: string }) {
    );
  }
  
@@ -152,7 +153,7 @@ index 7e39ff8..c39e370 100644
    useEffect(() => {
      const el = sentinelRef.current;
      if (!el) return;
-@@ -43,16 +66,13 @@ function useLazySection<T>(
+@@ -43,16 +67,13 @@ function useLazySection<T>(
        if (!entry.isIntersecting || fetched.current) return;
        fetched.current = true;
        obs.disconnect();
@@ -172,7 +173,7 @@ index 7e39ff8..c39e370 100644
  }
  
  export default function SalonDetailClient({ salon, locale, slug }: Props) {
-@@ -60,8 +80,12 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+@@ -60,8 +81,14 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
    const prefix = locale === 'el' ? '' : `/${locale}`;
    const [showAllPhotos, setShowAllPhotos] = useState(false);
  
@@ -184,10 +185,12 @@ index 7e39ff8..c39e370 100644
 +  const { data: reviews, loading: reviewsLoading, error: reviewsError, sentinelRef: reviewsRef, retry: retryReviews } = reviewsSection;
 +  const servicesStatus = deriveAsyncStatus(servicesLoading, servicesError, services.length === 0);
 +  const reviewsStatus = deriveAsyncStatus(reviewsLoading, reviewsError, reviews.length === 0);
++  const servicesRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(servicesStatus);
++  const reviewsRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(reviewsStatus);
  
    if (!salon) {
      return (
-@@ -183,11 +207,29 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+@@ -183,11 +210,29 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
  
          {/* Services — lazy-loaded */}
          <div ref={servicesRef}>
@@ -199,18 +202,18 @@ index 7e39ff8..c39e370 100644
 +          <AsyncSection
 +            status={servicesStatus}
 +            loading={
-+              <div className="bg-white rounded-xl p-5 mb-4 space-y-3">
++              <div className="bg-white rounded-xl p-5 mb-4 space-y-3" aria-hidden="true">
 +                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
 +              </div>
 +            }
 +            empty={
-+              <div className="bg-white rounded-xl p-5 mb-4">
++              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
 +                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
 +                <p className="text-sm text-gray-500">{t('servicesNotAvailable')}</p>
 +              </div>
 +            }
 +            error={
-+              <div className="bg-white rounded-xl p-5 mb-4">
++              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
 +                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
 +                <p className="text-sm text-gray-500 mb-2">{t('servicesLoadError')}</p>
 +                <button onClick={retryServices} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
@@ -222,7 +225,7 @@ index 7e39ff8..c39e370 100644
              <div className="bg-white rounded-xl p-5 mb-4">
                <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
                <div className="divide-y divide-gray-100">
-@@ -209,21 +251,39 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+@@ -209,21 +254,39 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
                  ))}
                </div>
              </div>
@@ -245,7 +248,7 @@ index 7e39ff8..c39e370 100644
 +          <AsyncSection
 +            status={reviewsStatus}
 +            loading={
-+              <div className="bg-white rounded-xl p-5 mb-4 space-y-4">
++              <div className="bg-white rounded-xl p-5 mb-4 space-y-4" aria-hidden="true">
 +                {[1,2,3].map(i => (
 +                  <div key={i} className="space-y-2">
 +                    <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
@@ -255,13 +258,13 @@ index 7e39ff8..c39e370 100644
 +              </div>
 +            }
 +            empty={
-+              <div className="bg-white rounded-xl p-5 mb-4">
++              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
 +                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
 +                <p className="text-sm text-gray-500">{t('reviewsNotAvailable')}</p>
 +              </div>
 +            }
 +            error={
-+              <div className="bg-white rounded-xl p-5 mb-4">
++              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
 +                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
 +                <p className="text-sm text-gray-500 mb-2">{t('reviewsLoadError')}</p>
 +                <button onClick={retryReviews} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
@@ -273,7 +276,7 @@ index 7e39ff8..c39e370 100644
              <div className="bg-white rounded-xl p-5 mb-4">
                <div className="flex items-center justify-between mb-3">
                  <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
-@@ -255,7 +315,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+@@ -255,7 +318,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
                  ))}
                </div>
              </div>
@@ -283,10 +286,10 @@ index 7e39ff8..c39e370 100644
  
          {/* Hours */}
 diff --git a/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
-index 291e011..993ea24 100644
+index 291e011..0bd95f4 100644
 --- a/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
 +++ b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
-@@ -74,3 +74,64 @@ describe('T-009/T-010: locale files have no booking/Viber translation keys, have
+@@ -74,3 +74,107 @@ describe('T-009/T-010: locale files have no booking/Viber translation keys, have
      }
    });
  });
@@ -351,20 +354,64 @@ index 291e011..993ea24 100644
 +    }
 +  });
 +});
++
++describe('T-042: accessibility — role/aria-live/focus-on-retry for Services and Reviews', () => {
++  test('imports useFocusOnStatusRecovery and creates a ref per section', () => {
++    assert.ok(clientSource.includes("from '@/lib/useFocusOnStatusRecovery'"));
++    assert.ok(clientSource.includes('useFocusOnStatusRecovery<HTMLDivElement>(servicesStatus)'));
++    assert.ok(clientSource.includes('useFocusOnStatusRecovery<HTMLDivElement>(reviewsStatus)'));
++  });
++
++  test('loading skeletons are aria-hidden (decorative, not meaningful to announce)', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const servicesLoading = servicesBlock.slice(servicesBlock.indexOf('loading={'), servicesBlock.indexOf('empty={'));
++    const reviewsLoading = reviewsBlock.slice(reviewsBlock.indexOf('loading={'), reviewsBlock.indexOf('empty={'));
++    assert.ok(servicesLoading.includes('aria-hidden="true"'));
++    assert.ok(reviewsLoading.includes('aria-hidden="true"'));
++  });
++
++  test('empty states use role="status"/aria-live="polite" (informational, not urgent)', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const servicesEmpty = servicesBlock.slice(servicesBlock.indexOf('empty={'), servicesBlock.indexOf('error={'));
++    const reviewsEmpty = reviewsBlock.slice(reviewsBlock.indexOf('empty={'), reviewsBlock.indexOf('error={'));
++    for (const block of [servicesEmpty, reviewsEmpty]) {
++      assert.ok(block.includes('role="status"'));
++      assert.ok(block.includes('aria-live="polite"'));
++    }
++  });
++
++  test('error states use role="alert"/aria-live="assertive" (needs immediate attention) and are wired to the recovery ref', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const reviewsError = reviewsBlock.slice(reviewsBlock.indexOf('error={'));
++    assert.ok(servicesBlock.slice(servicesBlock.indexOf('error={')).includes('role="alert"'));
++    assert.ok(servicesBlock.slice(servicesBlock.indexOf('error={')).includes('ref={servicesRecoveryRef}'));
++    assert.ok(reviewsError.includes('role="alert"'));
++    assert.ok(reviewsError.includes('ref={reviewsRecoveryRef}'));
++  });
++
++  test('error/empty wrapper divs are tabIndex={-1} focusable (a plain <div> cannot receive .focus() otherwise)', () => {
++    const servicesErrorBlock = clientSource.slice(clientSource.indexOf("error={\n              <div ref={servicesRecoveryRef}"));
++    assert.ok(servicesErrorBlock.slice(0, 120).includes('tabIndex={-1}'));
++  });
++});
 diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
-index cb5abcc..d584af1 100644
+index cb5abcc..9197694 100644
 --- a/frontend/app/[locale]/search/page.tsx
 +++ b/frontend/app/[locale]/search/page.tsx
-@@ -7,6 +7,8 @@ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api'
+@@ -7,6 +7,9 @@ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api'
  import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
  import type { Locale } from '@/i18n/request';
  import SalonCard from '@/components/SalonCard';
 +import AsyncSection from '@/components/AsyncSection';
 +import { deriveAsyncStatus } from '@/lib/asyncState';
++import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
  import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
  import dynamic from 'next/dynamic';
  
-@@ -103,7 +105,7 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -103,7 +106,7 @@ function SearchContent({ locale }: { locale: string }) {
    }, [buildParams]);
  
    // Reset + initial fetch when filters change
@@ -373,7 +420,7 @@ index cb5abcc..d584af1 100644
      pageRef.current = 1;
      hasMoreRef.current = false;
      busyRef.current = false;
-@@ -111,7 +113,10 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -111,7 +114,10 @@ function SearchContent({ locale }: { locale: string }) {
      setSearchError(false);
      setSalons([]);
      fetch(`/api/salons?${buildParams(1)}`)
@@ -385,7 +432,7 @@ index cb5abcc..d584af1 100644
        .then(d => {
          setSalons(d.items || []);
          setTotal(d.total || 0);
-@@ -120,10 +125,12 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -120,10 +126,12 @@ function SearchContent({ locale }: { locale: string }) {
        })
        .catch(() => { setSalons([]); setTotal(0); hasMoreRef.current = false; setSearchError(true); })
        .finally(() => setLoading(false));
@@ -400,7 +447,7 @@ index cb5abcc..d584af1 100644
      if (view !== 'map') return;
      setMapLoading(true);
      setMapError(false);
-@@ -134,12 +141,17 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -134,12 +142,17 @@ function SearchContent({ locale }: { locale: string }) {
      if (category) params.set('category', category);
      if (minRating) params.set('min_rating', minRating);
      fetch(`/api/salons/map?${params}`)
@@ -419,16 +466,18 @@ index cb5abcc..d584af1 100644
    // T-015: search_results_view — fires once per materially distinct
    // (area, result_count_bucket, view, locale) state, only after a
    // successful load (never while loading, never on API error). Watches
-@@ -203,6 +215,8 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -203,6 +216,10 @@ function SearchContent({ locale }: { locale: string }) {
    const doSearch = () => update('q', inputRef.current?.value || '');
    const prefix = locale === 'el' ? '' : `/${locale}`;
    const activeArea = findAreaBySlug(areas, area);
 +  const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);
 +  const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);
++  const listRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(listStatus);
++  const mapRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(mapStatus);
  
    return (
      <div className="min-h-screen bg-gray-50">
-@@ -311,32 +325,60 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -311,32 +328,60 @@ function SearchContent({ locale }: { locale: string }) {
          </p>
  
          {view === 'map' ? (
@@ -437,10 +486,10 @@ index cb5abcc..d584af1 100644
 -            : <MapView salons={mapSalons} locale={locale} />
 +          <AsyncSection
 +            status={mapStatus}
-+            loading={<div className="flex items-center justify-center h-96 text-gray-400">...</div>}
++            loading={<div className="flex items-center justify-center h-96 text-gray-400" aria-hidden="true">...</div>}
 +            empty={<MapView salons={mapSalons} locale={locale} />}
 +            error={
-+              <div className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3">
++              <div ref={mapRecoveryRef} tabIndex={-1} className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3 outline-none" role="alert" aria-live="assertive">
 +                <p>{t('map_load_error')}</p>
 +                <button onClick={loadMapSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
 +                  {t('retry')}
@@ -478,13 +527,13 @@ index cb5abcc..d584af1 100644
 +                loading={
 +                  <>
 +                    {Array.from({ length: 6 }).map((_, i) => (
-+                      <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" />
++                      <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" aria-hidden="true" />
 +                    ))}
 +                  </>
 +                }
 +                empty={
 +                  area ? (
-+                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3">
++                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="status" aria-live="polite">
 +                      <p>
 +                        {activeArea
 +                          ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
@@ -495,11 +544,11 @@ index cb5abcc..d584af1 100644
 +                      </button>
 +                    </div>
 +                  ) : (
-+                    <div className="col-span-3 text-center py-16 text-gray-400">{t('no_results')}</div>
++                    <div className="col-span-3 text-center py-16 text-gray-400 outline-none" role="status" aria-live="polite">{t('no_results')}</div>
 +                  )
 +                }
 +                error={
-+                  <div className="col-span-3 text-center py-16 text-gray-400 space-y-3">
++                  <div ref={listRecoveryRef} tabIndex={-1} className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="alert" aria-live="assertive">
 +                    <p>{t('results_load_error')}</p>
 +                    <button onClick={loadSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
 +                      {t('retry')}
@@ -514,10 +563,10 @@ index cb5abcc..d584af1 100644
              {/* Sentinel + spinner */}
 diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
 new file mode 100644
-index 0000000..ec6d6ef
+index 0000000..6147bcc
 --- /dev/null
 +++ b/frontend/app/[locale]/search/searchPage.test.ts
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,124 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
@@ -593,6 +642,53 @@ index 0000000..ec6d6ef
 +    for (let i = 1; i < keySets.length; i++) {
 +      assert.deepEqual(keySets[i], keySets[0]);
 +    }
++  });
++});
++
++describe('T-042: accessibility — role/aria-live/focus-on-retry for search results, without breaking the CSS Grid', () => {
++  test('imports useFocusOnStatusRecovery and creates a ref per surface (list + map)', () => {
++    assert.ok(source.includes("from '@/lib/useFocusOnStatusRecovery'"));
++    assert.ok(source.includes('useFocusOnStatusRecovery<HTMLDivElement>(listStatus)'));
++    assert.ok(source.includes('useFocusOnStatusRecovery<HTMLDivElement>(mapStatus)'));
++  });
++
++  test('CRITICAL: the 6-item loading skeleton has no shared wrapper div — each stays a direct grid item, aria-hidden individually', () => {
++    const loadingBlock = source.slice(source.indexOf('loading={\n                  <>') + 'loading={'.length, source.indexOf('empty={\n                  area ?'));
++    // The 6 skeletons must remain siblings inside a Fragment (<>...</>),
++    // NOT nested inside one extra <div role="status"> wrapper — that would
++    // make them one grid cell instead of 6, breaking "grid-cols-3".
++    assert.ok(loadingBlock.trim().startsWith('<>'), 'loading content must be a bare Fragment, not a wrapping <div>');
++    assert.ok(!/<div[^>]*role=/.test(loadingBlock), 'no role= wrapper anywhere inside the loading fragment');
++    assert.ok(loadingBlock.includes('aria-hidden="true"'), 'each skeleton item is individually aria-hidden');
++  });
++
++  test('AsyncSection itself still renders no wrapper element around any state (verified once, applies to every call site including this grid)', () => {
++    const asyncSectionSource = fs.readFileSync(path.join(frontendRoot, 'components', 'AsyncSection.tsx'), 'utf-8');
++    assert.ok(!/<div/.test(asyncSectionSource), 'AsyncSection must not introduce its own wrapper <div> — that would break any grid it is used inside');
++  });
++
++  test('list empty states use role="status"/aria-live="polite"', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  area ?'), source.indexOf('error={\n                  <div ref={listRecoveryRef}'));
++    const variants = emptyBlock.split('<div className="col-span-3');
++    for (const variant of variants.slice(1)) {
++      assert.ok(variant.includes('role="status"'));
++      assert.ok(variant.includes('aria-live="polite"'));
++    }
++  });
++
++  test('list error state uses role="alert"/aria-live="assertive", tabIndex={-1}, and the recovery ref', () => {
++    const errorBlock = source.slice(source.indexOf('error={\n                  <div ref={listRecoveryRef}'), source.indexOf('error={\n                  <div ref={listRecoveryRef}') + 300);
++    assert.ok(errorBlock.includes('role="alert"'));
++    assert.ok(errorBlock.includes('aria-live="assertive"'));
++    assert.ok(errorBlock.includes('tabIndex={-1}'));
++  });
++
++  test('map error state uses role="alert"/aria-live="assertive" and the recovery ref; map loading is aria-hidden', () => {
++    const mapBlock = source.slice(source.indexOf("status={mapStatus}"), source.indexOf('status={listStatus}'));
++    assert.ok(mapBlock.includes('aria-hidden="true"'));
++    assert.ok(mapBlock.includes('ref={mapRecoveryRef}'));
++    assert.ok(mapBlock.includes('role="alert"'));
++    assert.ok(mapBlock.includes('aria-live="assertive"'));
 +  });
 +});
 diff --git a/frontend/components/AsyncSection.test.tsx b/frontend/components/AsyncSection.test.tsx
@@ -721,6 +817,79 @@ index 0000000..cd93564
 +  if (isEmpty) return 'empty';
 +  return 'success';
 +}
+diff --git a/frontend/lib/useFocusOnStatusRecovery.test.ts b/frontend/lib/useFocusOnStatusRecovery.test.ts
+new file mode 100644
+index 0000000..9caa144
+--- /dev/null
++++ b/frontend/lib/useFocusOnStatusRecovery.test.ts
+@@ -0,0 +1,29 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'useFocusOnStatusRecovery.ts'), 'utf-8');
++
++describe('T-042: useFocusOnStatusRecovery', () => {
++  test('only moves focus when recovering FROM error (not on every status change)', () => {
++    assert.ok(source.includes("prevStatus.current === 'error' && status !== 'error'"));
++  });
++
++  test('does not fire on the very first render (prevStatus starts null, not a real status)', () => {
++    assert.ok(source.includes('useRef<AsyncStatus | null>(null)'));
++  });
++
++  test('tracks prevStatus after every status change, not just on recovery', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [status]);'));
++    const focusIdx = effectBody.indexOf('ref.current?.focus()');
++    const trackIdx = effectBody.indexOf('prevStatus.current = status;');
++    assert.ok(focusIdx > -1 && trackIdx > -1 && focusIdx < trackIdx, 'prevStatus must be updated after the focus check, every render');
++  });
++
++  test('returns a ref for the caller to attach to a focusable element', () => {
++    assert.ok(source.includes('return ref;'));
++  });
++});
+diff --git a/frontend/lib/useFocusOnStatusRecovery.ts b/frontend/lib/useFocusOnStatusRecovery.ts
+new file mode 100644
+index 0000000..2148843
+--- /dev/null
++++ b/frontend/lib/useFocusOnStatusRecovery.ts
+@@ -0,0 +1,32 @@
++'use client';
++import { useEffect, useRef } from 'react';
++import type { AsyncStatus } from '@/lib/asyncState';
++
++/**
++ * T-042: moves keyboard focus back into a region after recovering from
++ * 'error' (e.g. via Retry). Without this, activating Retry unmounts the
++ * button the user just clicked the instant status leaves 'error' — for a
++ * keyboard or screen-reader user, focus would otherwise silently drop back
++ * to the document body with no indication anything happened.
++ *
++ * Attach the returned ref to the region's own root element (it must be
++ * focusable — give it `tabIndex={-1}`). Shared across every AsyncSection
++ * call site so the recovery-timing logic exists in exactly one place,
++ * even though the DOM wrapper it attaches to is necessarily per-call-site
++ * (some loading/empty/error content is itself a set of CSS Grid items —
++ * see search/page.tsx — where an extra shared wrapper div would break the
++ * grid; AsyncSection itself stays wrapper-free for exactly this reason).
++ */
++export function useFocusOnStatusRecovery<T extends HTMLElement>(status: AsyncStatus) {
++  const ref = useRef<T>(null);
++  const prevStatus = useRef<AsyncStatus | null>(null);
++
++  useEffect(() => {
++    if (prevStatus.current === 'error' && status !== 'error') {
++      ref.current?.focus();
++    }
++    prevStatus.current = status;
++  }, [status]);
++
++  return ref;
++}
 diff --git a/frontend/messages/el.json b/frontend/messages/el.json
 index 192d932..6ff8adf 100644
 --- a/frontend/messages/el.json
@@ -842,7 +1011,7 @@ index 7cbe823..dd08d76 100644
    "login": {
      "title": "Вхід",
 diff --git a/frontend/package.json b/frontend/package.json
-index d3440e4..f8af7f5 100644
+index d3440e4..acc4ad1 100644
 --- a/frontend/package.json
 +++ b/frontend/package.json
 @@ -7,7 +7,7 @@
@@ -850,7 +1019,7 @@ index d3440e4..f8af7f5 100644
      "start": "next start",
      "lint": "next lint",
 -    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
-+    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts components/AsyncSection.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts components/AsyncSection.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
    },
    "dependencies": {
      "@tanstack/react-query": "^5.101.0",
