@@ -1,0 +1,255 @@
+diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+index eeb546c..ee9717f 100644
+--- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
++++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+@@ -218,7 +218,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+               </div>
+             }
+             empty={
+-              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
++              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
+                 <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
+                 <p className="text-sm text-gray-500">{t('servicesNotAvailable')}</p>
+               </div>
+@@ -233,7 +233,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+               </div>
+             }
+           >
+-            <div className="bg-white rounded-xl p-5 mb-4">
++            <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none">
+               <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
+               <div className="divide-y divide-gray-100">
+                 {services.map(svc => (
+@@ -272,7 +272,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+               </div>
+             }
+             empty={
+-              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
++              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
+                 <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
+                 <p className="text-sm text-gray-500">{t('reviewsNotAvailable')}</p>
+               </div>
+@@ -287,7 +287,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+               </div>
+             }
+           >
+-            <div className="bg-white rounded-xl p-5 mb-4">
++            <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none">
+               <div className="flex items-center justify-between mb-3">
+                 <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
+                 {salon.review_count > reviews.length && (
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 9197694..24ca740 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -328,24 +328,37 @@ function SearchContent({ locale }: { locale: string }) {
+         </p>
+ 
+         {view === 'map' ? (
+-          <AsyncSection
+-            status={mapStatus}
+-            loading={<div className="flex items-center justify-center h-96 text-gray-400" aria-hidden="true">...</div>}
+-            empty={<MapView salons={mapSalons} locale={locale} />}
+-            error={
+-              <div ref={mapRecoveryRef} tabIndex={-1} className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3 outline-none" role="alert" aria-live="assertive">
+-                <p>{t('map_load_error')}</p>
+-                <button onClick={loadMapSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
+-                  {t('retry')}
+-                </button>
+-              </div>
+-            }
+-          >
+-            <MapView salons={mapSalons} locale={locale} />
+-          </AsyncSection>
++          // T-042: the recovery-focus ref lives on this always-present outer
++          // wrapper, not inside any individual state — MapView itself is
++          // what both 'empty' and 'success' render, so there is no
++          // per-state div available to attach it to for those two cases.
++          <div ref={mapRecoveryRef} tabIndex={-1} className="outline-none">
++            <AsyncSection
++              status={mapStatus}
++              loading={<div className="flex items-center justify-center h-96 text-gray-400" aria-hidden="true">...</div>}
++              empty={<MapView salons={mapSalons} locale={locale} />}
++              error={
++                <div className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3" role="alert" aria-live="assertive">
++                  <p>{t('map_load_error')}</p>
++                  <button onClick={loadMapSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                    {t('retry')}
++                  </button>
++                </div>
++              }
++            >
++              <MapView salons={mapSalons} locale={locale} />
++            </AsyncSection>
++          </div>
+         ) : (
+           <>
+-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
++            {/* T-042: the recovery-focus ref lives on this grid itself, not
++                inside any individual state — the 6 loading skeletons and the
++                success-state salon cards are both direct CSS Grid items, so
++                wrapping either of them in a per-state ref div would nest
++                them one level deeper and break grid-cols-3. This outer div
++                is always present regardless of status, so it works
++                uniformly for every state without that risk. */}
++            <div ref={listRecoveryRef} tabIndex={-1} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 outline-none">
+               <AsyncSection
+                 status={listStatus}
+                 loading={
+@@ -357,7 +370,7 @@ function SearchContent({ locale }: { locale: string }) {
+                 }
+                 empty={
+                   area ? (
+-                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="status" aria-live="polite">
++                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3" role="status" aria-live="polite">
+                       <p>
+                         {activeArea
+                           ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
+@@ -368,11 +381,11 @@ function SearchContent({ locale }: { locale: string }) {
+                       </button>
+                     </div>
+                   ) : (
+-                    <div className="col-span-3 text-center py-16 text-gray-400 outline-none" role="status" aria-live="polite">{t('no_results')}</div>
++                    <div className="col-span-3 text-center py-16 text-gray-400" role="status" aria-live="polite">{t('no_results')}</div>
+                   )
+                 }
+                 error={
+-                  <div ref={listRecoveryRef} tabIndex={-1} className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="alert" aria-live="assertive">
++                  <div className="col-span-3 text-center py-16 text-gray-400 space-y-3" role="alert" aria-live="assertive">
+                     <p>{t('results_load_error')}</p>
+                     <button onClick={loadSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
+                       {t('retry')}
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index 6147bcc..0596e4a 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -99,7 +99,7 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+   });
+ 
+   test('list empty states use role="status"/aria-live="polite"', () => {
+-    const emptyBlock = source.slice(source.indexOf('empty={\n                  area ?'), source.indexOf('error={\n                  <div ref={listRecoveryRef}'));
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  area ?'), source.indexOf("error={\n                  <div className=\"col-span-3"));
+     const variants = emptyBlock.split('<div className="col-span-3');
+     for (const variant of variants.slice(1)) {
+       assert.ok(variant.includes('role="status"'));
+@@ -107,17 +107,29 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+     }
+   });
+ 
+-  test('list error state uses role="alert"/aria-live="assertive", tabIndex={-1}, and the recovery ref', () => {
+-    const errorBlock = source.slice(source.indexOf('error={\n                  <div ref={listRecoveryRef}'), source.indexOf('error={\n                  <div ref={listRecoveryRef}') + 300);
++  test('list error state uses role="alert"/aria-live="assertive"', () => {
++    const errorBlock = source.slice(source.indexOf("error={\n                  <div className=\"col-span-3"), source.indexOf("error={\n                  <div className=\"col-span-3") + 250);
+     assert.ok(errorBlock.includes('role="alert"'));
+     assert.ok(errorBlock.includes('aria-live="assertive"'));
+-    assert.ok(errorBlock.includes('tabIndex={-1}'));
+   });
+ 
+-  test('map error state uses role="alert"/aria-live="assertive" and the recovery ref; map loading is aria-hidden', () => {
++  test('the list recovery ref lives on the always-present outer grid div, not inside any individual state — loading skeletons and success-state salon cards are both direct grid items and can never carry a per-state wrapper ref safely', () => {
++    const gridDivIdx = source.indexOf('<div ref={listRecoveryRef} tabIndex={-1} className="grid');
++    assert.ok(gridDivIdx > -1);
++    const asyncSectionIdx = source.indexOf('<AsyncSection\n                status={listStatus}');
++    assert.ok(gridDivIdx < asyncSectionIdx, 'the ref+tabIndex must be on the grid wrapper, which must appear before (i.e. outside) the AsyncSection using it');
++  });
++
++  test('the map recovery ref lives on an always-present outer div wrapping the whole AsyncSection, not inside any individual state — MapView itself is what both empty and success render, with no per-state div to attach to', () => {
++    const wrapperIdx = source.indexOf('<div ref={mapRecoveryRef} tabIndex={-1} className="outline-none">');
++    assert.ok(wrapperIdx > -1);
++    const asyncSectionIdx = source.indexOf('<AsyncSection\n              status={mapStatus}');
++    assert.ok(wrapperIdx < asyncSectionIdx, 'the ref+tabIndex must be on the wrapper, which must appear before (i.e. outside) the AsyncSection using it');
++  });
++
++  test('map error state uses role="alert"/aria-live="assertive"; map loading is aria-hidden', () => {
+     const mapBlock = source.slice(source.indexOf("status={mapStatus}"), source.indexOf('status={listStatus}'));
+     assert.ok(mapBlock.includes('aria-hidden="true"'));
+-    assert.ok(mapBlock.includes('ref={mapRecoveryRef}'));
+     assert.ok(mapBlock.includes('role="alert"'));
+     assert.ok(mapBlock.includes('aria-live="assertive"'));
+   });
+diff --git a/frontend/lib/useFocusOnStatusRecovery.test.ts b/frontend/lib/useFocusOnStatusRecovery.test.ts
+index 9caa144..b9144af 100644
+--- a/frontend/lib/useFocusOnStatusRecovery.test.ts
++++ b/frontend/lib/useFocusOnStatusRecovery.test.ts
+@@ -8,19 +8,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
+ const source = fs.readFileSync(path.join(here, 'useFocusOnStatusRecovery.ts'), 'utf-8');
+ 
+ describe('T-042: useFocusOnStatusRecovery', () => {
+-  test('only moves focus when recovering FROM error (not on every status change)', () => {
+-    assert.ok(source.includes("prevStatus.current === 'error' && status !== 'error'"));
++  test('skips the transient loading status entirely — does not update lastSettledStatus or attempt to focus while loading', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [status]);'));
++    assert.ok(/if \(status === 'loading'\) return;/.test(effectBody));
++  });
++
++  test('only moves focus when recovering FROM the last SETTLED status being error (not the literal previous status, which may be the transient loading in between)', () => {
++    assert.ok(source.includes("lastSettledStatus.current === 'error' && status !== 'error'"));
+   });
+ 
+-  test('does not fire on the very first render (prevStatus starts null, not a real status)', () => {
++  test('does not fire on the very first render (lastSettledStatus starts null, not a real status)', () => {
+     assert.ok(source.includes('useRef<AsyncStatus | null>(null)'));
+   });
+ 
+-  test('tracks prevStatus after every status change, not just on recovery', () => {
++  test('lastSettledStatus is updated after every non-loading status, not just on recovery', () => {
+     const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [status]);'));
++    const loadingGuardIdx = effectBody.indexOf("if (status === 'loading') return;");
+     const focusIdx = effectBody.indexOf('ref.current?.focus()');
+-    const trackIdx = effectBody.indexOf('prevStatus.current = status;');
+-    assert.ok(focusIdx > -1 && trackIdx > -1 && focusIdx < trackIdx, 'prevStatus must be updated after the focus check, every render');
++    const trackIdx = effectBody.indexOf('lastSettledStatus.current = status;');
++    assert.ok(loadingGuardIdx > -1 && focusIdx > -1 && trackIdx > -1);
++    assert.ok(loadingGuardIdx < focusIdx && focusIdx < trackIdx, 'order must be: skip loading, then check+focus, then record the new settled status');
+   });
+ 
+   test('returns a ref for the caller to attach to a focusable element', () => {
+diff --git a/frontend/lib/useFocusOnStatusRecovery.ts b/frontend/lib/useFocusOnStatusRecovery.ts
+index 2148843..2cbc002 100644
+--- a/frontend/lib/useFocusOnStatusRecovery.ts
++++ b/frontend/lib/useFocusOnStatusRecovery.ts
+@@ -9,23 +9,34 @@ import type { AsyncStatus } from '@/lib/asyncState';
+  * keyboard or screen-reader user, focus would otherwise silently drop back
+  * to the document body with no indication anything happened.
+  *
+- * Attach the returned ref to the region's own root element (it must be
+- * focusable — give it `tabIndex={-1}`). Shared across every AsyncSection
+- * call site so the recovery-timing logic exists in exactly one place,
+- * even though the DOM wrapper it attaches to is necessarily per-call-site
+- * (some loading/empty/error content is itself a set of CSS Grid items —
+- * see search/page.tsx — where an extra shared wrapper div would break the
+- * grid; AsyncSection itself stays wrapper-free for exactly this reason).
++ * Attach the SAME returned ref (plus `tabIndex={-1}`) to the root element
++ * of every state a caller renders EXCEPT 'loading' — error, empty, and
++ * success/children. 'loading' is deliberately excluded: it's typically
++ * `aria-hidden` (a decorative skeleton), and an aria-hidden element must
++ * never also be a focus target — screen readers handle that combination
++ * inconsistently. Because 'loading' is skipped, the focus-worthy status is
++ * whichever settles first after it (empty, success, or error again); this
++ * hook tracks the *last settled (non-loading) status* rather than the
++ * literal previous status, specifically so the error → loading → success
++ * sequence around a Retry still counts as "recovered from error".
++ *
++ * Shared across every AsyncSection call site so the recovery-timing logic
++ * exists in exactly one place, even though the DOM wrapper it attaches to
++ * is necessarily per-call-site (some loading/empty/error content is
++ * itself a set of CSS Grid items — see search/page.tsx — where an extra
++ * shared wrapper div would break the grid; AsyncSection itself stays
++ * wrapper-free for exactly this reason).
+  */
+ export function useFocusOnStatusRecovery<T extends HTMLElement>(status: AsyncStatus) {
+   const ref = useRef<T>(null);
+-  const prevStatus = useRef<AsyncStatus | null>(null);
++  const lastSettledStatus = useRef<AsyncStatus | null>(null);
+ 
+   useEffect(() => {
+-    if (prevStatus.current === 'error' && status !== 'error') {
++    if (status === 'loading') return;
++    if (lastSettledStatus.current === 'error' && status !== 'error') {
+       ref.current?.focus();
+     }
+-    prevStatus.current = status;
++    lastSettledStatus.current = status;
+   }, [status]);
+ 
+   return ref;

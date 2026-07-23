@@ -239,10 +239,13 @@ Update dynamically as filters change.
 
 ## Error States
 
+**Implementation status:** ✅ T-042 done. List and map results each derive a `loading`/`empty`/`error`/`success` status via `deriveAsyncStatus()` (`lib/asyncState.ts`, shared with `SALON.md`'s Services/Reviews sections) and render through the same `AsyncSection` component. A failed fetch (`!response.ok` or a network error) is tracked as a distinct `searchError`/`mapError` flag — previously this collapsed silently into the same UI as a genuine zero-result search, with no way for a user to tell "nothing matches" apart from "the request failed." Shipped copy: "Could not load results" / "Could not load the map", each with a retry button that re-runs the same fetch without a full page reload.
+
 | Scenario | Behaviour |
 |---|---|
-| API 500 | Show "Something went wrong" with retry button |
+| API 500 | Show "Could not load results" with retry button |
 | Network timeout | Same as above |
+| Map API 500 | Show "Could not load the map" with retry button |
 | Empty category filter returns results | Normal — shows all salons |
 | Area not found in data | Return empty state (not 404) |
 

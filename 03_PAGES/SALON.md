@@ -213,7 +213,7 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
 - Category grouping (group by category if salon has multiple)
 
 **Empty state:**
-- No services in data: "Service information not available for this salon"
+- No services in data: "Service information not available for this salon" — implemented (T-042), distinct from a failed fetch ("Could not load services" with a retry link, see Error States below)
 - Do not show skeleton indefinitely if API returns empty array
 
 **Sort:** By category, then by price ascending within category
@@ -259,7 +259,7 @@ Section-level disclosure (one `<p>` per page load, not per review) rendered dire
 - Date of review
 - Translation badge if translated (🌐 "Translated from Greek")
 
-**Empty state:** Documented as "No reviews available for this salon", but **this text does not currently render** — when there are zero reviews (or the reviews fetch fails), the entire Reviews section (including the "Reviews" heading) renders nothing at all. Pre-existing gap, found during T-012, not fixed here (T-012 does not touch review fetching/empty-state UI by its own scope) — candidate for a follow-up ticket.
+**Empty state:** "No reviews available for this salon" — implemented (T-042). Distinct from a failed fetch, which shows "Could not load reviews" with a retry link instead (see Error States below). Both states render the "Reviews" heading, unlike the pre-T-042 gap where the entire section (including the heading) rendered nothing in either case.
 
 **Rating shown:** Average from `rating_google` (already shown in Section 2). Do not recalculate from individual reviews displayed.
 
@@ -332,6 +332,8 @@ For SEO and social sharing (SSR portion):
 ---
 
 ## Error States
+
+**Implementation status:** ✅ T-042 done (Services/Reviews rows). Both sections use a shared `AsyncSection` component (`components/AsyncSection.tsx`) driven by a `loading`/`empty`/`error`/`success` status derived by `deriveAsyncStatus()` (`lib/asyncState.ts`) — the same primitive used for search results (see `SEARCH.md`). A failed fetch (`!response.ok` or a network error) is tracked as a distinct error flag in `useLazySection`, not collapsed into "zero results"; retry re-runs the same fetch without a full page reload.
 
 | Scenario | Behaviour |
 |---|---|

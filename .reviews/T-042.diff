@@ -1,0 +1,1025 @@
+diff --git a/docs/03_PAGES/SALON.md b/docs/03_PAGES/SALON.md
+index b080eda..15b6840 100644
+--- a/docs/03_PAGES/SALON.md
++++ b/docs/03_PAGES/SALON.md
+@@ -213,7 +213,7 @@ Everything above the fold must be visible on a typical mobile screen (375px widt
+ - Category grouping (group by category if salon has multiple)
+ 
+ **Empty state:**
+-- No services in data: "Service information not available for this salon"
++- No services in data: "Service information not available for this salon" — implemented (T-042), distinct from a failed fetch ("Could not load services" with a retry link, see Error States below)
+ - Do not show skeleton indefinitely if API returns empty array
+ 
+ **Sort:** By category, then by price ascending within category
+@@ -259,7 +259,7 @@ Section-level disclosure (one `<p>` per page load, not per review) rendered dire
+ - Date of review
+ - Translation badge if translated (🌐 "Translated from Greek")
+ 
+-**Empty state:** Documented as "No reviews available for this salon", but **this text does not currently render** — when there are zero reviews (or the reviews fetch fails), the entire Reviews section (including the "Reviews" heading) renders nothing at all. Pre-existing gap, found during T-012, not fixed here (T-012 does not touch review fetching/empty-state UI by its own scope) — candidate for a follow-up ticket.
++**Empty state:** "No reviews available for this salon" — implemented (T-042). Distinct from a failed fetch, which shows "Could not load reviews" with a retry link instead (see Error States below). Both states render the "Reviews" heading, unlike the pre-T-042 gap where the entire section (including the heading) rendered nothing in either case.
+ 
+ **Rating shown:** Average from `rating_google` (already shown in Section 2). Do not recalculate from individual reviews displayed.
+ 
+@@ -333,6 +333,8 @@ For SEO and social sharing (SSR portion):
+ 
+ ## Error States
+ 
++**Implementation status:** ✅ T-042 done (Services/Reviews rows). Both sections use a shared `AsyncSection` component (`components/AsyncSection.tsx`) driven by a `loading`/`empty`/`error`/`success` status derived by `deriveAsyncStatus()` (`lib/asyncState.ts`) — the same primitive used for search results (see `SEARCH.md`). A failed fetch (`!response.ok` or a network error) is tracked as a distinct error flag in `useLazySection`, not collapsed into "zero results"; retry re-runs the same fetch without a full page reload.
++
+ | Scenario | Behaviour |
+ |---|---|
+ | Services API 500 | Show "Could not load services" with retry link |
+diff --git a/docs/03_PAGES/SEARCH.md b/docs/03_PAGES/SEARCH.md
+index 825a7be..f378120 100644
+--- a/docs/03_PAGES/SEARCH.md
++++ b/docs/03_PAGES/SEARCH.md
+@@ -239,10 +239,13 @@ Update dynamically as filters change.
+ 
+ ## Error States
+ 
++**Implementation status:** ✅ T-042 done. List and map results each derive a `loading`/`empty`/`error`/`success` status via `deriveAsyncStatus()` (`lib/asyncState.ts`, shared with `SALON.md`'s Services/Reviews sections) and render through the same `AsyncSection` component. A failed fetch (`!response.ok` or a network error) is tracked as a distinct `searchError`/`mapError` flag — previously this collapsed silently into the same UI as a genuine zero-result search, with no way for a user to tell "nothing matches" apart from "the request failed." Shipped copy: "Could not load results" / "Could not load the map", each with a retry button that re-runs the same fetch without a full page reload.
++
+ | Scenario | Behaviour |
+ |---|---|
+-| API 500 | Show "Something went wrong" with retry button |
++| API 500 | Show "Could not load results" with retry button |
+ | Network timeout | Same as above |
++| Map API 500 | Show "Could not load the map" with retry button |
+ | Empty category filter returns results | Normal — shows all salons |
+ | Area not found in data | Return empty state (not 404) |
+ 
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index c55aaa8..6229c63 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1058,18 +1058,33 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+ 
+ ---
+ 
+-### T-042 — Distinguish Reviews empty and API error states
+-**Priority:** P2 | **Owner:** FE | **Estimate:** 1h | **Epic:** EPIC-09
++### T-042 — Unified loading/empty/error/success state pattern (SQC-01A)
++**Priority:** P0 (reprioritized from P2 — first ticket of the SQC-01A UX-foundation phase, per architect direction 2026-07-23) | **Owner:** FE | **Estimate:** 1h (revised: ~3h — scope expanded from Reviews-only to a shared primitive reused across Services, Reviews, and search results) | **Epic:** EPIC-09
+ **Dependencies:** None
++**Status:** Implemented (branch `feat/T-042-unified-async-states`), pending independent review.
++
++**Original scope (superseded, expanded per architect instruction):** the original ticket only covered Reviews (and, per its own acceptance criteria, Services). Before implementation, the architect asked not to build a one-off fix scoped to those two sections, but a single reusable Loading/Empty/Error/Success pattern — since the identical gap (a failed fetch silently collapsing into "empty," with no way for a user to distinguish "nothing here" from "something broke") also existed, unfixed and undocumented, on the search page's list and map results (`searchError`/`mapError` state was added by T-015 purely for analytics gating and was never wired into the UI at all).
++
++**Architecture:**
++- `lib/asyncState.ts` — `AsyncStatus = 'loading'|'empty'|'error'|'success'` + pure `deriveAsyncStatus(loading, error, isEmpty)`. Precedence: loading > error > empty > success (a stale error/empty must not flash during a retry; a failed fetch is never reported as "genuinely nothing here").
++- `components/AsyncSection.tsx` — the single place an `AsyncStatus` becomes UI. Deliberately unstyled/unopinionated (no fetch/analytics logic, no hardcoded className) — each call site supplies its own loading skeleton, empty message, and error message+retry, since Services/Reviews cards and the search results grid have different containers. What's shared is the state machine, not the markup.
++- `SalonDetailClient.tsx`'s `useLazySection` now tracks a distinct `error` boolean (a non-`ok` HTTP response throws, rather than being silently `.json()`-parsed as if it were valid data — the same latent bug class as the fix below) and exposes a `retry` function (re-runs the same IntersectionObserver-triggered fetch on demand, not a full page reload). Services and Reviews both render through `<AsyncSection status={...}>`, with the section heading now visible in the empty/error states too (previously the whole section, heading included, rendered nothing in either case).
++- `search/page.tsx`'s list and map fetches were refactored into `useCallback`-wrapped `loadSalons`/`loadMapSalons` (previously inline in `useEffect`, with no way to manually retry) — same `!response.ok` fix applied (a 500 with a JSON error body was previously indistinguishable from a genuine empty result, since `d.items || []` / `Array.isArray(d) ? d : []` both silently produce an empty array from a non-array error payload). The list view's existing friendly empty-state copy ("no salons in this area" + Clear filters button) is preserved unchanged; only the new error branch is new.
++- T-015's `search_results_view` tracking effect is untouched — it still gates on the raw `loading`/`searchError`/`mapLoading`/`mapError` booleans directly, not on the new `listStatus`/`mapStatus` derived values.
++
++**New translation keys (all 4 locales):** `salon.servicesNotAvailable`, `salon.servicesLoadError`, `salon.reviewsNotAvailable`, `salon.reviewsLoadError`, `salon.retry`; `search.results_load_error`, `search.map_load_error`, `search.retry`.
+ 
+-**Description:** `SALON.md` documents two distinct states for the Reviews section — "No reviews available" (empty) and "Could not load reviews" with a retry link (API error) — but the current `useLazySection` hook in `SalonDetailClient.tsx` doesn't distinguish them: a failed fetch is caught and treated identically to a genuinely-empty result (`.catch(() => setLoading(false))`, leaving `data` as `[]`). In practice, the whole Reviews section (including its heading) renders nothing at all in either case — neither documented empty-state message actually appears. Found during T-012's implementation (its `googleReviewsSourceLabel` disclosure correctly stays hidden in both cases, since it only checks `reviewCount > 0`, but that's a side effect of the same missing error state, not a fix for it).
++**Verification:** 381/381 frontend tests passing (28 new for T-042 — `asyncState.test.ts` for the pure precedence logic, `AsyncSection.test.tsx` for the dispatch order, extended `salonDetail.test.ts` and a new `searchPage.test.ts` for the wiring, plus locale-key-parity checks across all 4 locales). `npm run lint` and `npm run build` both clean, no new warnings.
+ 
+ **Acceptance Criteria:**
+-- [ ] `useLazySection` (or a similar mechanism) tracks a distinct error state, not just loading/data
+-- [ ] Zero reviews (genuine empty result) shows "No reviews available"
+-- [ ] Failed reviews fetch shows "Could not load reviews" with a retry link
+-- [ ] Same distinction applied to Services, which shares the identical `useLazySection` hook and has the same gap (`"Service information not available"` per `SALON.md`, also not currently implemented)
+-- [ ] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states
++- [x] A shared `loading`/`empty`/`error`/`success` primitive exists (`lib/asyncState.ts` + `components/AsyncSection.tsx`), not a Reviews-specific fix
++- [x] `useLazySection` (Services/Reviews) tracks a distinct error state, not just loading/data
++- [x] Zero reviews (genuine empty result) shows "No reviews available for this salon"; zero services shows "Service information not available for this salon"
++- [x] Failed reviews/services fetch shows "Could not load reviews"/"Could not load services" with a retry action
++- [x] T-012's `googleReviewsSourceLabel` disclosure still stays hidden in both states (unchanged: `!loading && reviewCount > 0`)
++- [x] Same pattern applied to search results (list and map) — not originally in scope, added per architect instruction: failed `/api/salons`/`/api/salons/map` requests now show a distinct "Could not load results"/"Could not load the map" message with retry, instead of silently looking like a zero-result search
++- [ ] Production verification — pending
++- [ ] Independent review — pending
+ 
+ ---
+ 
+diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+index 7e39ff8..eeb546c 100644
+--- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
++++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+@@ -1,11 +1,14 @@
+ 'use client';
+ import Link from 'next/link';
+-import { useState, useEffect, useRef } from 'react';
++import { useState, useEffect, useRef, useCallback } from 'react';
+ import { useTranslations } from 'next-intl';
+ import type { SalonDetail, ServiceItem, ReviewItem } from '@/lib/api';
+ import ReportButton from '@/components/ReportButton';
+ import SalonHours from '@/components/SalonHours';
+ import ContactButtons from '@/components/ContactButtons';
++import AsyncSection from '@/components/AsyncSection';
++import { deriveAsyncStatus } from '@/lib/asyncState';
++import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
+ import { shouldShowReviewSourceLabel } from '@/lib/reviewsSection';
+ import { getVerificationLabelKey } from '@/lib/verificationLabel';
+ 
+@@ -26,16 +29,37 @@ function TranslatedBadge({ locale }: { locale: string }) {
+   );
+ }
+ 
++interface LazySectionResult<T> {
++  data: T[];
++  loading: boolean;
++  error: boolean;
++  sentinelRef: React.RefObject<HTMLDivElement>;
++  retry: () => void;
++}
++
+ function useLazySection<T>(
+   salonId: number,
+   path: 'services' | 'reviews',
+   locale: string,
+-): [T[], boolean, React.RefObject<HTMLDivElement>] {
++): LazySectionResult<T> {
+   const [data, setData] = useState<T[]>([]);
+   const [loading, setLoading] = useState(true);
++  const [error, setError] = useState(false);
+   const sentinelRef = useRef<HTMLDivElement>(null);
+   const fetched = useRef(false);
+ 
++  const load = useCallback(() => {
++    setLoading(true);
++    setError(false);
++    fetch(`/api/salons/${salonId}/${path}?lang=${locale}`)
++      .then(r => {
++        if (!r.ok) throw new Error(`${path} fetch failed: ${r.status}`);
++        return r.json();
++      })
++      .then((d: T[]) => { setData(Array.isArray(d) ? d : []); setLoading(false); })
++      .catch(() => { setLoading(false); setError(true); });
++  }, [salonId, path, locale]);
++
+   useEffect(() => {
+     const el = sentinelRef.current;
+     if (!el) return;
+@@ -43,16 +67,13 @@ function useLazySection<T>(
+       if (!entry.isIntersecting || fetched.current) return;
+       fetched.current = true;
+       obs.disconnect();
+-      fetch(`/api/salons/${salonId}/${path}?lang=${locale}`)
+-        .then(r => r.json())
+-        .then((d: T[]) => { setData(Array.isArray(d) ? d : []); setLoading(false); })
+-        .catch(() => setLoading(false));
++      load();
+     }, { rootMargin: '400px' });
+     obs.observe(el);
+     return () => obs.disconnect();
+-  }, [salonId, path, locale]);
++  }, [load]);
+ 
+-  return [data, loading, sentinelRef];
++  return { data, loading, error, sentinelRef, retry: load };
+ }
+ 
+ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+@@ -60,8 +81,14 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const [showAllPhotos, setShowAllPhotos] = useState(false);
+ 
+-  const [services, servicesLoading, servicesRef] = useLazySection<ServiceItem>(salon?.id ?? 0, 'services', locale);
+-  const [reviews, reviewsLoading, reviewsRef] = useLazySection<ReviewItem>(salon?.id ?? 0, 'reviews', locale);
++  const servicesSection = useLazySection<ServiceItem>(salon?.id ?? 0, 'services', locale);
++  const reviewsSection = useLazySection<ReviewItem>(salon?.id ?? 0, 'reviews', locale);
++  const { data: services, loading: servicesLoading, error: servicesError, sentinelRef: servicesRef, retry: retryServices } = servicesSection;
++  const { data: reviews, loading: reviewsLoading, error: reviewsError, sentinelRef: reviewsRef, retry: retryReviews } = reviewsSection;
++  const servicesStatus = deriveAsyncStatus(servicesLoading, servicesError, services.length === 0);
++  const reviewsStatus = deriveAsyncStatus(reviewsLoading, reviewsError, reviews.length === 0);
++  const servicesRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(servicesStatus);
++  const reviewsRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(reviewsStatus);
+ 
+   if (!salon) {
+     return (
+@@ -183,11 +210,29 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+ 
+         {/* Services — lazy-loaded */}
+         <div ref={servicesRef}>
+-          {servicesLoading ? (
+-            <div className="bg-white rounded-xl p-5 mb-4 space-y-3">
+-              {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
+-            </div>
+-          ) : services.length > 0 && (
++          <AsyncSection
++            status={servicesStatus}
++            loading={
++              <div className="bg-white rounded-xl p-5 mb-4 space-y-3" aria-hidden="true">
++                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
++              </div>
++            }
++            empty={
++              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
++                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
++                <p className="text-sm text-gray-500">{t('servicesNotAvailable')}</p>
++              </div>
++            }
++            error={
++              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
++                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
++                <p className="text-sm text-gray-500 mb-2">{t('servicesLoadError')}</p>
++                <button onClick={retryServices} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                  {t('retry')}
++                </button>
++              </div>
++            }
++          >
+             <div className="bg-white rounded-xl p-5 mb-4">
+               <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
+               <div className="divide-y divide-gray-100">
+@@ -209,21 +254,39 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+                 ))}
+               </div>
+             </div>
+-          )}
++          </AsyncSection>
+         </div>
+ 
+         {/* Reviews — lazy-loaded */}
+         <div ref={reviewsRef}>
+-          {reviewsLoading ? (
+-            <div className="bg-white rounded-xl p-5 mb-4 space-y-4">
+-              {[1,2,3].map(i => (
+-                <div key={i} className="space-y-2">
+-                  <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+-                  <div className="h-12 bg-gray-100 rounded animate-pulse" />
+-                </div>
+-              ))}
+-            </div>
+-          ) : reviews.length > 0 && (
++          <AsyncSection
++            status={reviewsStatus}
++            loading={
++              <div className="bg-white rounded-xl p-5 mb-4 space-y-4" aria-hidden="true">
++                {[1,2,3].map(i => (
++                  <div key={i} className="space-y-2">
++                    <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
++                    <div className="h-12 bg-gray-100 rounded animate-pulse" />
++                  </div>
++                ))}
++              </div>
++            }
++            empty={
++              <div className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
++                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
++                <p className="text-sm text-gray-500">{t('reviewsNotAvailable')}</p>
++              </div>
++            }
++            error={
++              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
++                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
++                <p className="text-sm text-gray-500 mb-2">{t('reviewsLoadError')}</p>
++                <button onClick={retryReviews} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                  {t('retry')}
++                </button>
++              </div>
++            }
++          >
+             <div className="bg-white rounded-xl p-5 mb-4">
+               <div className="flex items-center justify-between mb-3">
+                 <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
+@@ -255,7 +318,7 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+                 ))}
+               </div>
+             </div>
+-          )}
++          </AsyncSection>
+         </div>
+ 
+         {/* Hours */}
+diff --git a/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
+index 291e011..0bd95f4 100644
+--- a/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
++++ b/frontend/app/[locale]/salons/[slug]/salonDetail.test.ts
+@@ -74,3 +74,107 @@ describe('T-009/T-010: locale files have no booking/Viber translation keys, have
+     }
+   });
+ });
++
++describe('T-042: Services/Reviews distinguish loading/empty/error/success via AsyncSection', () => {
++  test('useLazySection tracks a distinct error flag, not just loading/data', () => {
++    const hookSource = clientSource.slice(clientSource.indexOf('function useLazySection'), clientSource.indexOf('export default function SalonDetailClient'));
++    assert.ok(/const \[error, setError\] = useState\(false\)/.test(hookSource));
++  });
++
++  test('a non-ok HTTP response is treated as an error, not silently parsed as if it were valid data', () => {
++    const hookSource = clientSource.slice(clientSource.indexOf('function useLazySection'), clientSource.indexOf('export default function SalonDetailClient'));
++    assert.ok(/if \(!r\.ok\) throw new Error/.test(hookSource));
++  });
++
++  test('useLazySection exposes a retry function that resets error state and re-fetches', () => {
++    const hookSource = clientSource.slice(clientSource.indexOf('function useLazySection'), clientSource.indexOf('export default function SalonDetailClient'));
++    assert.ok(hookSource.includes('retry: load'));
++    assert.ok(hookSource.includes('setError(false)'));
++  });
++
++  test('Services and Reviews both render through <AsyncSection status={...}>', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    assert.ok(/<AsyncSection\s+status=\{servicesStatus\}/.test(servicesBlock));
++    assert.ok(/<AsyncSection\s+status=\{reviewsStatus\}/.test(reviewsBlock));
++  });
++
++  test('Services error state shows servicesLoadError + a retry button wired to retryServices', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    assert.ok(servicesBlock.includes("t('servicesLoadError')"));
++    assert.ok(servicesBlock.includes('onClick={retryServices}'));
++  });
++
++  test('Services empty state shows servicesNotAvailable, distinct from the error message', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    assert.ok(servicesBlock.includes("t('servicesNotAvailable')"));
++  });
++
++  test('Reviews error state shows reviewsLoadError + a retry button wired to retryReviews', () => {
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    assert.ok(reviewsBlock.includes("t('reviewsLoadError')"));
++    assert.ok(reviewsBlock.includes('onClick={retryReviews}'));
++  });
++
++  test('Reviews empty state shows reviewsNotAvailable, distinct from the error message', () => {
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    assert.ok(reviewsBlock.includes("t('reviewsNotAvailable')"));
++  });
++
++  test('T-012 googleReviewsSourceLabel disclosure logic (shouldShowReviewSourceLabel) is untouched', () => {
++    assert.ok(clientSource.includes('shouldShowReviewSourceLabel(reviewsLoading, reviews.length)'));
++  });
++
++  test('all 4 locales define servicesNotAvailable/servicesLoadError/reviewsNotAvailable/reviewsLoadError/retry', () => {
++    const requiredKeys = ['servicesNotAvailable', 'servicesLoadError', 'reviewsNotAvailable', 'reviewsLoadError', 'retry'];
++    for (const locale of ['el', 'en', 'ru', 'uk'] as const) {
++      const messages = JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++      for (const key of requiredKeys) {
++        assert.ok(key in messages.salon, `${locale}.json salon.${key} missing`);
++      }
++    }
++  });
++});
++
++describe('T-042: accessibility — role/aria-live/focus-on-retry for Services and Reviews', () => {
++  test('imports useFocusOnStatusRecovery and creates a ref per section', () => {
++    assert.ok(clientSource.includes("from '@/lib/useFocusOnStatusRecovery'"));
++    assert.ok(clientSource.includes('useFocusOnStatusRecovery<HTMLDivElement>(servicesStatus)'));
++    assert.ok(clientSource.includes('useFocusOnStatusRecovery<HTMLDivElement>(reviewsStatus)'));
++  });
++
++  test('loading skeletons are aria-hidden (decorative, not meaningful to announce)', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const servicesLoading = servicesBlock.slice(servicesBlock.indexOf('loading={'), servicesBlock.indexOf('empty={'));
++    const reviewsLoading = reviewsBlock.slice(reviewsBlock.indexOf('loading={'), reviewsBlock.indexOf('empty={'));
++    assert.ok(servicesLoading.includes('aria-hidden="true"'));
++    assert.ok(reviewsLoading.includes('aria-hidden="true"'));
++  });
++
++  test('empty states use role="status"/aria-live="polite" (informational, not urgent)', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const servicesEmpty = servicesBlock.slice(servicesBlock.indexOf('empty={'), servicesBlock.indexOf('error={'));
++    const reviewsEmpty = reviewsBlock.slice(reviewsBlock.indexOf('empty={'), reviewsBlock.indexOf('error={'));
++    for (const block of [servicesEmpty, reviewsEmpty]) {
++      assert.ok(block.includes('role="status"'));
++      assert.ok(block.includes('aria-live="polite"'));
++    }
++  });
++
++  test('error states use role="alert"/aria-live="assertive" (needs immediate attention) and are wired to the recovery ref', () => {
++    const servicesBlock = clientSource.slice(clientSource.indexOf('{/* Services'), clientSource.indexOf('{/* Reviews'));
++    const reviewsBlock = clientSource.slice(clientSource.indexOf('{/* Reviews'), clientSource.indexOf('{/* Hours'));
++    const reviewsError = reviewsBlock.slice(reviewsBlock.indexOf('error={'));
++    assert.ok(servicesBlock.slice(servicesBlock.indexOf('error={')).includes('role="alert"'));
++    assert.ok(servicesBlock.slice(servicesBlock.indexOf('error={')).includes('ref={servicesRecoveryRef}'));
++    assert.ok(reviewsError.includes('role="alert"'));
++    assert.ok(reviewsError.includes('ref={reviewsRecoveryRef}'));
++  });
++
++  test('error/empty wrapper divs are tabIndex={-1} focusable (a plain <div> cannot receive .focus() otherwise)', () => {
++    const servicesErrorBlock = clientSource.slice(clientSource.indexOf("error={\n              <div ref={servicesRecoveryRef}"));
++    assert.ok(servicesErrorBlock.slice(0, 120).includes('tabIndex={-1}'));
++  });
++});
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index cb5abcc..9197694 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -7,6 +7,9 @@ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api'
+ import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
+ import type { Locale } from '@/i18n/request';
+ import SalonCard from '@/components/SalonCard';
++import AsyncSection from '@/components/AsyncSection';
++import { deriveAsyncStatus } from '@/lib/asyncState';
++import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import dynamic from 'next/dynamic';
+ 
+@@ -103,7 +106,7 @@ function SearchContent({ locale }: { locale: string }) {
+   }, [buildParams]);
+ 
+   // Reset + initial fetch when filters change
+-  useEffect(() => {
++  const loadSalons = useCallback(() => {
+     pageRef.current = 1;
+     hasMoreRef.current = false;
+     busyRef.current = false;
+@@ -111,7 +114,10 @@ function SearchContent({ locale }: { locale: string }) {
+     setSearchError(false);
+     setSalons([]);
+     fetch(`/api/salons?${buildParams(1)}`)
+-      .then(r => r.json())
++      .then(r => {
++        if (!r.ok) throw new Error(`salons fetch failed: ${r.status}`);
++        return r.json();
++      })
+       .then(d => {
+         setSalons(d.items || []);
+         setTotal(d.total || 0);
+@@ -120,10 +126,12 @@ function SearchContent({ locale }: { locale: string }) {
+       })
+       .catch(() => { setSalons([]); setTotal(0); hasMoreRef.current = false; setSearchError(true); })
+       .finally(() => setLoading(false));
+-  }, [area, city, q, category, minRating]); // eslint-disable-line react-hooks/exhaustive-deps
++  }, [buildParams]);
++
++  useEffect(() => { loadSalons(); }, [loadSalons]);
+ 
+   // Map fetch
+-  useEffect(() => {
++  const loadMapSalons = useCallback(() => {
+     if (view !== 'map') return;
+     setMapLoading(true);
+     setMapError(false);
+@@ -134,12 +142,17 @@ function SearchContent({ locale }: { locale: string }) {
+     if (category) params.set('category', category);
+     if (minRating) params.set('min_rating', minRating);
+     fetch(`/api/salons/map?${params}`)
+-      .then(r => r.json())
++      .then(r => {
++        if (!r.ok) throw new Error(`map fetch failed: ${r.status}`);
++        return r.json();
++      })
+       .then(d => setMapSalons(Array.isArray(d) ? d : []))
+       .catch(() => { setMapSalons([]); setMapError(true); })
+       .finally(() => setMapLoading(false));
+   }, [view, area, city, q, category, minRating]);
+ 
++  useEffect(() => { loadMapSalons(); }, [loadMapSalons]);
++
+   // T-015: search_results_view — fires once per materially distinct
+   // (area, result_count_bucket, view, locale) state, only after a
+   // successful load (never while loading, never on API error). Watches
+@@ -203,6 +216,10 @@ function SearchContent({ locale }: { locale: string }) {
+   const doSearch = () => update('q', inputRef.current?.value || '');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const activeArea = findAreaBySlug(areas, area);
++  const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);
++  const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);
++  const listRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(listStatus);
++  const mapRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(mapStatus);
+ 
+   return (
+     <div className="min-h-screen bg-gray-50">
+@@ -311,32 +328,60 @@ function SearchContent({ locale }: { locale: string }) {
+         </p>
+ 
+         {view === 'map' ? (
+-          mapLoading
+-            ? <div className="flex items-center justify-center h-96 text-gray-400">...</div>
+-            : <MapView salons={mapSalons} locale={locale} />
++          <AsyncSection
++            status={mapStatus}
++            loading={<div className="flex items-center justify-center h-96 text-gray-400" aria-hidden="true">...</div>}
++            empty={<MapView salons={mapSalons} locale={locale} />}
++            error={
++              <div ref={mapRecoveryRef} tabIndex={-1} className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3 outline-none" role="alert" aria-live="assertive">
++                <p>{t('map_load_error')}</p>
++                <button onClick={loadMapSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                  {t('retry')}
++                </button>
++              </div>
++            }
++          >
++            <MapView salons={mapSalons} locale={locale} />
++          </AsyncSection>
+         ) : (
+           <>
+             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+-              {loading ? (
+-                Array.from({ length: 6 }).map((_, i) => (
+-                  <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" />
+-                ))
+-              ) : salons.length > 0 ? (
+-                salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />)
+-              ) : area ? (
+-                <div className="col-span-3 text-center py-16 text-gray-400 space-y-3">
+-                  <p>
+-                    {activeArea
+-                      ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
+-                      : t('no_salons_in_this_area')}
+-                  </p>
+-                  <button onClick={clearFilters} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
+-                    {t('clear_filters')}
+-                  </button>
+-                </div>
+-              ) : (
+-                <div className="col-span-3 text-center py-16 text-gray-400">{t('no_results')}</div>
+-              )}
++              <AsyncSection
++                status={listStatus}
++                loading={
++                  <>
++                    {Array.from({ length: 6 }).map((_, i) => (
++                      <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" aria-hidden="true" />
++                    ))}
++                  </>
++                }
++                empty={
++                  area ? (
++                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="status" aria-live="polite">
++                      <p>
++                        {activeArea
++                          ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
++                          : t('no_salons_in_this_area')}
++                      </p>
++                      <button onClick={clearFilters} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                        {t('clear_filters')}
++                      </button>
++                    </div>
++                  ) : (
++                    <div className="col-span-3 text-center py-16 text-gray-400 outline-none" role="status" aria-live="polite">{t('no_results')}</div>
++                  )
++                }
++                error={
++                  <div ref={listRecoveryRef} tabIndex={-1} className="col-span-3 text-center py-16 text-gray-400 space-y-3 outline-none" role="alert" aria-live="assertive">
++                    <p>{t('results_load_error')}</p>
++                    <button onClick={loadSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                      {t('retry')}
++                    </button>
++                  </div>
++                }
++              >
++                {salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />)}
++              </AsyncSection>
+             </div>
+ 
+             {/* Sentinel + spinner */}
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+new file mode 100644
+index 0000000..6147bcc
+--- /dev/null
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -0,0 +1,124 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..', '..', '..');
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++function readMessages(locale: string) {
++  return JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++}
++
++describe('T-042: search results distinguish loading/empty/error/success via AsyncSection', () => {
++  test('list and map results each compute a status via deriveAsyncStatus', () => {
++    assert.ok(source.includes('const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);'));
++    assert.ok(source.includes('const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);'));
++  });
++
++  test('a non-ok HTTP response from /api/salons is treated as an error, not silently parsed as valid data', () => {
++    const fn = source.slice(source.indexOf('const loadSalons ='), source.indexOf('useEffect(() => { loadSalons(); }'));
++    assert.ok(/if \(!r\.ok\) throw new Error/.test(fn));
++    assert.ok(fn.includes('setSearchError(true)'));
++  });
++
++  test('a non-ok HTTP response from /api/salons/map is treated as an error, not silently parsed as valid data', () => {
++    const fn = source.slice(source.indexOf('const loadMapSalons ='), source.indexOf('useEffect(() => { loadMapSalons(); }'));
++    assert.ok(/if \(!r\.ok\) throw new Error/.test(fn));
++    assert.ok(fn.includes('setMapError(true)'));
++  });
++
++  test('loadSalons and loadMapSalons are exposed as retry handlers on the results AsyncSection', () => {
++    assert.ok(/<AsyncSection[\s\S]{0,50}status=\{listStatus\}/.test(source));
++    assert.ok(/<AsyncSection[\s\S]{0,50}status=\{mapStatus\}/.test(source));
++    assert.ok(source.includes('onClick={loadSalons}'));
++    assert.ok(source.includes('onClick={loadMapSalons}'));
++  });
++
++  test('list error state shows results_load_error, distinct from the no-results empty message', () => {
++    assert.ok(source.includes("t('results_load_error')"));
++    assert.ok(source.includes("t('no_results')"));
++  });
++
++  test('map error state shows map_load_error', () => {
++    assert.ok(source.includes("t('map_load_error')"));
++  });
++
++  test('the friendly "no salons in this area, clear filters" empty state is preserved unchanged', () => {
++    assert.ok(source.includes("t('no_salons_in_area'"));
++    assert.ok(source.includes("t('no_salons_in_this_area')"));
++    assert.ok(source.includes('onClick={clearFilters}'));
++  });
++
++  test('T-015 search_results_view tracking still gates on the raw loading/error booleans, untouched by the AsyncSection refactor', () => {
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
++    assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
++  });
++
++  test('all 4 locales define results_load_error/map_load_error/retry in the search namespace', () => {
++    const requiredKeys = ['results_load_error', 'map_load_error', 'retry'];
++    for (const locale of ['el', 'en', 'ru', 'uk'] as const) {
++      const messages = readMessages(locale);
++      for (const key of requiredKeys) {
++        assert.ok(key in messages.search, `${locale}.json search.${key} missing`);
++      }
++    }
++  });
++
++  test('search namespace keys are identical across all four locales', () => {
++    const keySets = (['el', 'en', 'ru', 'uk'] as const).map(locale => Object.keys(readMessages(locale).search).sort());
++    for (let i = 1; i < keySets.length; i++) {
++      assert.deepEqual(keySets[i], keySets[0]);
++    }
++  });
++});
++
++describe('T-042: accessibility — role/aria-live/focus-on-retry for search results, without breaking the CSS Grid', () => {
++  test('imports useFocusOnStatusRecovery and creates a ref per surface (list + map)', () => {
++    assert.ok(source.includes("from '@/lib/useFocusOnStatusRecovery'"));
++    assert.ok(source.includes('useFocusOnStatusRecovery<HTMLDivElement>(listStatus)'));
++    assert.ok(source.includes('useFocusOnStatusRecovery<HTMLDivElement>(mapStatus)'));
++  });
++
++  test('CRITICAL: the 6-item loading skeleton has no shared wrapper div — each stays a direct grid item, aria-hidden individually', () => {
++    const loadingBlock = source.slice(source.indexOf('loading={\n                  <>') + 'loading={'.length, source.indexOf('empty={\n                  area ?'));
++    // The 6 skeletons must remain siblings inside a Fragment (<>...</>),
++    // NOT nested inside one extra <div role="status"> wrapper — that would
++    // make them one grid cell instead of 6, breaking "grid-cols-3".
++    assert.ok(loadingBlock.trim().startsWith('<>'), 'loading content must be a bare Fragment, not a wrapping <div>');
++    assert.ok(!/<div[^>]*role=/.test(loadingBlock), 'no role= wrapper anywhere inside the loading fragment');
++    assert.ok(loadingBlock.includes('aria-hidden="true"'), 'each skeleton item is individually aria-hidden');
++  });
++
++  test('AsyncSection itself still renders no wrapper element around any state (verified once, applies to every call site including this grid)', () => {
++    const asyncSectionSource = fs.readFileSync(path.join(frontendRoot, 'components', 'AsyncSection.tsx'), 'utf-8');
++    assert.ok(!/<div/.test(asyncSectionSource), 'AsyncSection must not introduce its own wrapper <div> — that would break any grid it is used inside');
++  });
++
++  test('list empty states use role="status"/aria-live="polite"', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  area ?'), source.indexOf('error={\n                  <div ref={listRecoveryRef}'));
++    const variants = emptyBlock.split('<div className="col-span-3');
++    for (const variant of variants.slice(1)) {
++      assert.ok(variant.includes('role="status"'));
++      assert.ok(variant.includes('aria-live="polite"'));
++    }
++  });
++
++  test('list error state uses role="alert"/aria-live="assertive", tabIndex={-1}, and the recovery ref', () => {
++    const errorBlock = source.slice(source.indexOf('error={\n                  <div ref={listRecoveryRef}'), source.indexOf('error={\n                  <div ref={listRecoveryRef}') + 300);
++    assert.ok(errorBlock.includes('role="alert"'));
++    assert.ok(errorBlock.includes('aria-live="assertive"'));
++    assert.ok(errorBlock.includes('tabIndex={-1}'));
++  });
++
++  test('map error state uses role="alert"/aria-live="assertive" and the recovery ref; map loading is aria-hidden', () => {
++    const mapBlock = source.slice(source.indexOf("status={mapStatus}"), source.indexOf('status={listStatus}'));
++    assert.ok(mapBlock.includes('aria-hidden="true"'));
++    assert.ok(mapBlock.includes('ref={mapRecoveryRef}'));
++    assert.ok(mapBlock.includes('role="alert"'));
++    assert.ok(mapBlock.includes('aria-live="assertive"'));
++  });
++});
+diff --git a/frontend/components/AsyncSection.test.tsx b/frontend/components/AsyncSection.test.tsx
+new file mode 100644
+index 0000000..1ebd8f6
+--- /dev/null
++++ b/frontend/components/AsyncSection.test.tsx
+@@ -0,0 +1,31 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'AsyncSection.tsx'), 'utf-8');
++
++describe('T-042: AsyncSection — status dispatch', () => {
++  test('loading is checked first', () => {
++    const idx = source.indexOf("status === 'loading'");
++    assert.ok(idx > -1);
++    assert.ok(idx < source.indexOf("status === 'error'"));
++  });
++
++  test('error is checked before empty (a failed fetch must not be reported as "genuinely empty")', () => {
++    assert.ok(source.indexOf("status === 'error'") < source.indexOf("status === 'empty'"));
++  });
++
++  test('success (children) is the fallback, not gated on an explicit status check', () => {
++    const lastBranch = source.slice(source.indexOf("status === 'empty'"));
++    assert.ok(lastBranch.includes('return <>{children}</>;'));
++  });
++
++  test('is unstyled/unopinionated — no hardcoded className, no fetch/analytics logic of its own', () => {
++    assert.ok(!source.includes('className'));
++    assert.ok(!source.includes('fetch('));
++    assert.ok(!source.includes('trackEvent'));
++  });
++});
+diff --git a/frontend/components/AsyncSection.tsx b/frontend/components/AsyncSection.tsx
+new file mode 100644
+index 0000000..5e63c45
+--- /dev/null
++++ b/frontend/components/AsyncSection.tsx
+@@ -0,0 +1,24 @@
++import type { ReactNode } from 'react';
++import type { AsyncStatus } from '@/lib/asyncState';
++
++interface AsyncSectionProps {
++  status: AsyncStatus;
++  loading: ReactNode;
++  empty: ReactNode;
++  error: ReactNode;
++  children: ReactNode;
++}
++
++/**
++ * T-042: the single place that turns an AsyncStatus into UI. Intentionally
++ * unstyled/unopinionated — each call site supplies its own loading skeleton,
++ * empty-state message, and error message (typically with a retry action),
++ * since Services/Reviews cards and the search results grid have different
++ * containers. What's shared is the state machine, not the markup.
++ */
++export default function AsyncSection({ status, loading, empty, error, children }: AsyncSectionProps) {
++  if (status === 'loading') return <>{loading}</>;
++  if (status === 'error') return <>{error}</>;
++  if (status === 'empty') return <>{empty}</>;
++  return <>{children}</>;
++}
+diff --git a/frontend/lib/asyncState.test.ts b/frontend/lib/asyncState.test.ts
+new file mode 100644
+index 0000000..143b1e0
+--- /dev/null
++++ b/frontend/lib/asyncState.test.ts
+@@ -0,0 +1,25 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { deriveAsyncStatus } from './asyncState';
++
++describe('T-042: deriveAsyncStatus', () => {
++  test('loading wins regardless of error/empty flags', () => {
++    assert.equal(deriveAsyncStatus(true, false, false), 'loading');
++    assert.equal(deriveAsyncStatus(true, true, false), 'loading');
++    assert.equal(deriveAsyncStatus(true, false, true), 'loading');
++    assert.equal(deriveAsyncStatus(true, true, true), 'loading');
++  });
++
++  test('error wins over empty once loading is done', () => {
++    assert.equal(deriveAsyncStatus(false, true, true), 'error');
++    assert.equal(deriveAsyncStatus(false, true, false), 'error');
++  });
++
++  test('empty only applies once not loading and not errored', () => {
++    assert.equal(deriveAsyncStatus(false, false, true), 'empty');
++  });
++
++  test('success is the only remaining case', () => {
++    assert.equal(deriveAsyncStatus(false, false, false), 'success');
++  });
++});
+diff --git a/frontend/lib/asyncState.ts b/frontend/lib/asyncState.ts
+new file mode 100644
+index 0000000..cd93564
+--- /dev/null
++++ b/frontend/lib/asyncState.ts
+@@ -0,0 +1,22 @@
++/**
++ * T-042: the one status shape every async section in the product should
++ * use — loading vs. genuinely-empty vs. failed-to-load vs. has-content.
++ * Kept dependency-free (no React) so it's directly unit-testable and reusable
++ * anywhere a fetch result needs to become UI: search results, Services,
++ * Reviews, and future owner-dashboard sections.
++ */
++export type AsyncStatus = 'loading' | 'empty' | 'error' | 'success';
++
++/**
++ * Precedence: loading wins over everything (a stale error/empty from a
++ * previous attempt must not flash while a retry is in flight); error wins
++ * over empty (a failed fetch is not the same claim as "there is genuinely
++ * nothing here"); empty only applies once we know loading is done and
++ * nothing went wrong.
++ */
++export function deriveAsyncStatus(loading: boolean, error: boolean, isEmpty: boolean): AsyncStatus {
++  if (loading) return 'loading';
++  if (error) return 'error';
++  if (isEmpty) return 'empty';
++  return 'success';
++}
+diff --git a/frontend/lib/useFocusOnStatusRecovery.test.ts b/frontend/lib/useFocusOnStatusRecovery.test.ts
+new file mode 100644
+index 0000000..9caa144
+--- /dev/null
++++ b/frontend/lib/useFocusOnStatusRecovery.test.ts
+@@ -0,0 +1,29 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'useFocusOnStatusRecovery.ts'), 'utf-8');
++
++describe('T-042: useFocusOnStatusRecovery', () => {
++  test('only moves focus when recovering FROM error (not on every status change)', () => {
++    assert.ok(source.includes("prevStatus.current === 'error' && status !== 'error'"));
++  });
++
++  test('does not fire on the very first render (prevStatus starts null, not a real status)', () => {
++    assert.ok(source.includes('useRef<AsyncStatus | null>(null)'));
++  });
++
++  test('tracks prevStatus after every status change, not just on recovery', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [status]);'));
++    const focusIdx = effectBody.indexOf('ref.current?.focus()');
++    const trackIdx = effectBody.indexOf('prevStatus.current = status;');
++    assert.ok(focusIdx > -1 && trackIdx > -1 && focusIdx < trackIdx, 'prevStatus must be updated after the focus check, every render');
++  });
++
++  test('returns a ref for the caller to attach to a focusable element', () => {
++    assert.ok(source.includes('return ref;'));
++  });
++});
+diff --git a/frontend/lib/useFocusOnStatusRecovery.ts b/frontend/lib/useFocusOnStatusRecovery.ts
+new file mode 100644
+index 0000000..2148843
+--- /dev/null
++++ b/frontend/lib/useFocusOnStatusRecovery.ts
+@@ -0,0 +1,32 @@
++'use client';
++import { useEffect, useRef } from 'react';
++import type { AsyncStatus } from '@/lib/asyncState';
++
++/**
++ * T-042: moves keyboard focus back into a region after recovering from
++ * 'error' (e.g. via Retry). Without this, activating Retry unmounts the
++ * button the user just clicked the instant status leaves 'error' — for a
++ * keyboard or screen-reader user, focus would otherwise silently drop back
++ * to the document body with no indication anything happened.
++ *
++ * Attach the returned ref to the region's own root element (it must be
++ * focusable — give it `tabIndex={-1}`). Shared across every AsyncSection
++ * call site so the recovery-timing logic exists in exactly one place,
++ * even though the DOM wrapper it attaches to is necessarily per-call-site
++ * (some loading/empty/error content is itself a set of CSS Grid items —
++ * see search/page.tsx — where an extra shared wrapper div would break the
++ * grid; AsyncSection itself stays wrapper-free for exactly this reason).
++ */
++export function useFocusOnStatusRecovery<T extends HTMLElement>(status: AsyncStatus) {
++  const ref = useRef<T>(null);
++  const prevStatus = useRef<AsyncStatus | null>(null);
++
++  useEffect(() => {
++    if (prevStatus.current === 'error' && status !== 'error') {
++      ref.current?.focus();
++    }
++    prevStatus.current = status;
++  }, [status]);
++
++  return ref;
++}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 192d932..6ff8adf 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -47,7 +47,10 @@
+     "home_visits": "Κατ' οίκον",
+     "page_of": "Σελίδα {page} από {total}",
+     "prev": "← Προηγ.",
+-    "next": "Επόμ. →"
++    "next": "Επόμ. →",
++    "results_load_error": "Δεν ήταν δυνατή η φόρτωση των αποτελεσμάτων",
++    "map_load_error": "Δεν ήταν δυνατή η φόρτωση του χάρτη",
++    "retry": "Δοκιμάστε ξανά"
+   },
+   "salon": {
+     "callSalon": "Κλήση",
+@@ -75,7 +78,12 @@
+     "minutes": "λεπτά",
+     "open_maps": "Άνοιγμα στο Google Maps →",
+     "anonymous": "Ανώνυμος",
+-    "data_updated": "Δεδομένα ενημερώθηκαν"
++    "data_updated": "Δεδομένα ενημερώθηκαν",
++    "servicesNotAvailable": "Δεν υπάρχουν διαθέσιμες πληροφορίες υπηρεσιών για αυτό το σαλόνι",
++    "servicesLoadError": "Δεν ήταν δυνατή η φόρτωση των υπηρεσιών",
++    "reviewsNotAvailable": "Δεν υπάρχουν διαθέσιμες αξιολογήσεις για αυτό το σαλόνι",
++    "reviewsLoadError": "Δεν ήταν δυνατή η φόρτωση των αξιολογήσεων",
++    "retry": "Δοκιμάστε ξανά"
+   },
+   "login": {
+     "title": "Σύνδεση",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 1dca47d..ce282d2 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -47,7 +47,10 @@
+     "home_visits": "Home visits",
+     "page_of": "Page {page} of {total}",
+     "prev": "← Prev",
+-    "next": "Next →"
++    "next": "Next →",
++    "results_load_error": "Could not load results",
++    "map_load_error": "Could not load the map",
++    "retry": "Try again"
+   },
+   "salon": {
+     "callSalon": "Call",
+@@ -75,7 +78,12 @@
+     "minutes": "min",
+     "open_maps": "Open in Google Maps →",
+     "anonymous": "Anonymous",
+-    "data_updated": "Data updated"
++    "data_updated": "Data updated",
++    "servicesNotAvailable": "Service information not available for this salon",
++    "servicesLoadError": "Could not load services",
++    "reviewsNotAvailable": "No reviews available for this salon",
++    "reviewsLoadError": "Could not load reviews",
++    "retry": "Try again"
+   },
+   "login": {
+     "title": "Log in",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index da9377b..e177c1f 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -47,7 +47,10 @@
+     "home_visits": "Выезд на дом",
+     "page_of": "Страница {page} из {total}",
+     "prev": "← Назад",
+-    "next": "Вперёд →"
++    "next": "Вперёд →",
++    "results_load_error": "Не удалось загрузить результаты",
++    "map_load_error": "Не удалось загрузить карту",
++    "retry": "Повторить"
+   },
+   "salon": {
+     "callSalon": "Позвонить",
+@@ -75,7 +78,12 @@
+     "minutes": "мин",
+     "open_maps": "Открыть в Google Maps →",
+     "anonymous": "Аноним",
+-    "data_updated": "Данные обновлены"
++    "data_updated": "Данные обновлены",
++    "servicesNotAvailable": "Информация об услугах для этого салона недоступна",
++    "servicesLoadError": "Не удалось загрузить услуги",
++    "reviewsNotAvailable": "Для этого салона пока нет отзывов",
++    "reviewsLoadError": "Не удалось загрузить отзывы",
++    "retry": "Повторить"
+   },
+   "login": {
+     "title": "Вход",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 7cbe823..dd08d76 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -47,7 +47,10 @@
+     "home_visits": "Виїзд додому",
+     "page_of": "Сторінка {page} з {total}",
+     "prev": "← Назад",
+-    "next": "Вперед →"
++    "next": "Вперед →",
++    "results_load_error": "Не вдалося завантажити результати",
++    "map_load_error": "Не вдалося завантажити карту",
++    "retry": "Повторити"
+   },
+   "salon": {
+     "callSalon": "Зателефонувати",
+@@ -75,7 +78,12 @@
+     "minutes": "хв",
+     "open_maps": "Відкрити у Google Maps →",
+     "anonymous": "Анонім",
+-    "data_updated": "Дані оновлено"
++    "data_updated": "Дані оновлено",
++    "servicesNotAvailable": "Інформація про послуги для цього салону недоступна",
++    "servicesLoadError": "Не вдалося завантажити послуги",
++    "reviewsNotAvailable": "Для цього салону поки немає відгуків",
++    "reviewsLoadError": "Не вдалося завантажити відгуки",
++    "retry": "Повторити"
+   },
+   "login": {
+     "title": "Вхід",
+diff --git a/frontend/package.json b/frontend/package.json
+index d3440e4..acc4ad1 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts \"app/[locale]/salons/[slug]/salonDetail.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts components/AsyncSection.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
