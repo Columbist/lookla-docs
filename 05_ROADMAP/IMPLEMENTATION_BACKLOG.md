@@ -612,41 +612,35 @@ Localized:
 
 ---
 
-### T-015 — Implement useAnalytics hook and contact_action events
-**Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-04
-**Dependencies:** T-014
+### T-015 — Consent-gated GA4 product events
+**Priority:** P0 | **Owner:** FE | **Estimate:** 2h (revised — actual scope was a closed 5-event catalogue with a full PII-guard design, not a single hook) | **Epic:** EPIC-04
+**Dependencies:** T-013 ✅, T-014 Stage 1 + Stage 2 ✅, T-018 ✅
+**Status:** ✅ Completed (2026-07-23) — reviewed, merged to `main` (PR #48), `beauty_web` rebuilt/redeployed alone (API/DB/Redis/crawler/crawler_worker untouched), full production verification passing against `https://lookla.gr`.
 
-**Description:** Create `hooks/useAnalytics.ts` and use it in `ContactButtons.tsx`.
+**Correction to the original spec above (superseded before implementation, per architect review):** the original design's own sample code sent `salon_name` as a GA4 event parameter — personally/commercially identifying data that has no business leaving the browser in an analytics payload, and inconsistent with T-014/T-018's whole consent-gating design intent. The original also scoped only `contact_action` via a single `useAnalytics()` hook. The corrected, actually-implemented scope: a closed 5-event catalogue (`salon_open`, `contact_action`, `search_results_view`, `area_select`, `language_change`) behind one central `trackEvent()` function in `frontend/lib/analytics.ts` (T-014's existing transport module, not a new hook), with a two-layer PII guard (per-event parameter allowlist + a universal denylist) enforced inside `trackEvent` itself — not left to each call site to self-police.
 
-```typescript
-// hooks/useAnalytics.ts
-export function useAnalytics() {
-  const trackContact = (action_type: 'phone' | 'whatsapp' | 'website', salon_id: number, salon_name: string) => {
-    if (typeof window !== 'undefined' && window.gtag) {
-      window.gtag('event', 'contact_action', {
-        action_type,
-        salon_id,
-        salon_name,
-      });
-    }
-  };
-  return { trackContact };
-}
-```
+**Full specification:** see `docs/06_ENGINEERING/ANALYTICS_EVENTS.md` — event table, exact parameter contracts, PII guard design, duplicate-prevention strategy per event, cardinality notes, and the GA4 Admin custom-dimension/key-event checklist (deliberately deferred, manual, not automated by this change).
 
-**Usage in ContactButtons.tsx:**
-```tsx
-const { trackContact } = useAnalytics();
-// On CTA click:
-onClick={() => trackContact('phone', salon.id, salon.name)}
-```
+**Architecture summary:**
+- `trackEvent()` (`lib/analytics.ts`): TypeScript function overloads restrict callers to the 5 approved name/parameter-shape combinations at compile time; at runtime, an explicit `ANALYTICS_EVENT_NAMES` allowlist, per-event parameter schemas (numeric-id / canonical-slug / closed-enum validators), and a `DENIED_PARAM_KEYS` denylist plus a universal `isSafeGenericValue()` check (no whitespace/`@`/URL-scheme, bounded length) gate every call. No-ops unless `window.gtag` already exists (T-014 already initialized it — `trackEvent` never triggers initialization itself) and `getAnalyticsConsent()` reads `'granted'` live from the cookie at call time. Never queues a dropped call for later replay. Never throws.
+- `salon_id` is always `String(salon.id)` — the numeric DB primary key — never `salon.slug`, which was found during implementation to typically embed the salon's business name (e.g. `harris-anagnostopoulos-12608`), which would have made it personally identifying.
+- Component wiring: `SalonCard.tsx` (salon_open: search_list/homepage/masters), `MapView.tsx` (salon_open: search_map, from the marker preview's "view" link only — the preview's own phone quick-dial button is deliberately not instrumented, out of `contact_action`'s `page: 'salon_detail'`-only contract), `ContactButtons.tsx` (contact_action, 3 independent flat buttons, T-010's exact 3-action contract untouched, no Viber), `search/page.tsx` (search_results_view via a ref-based normalized-state-key dedup, not time-based debounce; area_select for the search filter, guarded against reselecting the already-active area), `AreaGrid.tsx` (area_select: homepage_grid), `LanguageSwitcher.tsx` (language_change, now takes an explicit `surface: 'header'|'footer'` prop since both `Header.tsx` and `Footer.tsx` render it, guarded against firing on a same-locale reselect).
 
-**Acceptance Criteria:**
-- [ ] `contact_action` event appears in GA4 Realtime when clicking "Call salon"
-- [ ] `contact_action` event appears when clicking "Message on WhatsApp"
-- [ ] `contact_action` event appears when clicking "Visit website"
-- [ ] Each event includes `action_type`, `salon_id`, `salon_name` custom parameters
-- [ ] No error in browser console when `gtag` is not loaded (conditional check)
+**Verification:** 353/353 frontend tests passing (68 new for T-015, including a mocked-transport suite proving exact `trackEvent` payloads without any live GA4 property — consent gating, denied-key/nested-object/overlong-value/invalid-enum rejection, no-replay-after-regrant, and PII-shape denylist checks all run against a hand-rolled `window.gtag` mock, not a live network call). `npm run lint` and `npm run build` both clean, no new warnings. Explicit T-014 non-regression tests confirm the Stage 2 fixes (dataLayer `arguments` object, apex-domain cookie deletion, duplicate-initial-page_view guard) are untouched by this change.
+
+**Production verification (2026-07-23):** Playwright against the live site (`https://lookla.gr`), fresh browser contexts per scenario, a real test salon (id 13671) and canonical area (`athens-center`). 19/19 before/salon_open/contact_action/search_results_view/area_select/language_change checks + 8/8 withdraw/regrant checks, all passing. Confirmed real payloads for all 5 events contain exactly their approved parameters and nothing else — e.g. `contact_action` → `{salon_id, channel, page, locale}` only, no phone number/WhatsApp URL/destination hostname; `salon_open` → `{salon_id, source, locale}` only. Withdraw removes `_ga*` and stops all further page_view/product events immediately; regrant resumes tracking with exactly one page_view (no duplicate) and no replay of anything from the withdrawn window.
+
+**Verification-process finding, disclosed for future reference:** GA4 batches multiple hits fired close together (e.g. a click-triggered product event immediately followed by the new page's `page_view`) into a single POST request whose body is several newline-separated `en=<name>&...` fragments, rather than each hit being its own separate GET-style request with `en=` in the URL query string. An initial verification pass mis-read this as `salon_open`/`area_select` failing to fire, because it only inspected each request's URL query string. Corrected by parsing both the URL and, when present, each line of the POST body for event names/params. **This is a real trap for any future production analytics verification on this site — always check the POST body of batched `g/collect` requests, not just the URL.**
+
+**Acceptance criteria:**
+- [x] Only the 5 approved events are callable — enforced by both TypeScript overloads and a runtime allowlist
+- [x] No event fires before consent, during rejection, or after withdrawal; no replay on regrant
+- [x] No PII (name/email/phone/address/message/token/GPS/URL/etc.) reaches any event, enforced by a schema allowlist + universal denylist inside `trackEvent` itself, not by caller discipline
+- [x] No duplicate firing — verified structurally (single click-owner per surface) plus, for `search_results_view`, a ref-based dedup key
+- [x] T-010's ContactButtons contract (exactly phone/WhatsApp/website, no Viber) untouched
+- [x] `trackEvent` never triggers GA initialization and never throws into the UI
+- [x] Production DebugView-equivalent verification (real payloads, real consent states, real withdraw/regrant) — 27/27 checks passing
+- [x] Independent review — approved (PR #48)
 
 ---
 
