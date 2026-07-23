@@ -1,0 +1,1230 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 0f3e474..c572984 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1106,6 +1106,47 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+ 
+ ---
+ 
++### T-054 — Search Results Context & Filter Recovery (SQC-01A)
++**Priority:** P0 (second ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-007 ✅ Area URL-state, T-015 ✅ Search analytics baseline, T-042 ✅ Unified async states
++**Status:** Implemented (branch `feat/T-054-search-results-context`), pending independent review.
++
++**Goal:** make the search-results page immediately understandable and recoverable — a stable results summary with the canonical total, visible chips for every effective filter, individual filter removal, a clear-all action, and an actionable filtered-empty state. Frontend-only; no backend/ranking/filter/SalonCard/analytics-event changes.
++
++**Search URL-state inventory (pre-implementation):** `area`/`city`/`q`/`category`/`min_rating` are all real, currently-applied filters sent to `/api/salons` and `/api/salons/map`; `view` (list/map) and `page` are not filters. Found three pre-existing gaps during inventory: (1) the results count showed a raw `${total} ${t('results')}` string-concatenation with no pluralization, and did not check `searchError` at all — a failed request displayed **"0 results"**, indistinguishable from a genuine empty search; (2) `clearFilters()` (the existing filter-dropdown's own clear button) never removed `q`, so "Clear filters" didn't actually clear the search query; (3) `city` was still sent to the API and could survive certain navigations even when `area` (canonical) was present, with no UI indication a hidden legacy filter was active.
++
++**Effective-filter precedence:** canonical `area` is authoritative — `city` is only ever shown as its own chip when `area` is absent, so a user is never silently filtered by a hidden legacy param. Values are trimmed; whitespace-only/invalid values never produce a chip. Area/category slugs resolve to their localized name once the canonical metadata (`/api/areas`, `/api/categories`) has loaded; before it loads, a locale-agnostic humanized fallback (`athens-center` → `Athens Center`) is shown instead of either the raw slug or an artificial delay, per architect instruction to derive initial visible filter context from already-available URL state. If metadata has loaded and the slug still matches nothing, the chip is dropped entirely (never a misleading chip for a genuinely invalid slug).
++
++**Result-count source:** the existing `total` state (set from the `/api/salons` response's `total` field) — never rendered-card-count, never map-marker-count. Reused as-is for both list and map views, since the list fetch already runs unconditionally regardless of which view is displayed. Rendered through a single ICU `{count, plural, ...}` message per locale (`search.results_summary`), verified directly against `intl-messageformat` (the library next-intl uses internally) for all 4 locales' correct CLDR plural categories, including Russian/Ukrainian one/few/many/other. Loading shows a fixed-height skeleton (not empty/collapsed, avoiding layout shift); error shows nothing (not "0").
++
++**Architecture:**
++- `lib/searchContext.ts` — pure, dependency-free `deriveActiveFilters()` (the `ActiveSearchFilter` model) plus per-filter-type and clear-all URL-mutation helpers (`removeQueryFilter`, `removeAreaFilter` — reuses T-007's `buildAreaUrlParams` so area removal already deletes legacy `city` too — `removeLegacyCityFilter`, `removeCategoryFilter`, `removeMinRatingFilter`, `removeActiveFilter` dispatcher, `clearAllActiveFilters`). `clearAllActiveFilters` fixes the pre-existing `q`-not-cleared bug; the existing filter-dropdown's own `clearFilters()` is deliberately left untouched (different, narrower, pre-existing scope) to avoid unrelated behavior change.
++- `components/ActiveFilterChips.tsx` — one real `<button>` per chip inside a semantic `<ul aria-label="Active filters">`, no nested interactive controls, one click = one URL update via `router.push` (matching this page's existing, consistent strategy — no `router.replace` introduced).
++- `lib/useFilterChipFocus.ts` — after a chip removal or clear-all, moves focus to the chip that shifted into the removed one's index, else the clear-all button, else the results-summary region — never `<body>`. Same "mark intent, act only once the count actually changed" pattern as T-042's `useFocusOnStatusRecovery`, so an unrelated render never steals focus.
++- `search/page.tsx` — new `<h1>`"Search results" heading (page previously had no heading at all) + `aria-live="polite"` count region + chips + conditional clear-all, wired above the existing T-042 `AsyncSection`. The list/map `empty` branches now key off `activeFilters.length > 0` (previously only `area`), giving every filter type — not just area — the actionable "No salons found" / explanation / "View all salons" recovery contract; a genuinely filter-free zero-result case keeps the old neutral message with no recovery action. Retry (T-042, error-only) is completely untouched.
++- New translation keys (all 4 locales): `search.results_heading`, `search.results_summary` (ICU plural, replaces the previously-dead `results_count`), `search.filter_query`, `search.clear_all_filters`, `search.remove_filter`, `search.no_matches_title`, `search.no_matches_description`, `search.view_all_salons`.
++
++**Analytics invariants:** no new `trackEvent` call sites added anywhere in this change — `removeFilter`/`clearAll`/`ActiveFilterChips` contain zero analytics calls. `search_results_view` and `area_select` call sites are byte-identical to pre-T-054. A regression test asserts every `trackEvent` call in the page uses one of the 5 T-015-approved event names.
++
++**Verification:** 473/473 frontend tests passing (74 new for T-054 — pure-function tests for `searchContext.ts`'s filter derivation and URL mutations, `intl-messageformat`-backed pluralization tests for all 4 locales' real CLDR plural categories, `useFilterChipFocus`/`ActiveFilterChips` behavior, and extensive `search/page.tsx` wiring/accessibility/analytics-invariant regression tests). `npm run lint` and `npm run build` both clean, no new warnings.
++
++**Isolated production verification (2026-07-23):** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage exactly — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container (confirmed unaffected — uptime unchanged throughout). 63/63 Playwright checks passing across all 15 required scenarios: unfiltered/area/query/legacy-city/area+query/area+city-together search, filtered zero-results (actionable, `role="status"`, no Retry), individual chip removal (URL + focus), clear-all (URL + focus), browser back/forward (correct filter-context restoration), list/map view (canonical total preserved in both), loading (no false zero), API error+retry, keyboard-only chip removal (Enter key, correct accessible name, focus preserved), 3 mobile breakpoints (320/375/768px — chips wrap, no horizontal overflow), and all 4 locales (correct heading/pluralization/localized chips, zero console/hydration errors) — including real production data exercising plural categories (90 → Russian "many", Ukrainian "many") beyond what the unit tests' synthetic values covered.
++
++**Acceptance Criteria:**
++- [x] Stable results summary with the canonical total (never card-count/marker-count), correct locale-aware pluralization
++- [x] Visible chips for every effective filter (query, area, legacy city, category, min_rating)
++- [x] Individual filter removal (one click/keypress = one URL update, focus preserved)
++- [x] Clear-all action, removing every effective filter including query (fixes the pre-existing `clearFilters()` gap)
++- [x] Actionable filtered empty state, never framed as an error, never shows Retry
++- [x] Legacy `city` handled correctly: authoritative `area` suppresses it as a second filter; standalone `city` remains visible so no hidden filter state
++- [x] No backend/database/ranking/filter/SalonCard changes
++- [x] No new GA4 events; existing `search_results_view`/`area_select`/`salon_open` untouched
++- [x] Accessibility: polite count region, assertive error (unchanged from T-042), precise localized remove-button accessible names, predictable focus after removal/clear-all, keyboard flow verified
++- [x] Production verification — 63/63 checks passing (see above)
++- [ ] Independent review — pending
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 24ca740..a261125 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -4,12 +4,15 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api';
+-import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
++import { getAreaName, buildAreaUrlParams } from '@/lib/areaFilter';
+ import type { Locale } from '@/i18n/request';
+ import SalonCard from '@/components/SalonCard';
+ import AsyncSection from '@/components/AsyncSection';
++import ActiveFilterChips from '@/components/ActiveFilterChips';
+ import { deriveAsyncStatus } from '@/lib/asyncState';
+ import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
++import { useFilterChipFocus } from '@/lib/useFilterChipFocus';
++import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, type ActiveSearchFilter } from '@/lib/searchContext';
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import dynamic from 'next/dynamic';
+ 
+@@ -215,12 +218,39 @@ function SearchContent({ locale }: { locale: string }) {
+ 
+   const doSearch = () => update('q', inputRef.current?.value || '');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+-  const activeArea = findAreaBySlug(areas, area);
+   const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);
+   const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);
+   const listRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(listStatus);
+   const mapRecoveryRef = useFocusOnStatusRecovery<HTMLDivElement>(mapStatus);
+ 
++  // T-054: the canonical effective-filter model — derived synchronously
++  // from URL state already available on first render (no fetch needed for
++  // the raw values), so chips never wait on an avoidable hydration delay.
++  const activeFilters = deriveActiveFilters(
++    { area, city, q, category, minRating },
++    areas,
++    categories,
++    locale as Locale,
++    {
++      area: t('filter_area'),
++      legacy_city: t('filter_city'),
++      category: t('filter_category'),
++      query: t('filter_query'),
++      min_rating: t('filter_rating'),
++    },
++  );
++  const { containerRef: chipsContainerRef, clearAllRef, summaryRef, markRemoval } = useFilterChipFocus(activeFilters.length);
++
++  const removeFilter = useCallback((filter: ActiveSearchFilter, index: number) => {
++    markRemoval(index);
++    router.push(`${pathname}?${removeActiveFilter(sp, filter)}`);
++  }, [sp, router, pathname, markRemoval]);
++
++  const clearAll = useCallback(() => {
++    markRemoval(-1);
++    router.push(`${pathname}?${clearAllActiveFilters(sp)}`);
++  }, [sp, router, pathname, markRemoval]);
++
+   return (
+     <div className="min-h-screen bg-gray-50">
+       <div className="bg-white border-b border-gray-100 px-4 py-3 sticky top-0 z-30">
+@@ -319,13 +349,39 @@ function SearchContent({ locale }: { locale: string }) {
+       </div>
+ 
+       <div className="max-w-6xl mx-auto px-4 py-6">
+-        <p className="text-sm text-gray-500 mb-4">
+-          {loading ? '...' : `${total} ${t('results')}`}
+-          {area
+-            ? <span className="ml-1 font-medium text-gray-700">— {activeArea ? getAreaName(activeArea, locale as Locale) : area}</span>
+-            : city && <span className="ml-1 font-medium text-gray-700">— {city}</span>}
+-          {category && <span className="ml-1 font-medium text-gray-700">— {categories.find(c => c.slug === category)?.name || category}</span>}
+-        </p>
++        {/* T-054: results summary — stable region, canonical total (never
++            rendered-card-count or map-marker-count), aria-live so the
++            eventual count is announced without also announcing the
++            transient loading placeholder (which is aria-hidden). Always
++            reflects the list fetch's own loading/error/total, regardless
++            of which view (list/map) is currently displayed, since the list
++            fetch runs unconditionally in the background either way. */}
++        <div ref={summaryRef} tabIndex={-1} className="outline-none mb-4">
++          <h1 className="text-lg font-bold text-gray-900">{t('results_heading')}</h1>
++          <p className="text-sm text-gray-500 mt-1" role="status" aria-live="polite">
++            {searchError ? null : loading ? (
++              <span className="inline-block h-4 w-28 bg-gray-100 rounded animate-pulse" aria-hidden="true" />
++            ) : (
++              t('results_summary', { count: total })
++            )}
++          </p>
++          <ActiveFilterChips
++            filters={activeFilters}
++            onRemove={removeFilter}
++            removeLabel={filter => t('remove_filter', { filter: filter.label })}
++            containerRef={chipsContainerRef}
++          />
++          {activeFilters.length > 0 && (
++            <button
++              ref={clearAllRef}
++              type="button"
++              onClick={clearAll}
++              className="mt-2 text-sm text-gray-500 hover:text-red-500 underline-offset-2 hover:underline"
++            >
++              {t('clear_all_filters')}
++            </button>
++          )}
++        </div>
+ 
+         {view === 'map' ? (
+           // T-042: the recovery-focus ref lives on this always-present outer
+@@ -369,15 +425,18 @@ function SearchContent({ locale }: { locale: string }) {
+                   </>
+                 }
+                 empty={
+-                  area ? (
++                  // T-054: a filtered empty result gets an actionable
++                  // recovery message (never framed as an error, never
++                  // Retry) — a genuinely filter-free zero result (extremely
++                  // unlikely in production, but must still degrade
++                  // correctly) gets a neutral message with no meaningless
++                  // "view all" action, since there is nothing broader to see.
++                  activeFilters.length > 0 ? (
+                     <div className="col-span-3 text-center py-16 text-gray-400 space-y-3" role="status" aria-live="polite">
+-                      <p>
+-                        {activeArea
+-                          ? t('no_salons_in_area', { area: getAreaName(activeArea, locale as Locale) })
+-                          : t('no_salons_in_this_area')}
+-                      </p>
+-                      <button onClick={clearFilters} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
+-                        {t('clear_filters')}
++                      <p className="font-semibold text-gray-600">{t('no_matches_title')}</p>
++                      <p>{t('no_matches_description')}</p>
++                      <button onClick={clearAll} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                        {t('view_all_salons')}
+                       </button>
+                     </div>
+                   ) : (
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index 0596e4a..e58a6d8 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -46,10 +46,8 @@ describe('T-042: search results distinguish loading/empty/error/success via Asyn
+     assert.ok(source.includes("t('map_load_error')"));
+   });
+ 
+-  test('the friendly "no salons in this area, clear filters" empty state is preserved unchanged', () => {
+-    assert.ok(source.includes("t('no_salons_in_area'"));
+-    assert.ok(source.includes("t('no_salons_in_this_area')"));
+-    assert.ok(source.includes('onClick={clearFilters}'));
++  test('T-054 superseded this: the empty state is now generic (any active filter, not just area) — see T-054 describe block below for the new contract', () => {
++    assert.ok(!source.includes("t('no_salons_in_area'"), 'the old area-only empty message must no longer be referenced — T-054 replaced it with a generic filtered-empty-state contract');
+   });
+ 
+   test('T-015 search_results_view tracking still gates on the raw loading/error booleans, untouched by the AsyncSection refactor', () => {
+@@ -84,7 +82,7 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+   });
+ 
+   test('CRITICAL: the 6-item loading skeleton has no shared wrapper div — each stays a direct grid item, aria-hidden individually', () => {
+-    const loadingBlock = source.slice(source.indexOf('loading={\n                  <>') + 'loading={'.length, source.indexOf('empty={\n                  area ?'));
++    const loadingBlock = source.slice(source.indexOf('loading={\n                  <>') + 'loading={'.length, source.indexOf('empty={\n                  //'));
+     // The 6 skeletons must remain siblings inside a Fragment (<>...</>),
+     // NOT nested inside one extra <div role="status"> wrapper — that would
+     // make them one grid cell instead of 6, breaking "grid-cols-3".
+@@ -99,7 +97,7 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+   });
+ 
+   test('list empty states use role="status"/aria-live="polite"', () => {
+-    const emptyBlock = source.slice(source.indexOf('empty={\n                  area ?'), source.indexOf("error={\n                  <div className=\"col-span-3"));
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  //'), source.indexOf("error={\n                  <div className=\"col-span-3"));
+     const variants = emptyBlock.split('<div className="col-span-3');
+     for (const variant of variants.slice(1)) {
+       assert.ok(variant.includes('role="status"'));
+@@ -134,3 +132,157 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+     assert.ok(mapBlock.includes('aria-live="assertive"'));
+   });
+ });
++
++describe('T-054: results summary — canonical count source, no false zero, no count on error', () => {
++  test('the summary is derived from deriveActiveFilters, imported from lib/searchContext', () => {
++    assert.ok(source.includes("from '@/lib/searchContext'"));
++    assert.ok(source.includes('deriveActiveFilters('));
++  });
++
++  test('count text uses t(results_summary, {count: total}) — the canonical fetch total, never salons.length or mapSalons.length', () => {
++    const summaryBlock = source.slice(source.indexOf('ref={summaryRef}'), source.indexOf('<ActiveFilterChips'));
++    assert.ok(summaryBlock.includes("t('results_summary', { count: total })"));
++    assert.ok(!summaryBlock.includes('salons.length'));
++    assert.ok(!summaryBlock.includes('mapSalons.length'));
++  });
++
++  test('15. loading state never falls through to showing "0" or any count text — it is gated ahead of the count expression', () => {
++    const summaryBlock = source.slice(source.indexOf('ref={summaryRef}'), source.indexOf('<ActiveFilterChips'));
++    assert.ok(/searchError \? null : loading \? \(/.test(summaryBlock), 'error must be checked before loading, and loading must produce no count text');
++  });
++
++  test('16. error state shows no count at all (searchError renders null, not "0" or stale total)', () => {
++    const summaryBlock = source.slice(source.indexOf('ref={summaryRef}'), source.indexOf('<ActiveFilterChips'));
++    assert.ok(/searchError \? null/.test(summaryBlock));
++  });
++
++  test('count paragraph is a stable, always-present aria-live="polite" region — not conditionally mounted based on status', () => {
++    assert.ok(/<p className="[^"]*" role="status" aria-live="polite">/.test(source));
++  });
++
++  test('loading placeholder inside the count region is aria-hidden, so screen readers are never told "0" or an empty value while loading', () => {
++    const summaryBlock = source.slice(source.indexOf('ref={summaryRef}'), source.indexOf('<ActiveFilterChips'));
++    assert.ok(summaryBlock.includes('aria-hidden="true"'));
++  });
++
++  test('reserves vertical space for the loading placeholder (fixed height skeleton, not empty/collapsed) to avoid layout movement', () => {
++    const summaryBlock = source.slice(source.indexOf('ref={summaryRef}'), source.indexOf('<ActiveFilterChips'));
++    assert.ok(/h-4 w-28/.test(summaryBlock));
++  });
++});
++
++describe('T-054: URL mutation wiring — remove/clear-all call the pure searchContext helpers, not ad-hoc string building', () => {
++  test('removeFilter calls removeActiveFilter and markRemoval before navigating', () => {
++    const fn = source.slice(source.indexOf('const removeFilter = useCallback'), source.indexOf('const clearAll = useCallback'));
++    assert.ok(fn.includes('markRemoval(index)'));
++    assert.ok(fn.includes('removeActiveFilter(sp, filter)'));
++    assert.ok(fn.includes('router.push('));
++  });
++
++  test('clearAll calls clearAllActiveFilters and markRemoval(-1) before navigating', () => {
++    const fn = source.slice(source.indexOf('const clearAll = useCallback'), source.indexOf('return (\n    <div className="min-h-screen'));
++    assert.ok(fn.includes('markRemoval(-1)'));
++    assert.ok(fn.includes('clearAllActiveFilters(sp)'));
++    assert.ok(fn.includes('router.push('));
++  });
++
++  test('removeFilter/clearAll use router.push, matching the established strategy used by update/selectArea/clearFilters elsewhere on this page (no router.replace introduced)', () => {
++    assert.ok(!source.includes('router.replace'), 'this page must not introduce router.replace — push is used consistently throughout');
++  });
++
++  test('no URLs are built via raw string concatenation — every mutation goes through URLSearchParams-based helpers', () => {
++    // A loose but meaningful guard: no `+ '?' +` or template literals directly
++    // splicing filter values into a path string outside the established
++    // `${pathname}?${...}` router.push pattern already used everywhere.
++    const mutationBlock = source.slice(source.indexOf('const removeFilter'), source.indexOf('return (\n    <div className="min-h-screen'));
++    assert.ok(!/pathname \+ ['"`]\?/.test(mutationBlock));
++  });
++});
++
++describe('T-054: filtered empty-state recovery — never framed as an error, never shows Retry', () => {
++  test('27/28. empty branch checks activeFilters.length, not just area, and falls back to the neutral no_results message when nothing is active', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  //'), source.indexOf("error={\n                  <div className=\"col-span-3"));
++    assert.ok(emptyBlock.includes('activeFilters.length > 0 ?'));
++    assert.ok(emptyBlock.includes("t('no_results')"));
++  });
++
++  test('29. the filtered-empty branch uses role="status"/aria-live="polite", never role="alert" — must not be presented as an error', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  //'), source.indexOf("error={\n                  <div className=\"col-span-3"));
++    assert.ok(emptyBlock.includes('role="status"'));
++    assert.ok(!emptyBlock.includes('role="alert"'));
++  });
++
++  test('31. Retry only ever appears in the error branch, never in the empty branch', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  //'), source.indexOf("error={\n                  <div className=\"col-span-3"));
++    assert.ok(!emptyBlock.includes("t('retry')"));
++    assert.ok(!emptyBlock.includes('onClick={loadSalons}'));
++  });
++
++  test('the filtered-empty recovery action calls clearAll (the same clear-all URL contract as the results-summary button), not a partial/ad-hoc reset', () => {
++    const emptyBlock = source.slice(source.indexOf('empty={\n                  //'), source.indexOf("error={\n                  <div className=\"col-span-3"));
++    assert.ok(emptyBlock.includes('onClick={clearAll}'));
++    assert.ok(emptyBlock.includes("t('view_all_salons')"));
++  });
++
++  test('30. clearAll (used by both the summary button and the empty-state recovery action) is built from clearAllActiveFilters, which removes every effective filter including query', () => {
++    const searchContextSource = fs.readFileSync(path.join(frontendRoot, 'lib', 'searchContext.ts'), 'utf-8');
++    const fn = searchContextSource.slice(searchContextSource.indexOf('export function clearAllActiveFilters'));
++    assert.ok(fn.includes("next.delete('q')"), 'clear-all must remove the query too — the pre-existing clearFilters() bug this ticket fixes');
++  });
++});
++
++describe('T-054: analytics invariants — no new GA4 events introduced', () => {
++  test('40. every trackEvent call in this file uses one of the 5 T-015-approved event names — no new event name added', () => {
++    const APPROVED = ['salon_open', 'contact_action', 'search_results_view', 'area_select', 'language_change'];
++    const calls = [...source.matchAll(/trackEvent\(\s*'([a-z_]+)'/g)].map(m => m[1]);
++    assert.ok(calls.length > 0, 'sanity check: this file must still call trackEvent at all');
++    for (const name of calls) {
++      assert.ok(APPROVED.includes(name), `trackEvent call uses "${name}", which is not one of the T-015-approved event names — T-054 must not add new GA4 events`);
++    }
++  });
++
++  test('41. search_results_view call site is unchanged in shape (area/result_count_bucket/view/locale only)', () => {
++    const calls = [...source.matchAll(/trackEvent\('search_results_view', \{([^}]+)\}\)/g)];
++    assert.ok(calls.length === 2, 'expected exactly 2 search_results_view call sites (list + map branches)');
++    for (const call of calls) {
++      const body = call[1];
++      assert.ok(/area:/.test(body) && /result_count_bucket:/.test(body) && /view:/.test(body) && /locale:/.test(body));
++      assert.ok(!/query|filter/i.test(body), 'search_results_view must not gain a new query/filter-related parameter under T-054');
++    }
++  });
++
++  test('42. area_select call site is unchanged (search_filter source, untouched by chip/clear-all additions)', () => {
++    assert.ok(source.includes("trackEvent('area_select', { area: slug, source: 'search_filter', locale: locale as Locale });"));
++  });
++
++  test('no trackEvent call exists inside removeFilter, clearAll, or ActiveFilterChips — chip rendering/removal must not fire analytics on its own', () => {
++    const removeFilterFn = source.slice(source.indexOf('const removeFilter = useCallback'), source.indexOf('const clearAll = useCallback'));
++    const clearAllFn = source.slice(source.indexOf('const clearAll = useCallback'), source.indexOf('return (\n    <div className="min-h-screen'));
++    assert.ok(!removeFilterFn.includes('trackEvent'));
++    assert.ok(!clearAllFn.includes('trackEvent'));
++    const chipsSource = fs.readFileSync(path.join(frontendRoot, 'components', 'ActiveFilterChips.tsx'), 'utf-8');
++    assert.ok(!chipsSource.includes('trackEvent'));
++  });
++
++  test('no raw free-text query value is passed to trackEvent anywhere in this file', () => {
++    const trackEventCalls = source.match(/trackEvent\([^)]+\)/gs) || [];
++    for (const call of trackEventCalls) {
++      assert.ok(!/\bq\b(?!uery)/.test(call.replace(/query/g, '')), `a trackEvent call appears to reference the raw query value: ${call.slice(0, 80)}`);
++    }
++  });
++});
++
++describe('T-054: filter labels come from i18n, not hardcoded strings', () => {
++  test('deriveActiveFilters is called with translated labels (t(...)), not literal English words', () => {
++    const callBlock = source.slice(source.indexOf('const activeFilters = deriveActiveFilters('), source.indexOf('const { containerRef: chipsContainerRef'));
++    assert.ok(callBlock.includes("t('filter_area')"));
++    assert.ok(callBlock.includes("t('filter_city')"));
++    assert.ok(callBlock.includes("t('filter_category')"));
++    assert.ok(callBlock.includes("t('filter_query')"));
++    assert.ok(callBlock.includes("t('filter_rating')"));
++  });
++
++  test('remove-button accessible names are built via t(remove_filter, {filter}), not string concatenation', () => {
++    assert.ok(source.includes("removeLabel={filter => t('remove_filter', { filter: filter.label })}"));
++  });
++});
+diff --git a/frontend/components/ActiveFilterChips.test.tsx b/frontend/components/ActiveFilterChips.test.tsx
+new file mode 100644
+index 0000000..029d52f
+--- /dev/null
++++ b/frontend/components/ActiveFilterChips.test.tsx
+@@ -0,0 +1,52 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'ActiveFilterChips.tsx'), 'utf-8');
++
++describe('T-054: ActiveFilterChips', () => {
++  test('renders nothing when there are no active filters', () => {
++    assert.ok(source.includes('if (filters.length === 0) return null;'));
++  });
++
++  test('exposes the chip list as a semantic group (ul + aria-label), not a bare div', () => {
++    assert.ok(/<ul ref=\{containerRef\} className="[^"]*" aria-label="Active filters">/.test(source));
++  });
++
++  test('each chip is a plain <li> — the remove control is the only interactive element (no nested interactive controls, no chip-as-button)', () => {
++    const liBlock = source.slice(source.indexOf('<li'), source.indexOf('</li>'));
++    // exactly one interactive element (the remove button) per chip
++    const buttonCount = (liBlock.match(/<button/g) || []).length;
++    assert.equal(buttonCount, 1);
++    assert.ok(!/<a\s|<select|<input/.test(liBlock), 'no other interactive elements inside a chip');
++  });
++
++  test('remove control is a real <button type="button">, not a styled span/div', () => {
++    assert.ok(source.includes('<button\n            type="button"'));
++  });
++
++  test('one click on a chip causes exactly one onRemove call with (filter, index)', () => {
++    assert.ok(source.includes('onClick={() => onRemove(filter, index)}'));
++  });
++
++  test('accessible name comes from the caller-supplied removeLabel, not a generic "Remove" string', () => {
++    assert.ok(source.includes('aria-label={removeLabel(filter)}'));
++  });
++
++  test('long values truncate visually (CSS) without altering the underlying label — full text stays available via title=', () => {
++    assert.ok(source.includes('className="truncate max-w-[220px]"'));
++    assert.ok(source.includes('title={filter.label}'));
++  });
++
++  test('data-chip-index is present for useFilterChipFocus to locate the shifted-in chip after a removal', () => {
++    assert.ok(source.includes('data-chip-index={index}'));
++  });
++
++  test('chip container uses flex-wrap (wraps naturally on mobile, no horizontal scroll)', () => {
++    assert.ok(source.includes('flex flex-wrap'));
++    assert.ok(!/overflow-x/.test(source));
++  });
++});
+diff --git a/frontend/components/ActiveFilterChips.tsx b/frontend/components/ActiveFilterChips.tsx
+new file mode 100644
+index 0000000..8cea5ce
+--- /dev/null
++++ b/frontend/components/ActiveFilterChips.tsx
+@@ -0,0 +1,42 @@
++'use client';
++import type { ActiveSearchFilter } from '@/lib/searchContext';
++
++interface Props {
++  filters: ActiveSearchFilter[];
++  onRemove: (filter: ActiveSearchFilter, index: number) => void;
++  removeLabel: (filter: ActiveSearchFilter) => string;
++  containerRef: React.RefObject<HTMLUListElement>;
++}
++
++/**
++ * T-054: one real <button> per chip, no nested interactive controls, no
++ * chip-as-button — the chip itself is a plain <li>, only the × control is
++ * interactive. `data-chip-index` is read by useFilterChipFocus to find
++ * "the next chip" after a removal shifts the array; it is not used for
++ * anything else and carries no semantic meaning of its own.
++ */
++export default function ActiveFilterChips({ filters, onRemove, removeLabel, containerRef }: Props) {
++  if (filters.length === 0) return null;
++
++  return (
++    <ul ref={containerRef} className="flex flex-wrap gap-2 mt-2" aria-label="Active filters">
++      {filters.map((filter, index) => (
++        <li
++          key={`${filter.type}:${filter.value}`}
++          className="flex items-center gap-1.5 bg-pink-50 text-pink-700 text-sm pl-3 pr-2 py-1.5 rounded-full max-w-full"
++        >
++          <span className="truncate max-w-[220px]" title={filter.label}>{filter.label}</span>
++          <button
++            type="button"
++            data-chip-index={index}
++            onClick={() => onRemove(filter, index)}
++            aria-label={removeLabel(filter)}
++            className="shrink-0 text-pink-500 hover:text-pink-800 font-bold leading-none w-4 h-4 flex items-center justify-center"
++          >
++            ×
++          </button>
++        </li>
++      ))}
++    </ul>
++  );
++}
+diff --git a/frontend/lib/resultsSummary.test.ts b/frontend/lib/resultsSummary.test.ts
+new file mode 100644
+index 0000000..ec09b4b
+--- /dev/null
++++ b/frontend/lib/resultsSummary.test.ts
+@@ -0,0 +1,90 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { IntlMessageFormat } from 'intl-messageformat';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++
++function messagesFor(locale: string) {
++  return JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++}
++
++function format(locale: string, count: number): string {
++  const msg = messagesFor(locale).search.results_summary;
++  const fmt = new IntlMessageFormat(msg, locale);
++  return fmt.format({ count }) as string;
++}
++
++describe('T-054: search.results_summary — locale-aware pluralization', () => {
++  test('10. successful total 0 -> localized zero state (en)', () => {
++    assert.equal(format('en', 0), 'No salons found');
++  });
++
++  test('11. successful total 1 -> singular (en)', () => {
++    assert.equal(format('en', 1), '1 salon found');
++  });
++
++  test('12. successful total >1 -> correct plural (en)', () => {
++    assert.equal(format('en', 24), '24 salons found');
++    assert.equal(format('en', 2), '2 salons found');
++  });
++
++  test('13. Russian plural cases (one/few/many/other, including 21 -> one, not "many")', () => {
++    assert.equal(format('ru', 0), 'Салоны не найдены');
++    assert.equal(format('ru', 1), '1 салон найден');
++    assert.equal(format('ru', 2), '2 салона найдено');
++    assert.equal(format('ru', 3), '3 салона найдено');
++    assert.equal(format('ru', 4), '4 салона найдено');
++    assert.equal(format('ru', 5), '5 салонов найдено');
++    assert.equal(format('ru', 11), '11 салонов найдено');
++    assert.equal(format('ru', 21), '21 салон найден');
++    assert.equal(format('ru', 25), '25 салонов найдено');
++  });
++
++  test('14. Ukrainian plural cases (one/few/many/other)', () => {
++    assert.equal(format('uk', 0), 'Салонів не знайдено');
++    assert.equal(format('uk', 1), '1 салон знайдено');
++    assert.equal(format('uk', 2), '2 салони знайдено');
++    assert.equal(format('uk', 3), '3 салони знайдено');
++    assert.equal(format('uk', 4), '4 салони знайдено');
++    assert.equal(format('uk', 5), '5 салонів знайдено');
++    assert.equal(format('uk', 11), '11 салонів знайдено');
++    assert.equal(format('uk', 21), '21 салон знайдено');
++  });
++
++  test('Greek one/other cases', () => {
++    assert.equal(format('el', 0), 'Δεν βρέθηκαν σαλόνια');
++    assert.equal(format('el', 1), 'Βρέθηκε 1 σαλόνι');
++    assert.equal(format('el', 2), 'Βρέθηκαν 2 σαλόνια');
++  });
++
++  test('does not concatenate translated fragments — the whole sentence is one ICU message per locale', () => {
++    for (const locale of ['en', 'el', 'ru', 'uk']) {
++      const msg = messagesFor(locale).search.results_summary;
++      assert.ok(msg.includes('{count, plural,'), `${locale}.json search.results_summary must be a single ICU plural message`);
++    }
++  });
++
++  test('results_heading exists and is non-empty in all 4 locales', () => {
++    for (const locale of ['en', 'el', 'ru', 'uk']) {
++      const heading = messagesFor(locale).search.results_heading;
++      assert.ok(typeof heading === 'string' && heading.trim().length > 0, `${locale}.json search.results_heading missing/empty`);
++    }
++  });
++
++  test('the old unused results_count key was removed, not left as dead duplicate state', () => {
++    for (const locale of ['en', 'el', 'ru', 'uk']) {
++      assert.ok(!('results_count' in messagesFor(locale).search), `${locale}.json should not still have the old dead results_count key`);
++    }
++  });
++
++  test('search namespace keys remain identical across all four locales after these additions', () => {
++    const keySets = ['el', 'en', 'ru', 'uk'].map(locale => Object.keys(messagesFor(locale).search).sort());
++    for (let i = 1; i < keySets.length; i++) {
++      assert.deepEqual(keySets[i], keySets[0]);
++    }
++  });
++});
+diff --git a/frontend/lib/searchContext.test.ts b/frontend/lib/searchContext.test.ts
+new file mode 100644
+index 0000000..10367b4
+--- /dev/null
++++ b/frontend/lib/searchContext.test.ts
+@@ -0,0 +1,215 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  deriveActiveFilters,
++  humanizeSlug,
++  removeQueryFilter,
++  removeAreaFilter,
++  removeLegacyCityFilter,
++  removeCategoryFilter,
++  removeMinRatingFilter,
++  removeActiveFilter,
++  clearAllActiveFilters,
++  type RawSearchState,
++  type FilterTypeLabels,
++} from './searchContext';
++import type { AreaItem, Category } from './api';
++
++function area(overrides: Partial<AreaItem>): AreaItem {
++  return {
++    slug: 'athens-center', name_el: 'Αθήνα', name_en: 'Athens Center', name_ru: 'Центр Афин', name_uk: 'Центр Афін',
++    salon_count: 100, region: 'attica', city: 'athens',
++    ...overrides,
++  };
++}
++
++function category(overrides: Partial<Category>): Category {
++  return {
++    id: 1, slug: 'hair', name: 'Hair', name_en: 'Hair', children: [],
++    ...overrides,
++  };
++}
++
++const LABELS: FilterTypeLabels = {
++  area: 'Area', legacy_city: 'City', category: 'Category', query: 'Search', min_rating: 'Rating',
++};
++
++function raw(overrides: Partial<RawSearchState> = {}): RawSearchState {
++  return { area: '', city: '', q: '', category: '', minRating: '', ...overrides };
++}
++
++describe('T-054: deriveActiveFilters', () => {
++  test('1. no params -> no active filters', () => {
++    assert.deepEqual(deriveActiveFilters(raw(), [], [], 'en', LABELS), []);
++  });
++
++  test('2. valid query -> one localized query chip', () => {
++    const result = deriveActiveFilters(raw({ q: 'manicure' }), [], [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'query', value: 'manicure', label: 'Search: manicure' }]);
++  });
++
++  test('3. whitespace-only query -> no chip', () => {
++    assert.deepEqual(deriveActiveFilters(raw({ q: '   ' }), [], [], 'en', LABELS), []);
++  });
++
++  test('4. valid area slug -> localized area chip', () => {
++    const areas = [area({ slug: 'athens-center', name_en: 'Athens Center' })];
++    const result = deriveActiveFilters(raw({ area: 'athens-center' }), areas, [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'area', value: 'athens-center', label: 'Area: Athens Center' }]);
++  });
++
++  test('5. invalid area slug (areas loaded, no match) -> no misleading chip', () => {
++    const areas = [area({ slug: 'athens-center' })];
++    const result = deriveActiveFilters(raw({ area: 'totally-fake-slug' }), areas, [], 'en', LABELS);
++    assert.deepEqual(result, []);
++  });
++
++  test('area slug with areas not yet loaded -> humanized fallback, not raw slug, not dropped', () => {
++    const result = deriveActiveFilters(raw({ area: 'athens-center' }), [], [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'area', value: 'athens-center', label: 'Area: Athens Center' }]);
++  });
++
++  test('6. legacy city alone -> visible legacy filter chip', () => {
++    const result = deriveActiveFilters(raw({ city: 'Athens' }), [], [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'legacy_city', value: 'Athens', label: 'City: Athens' }]);
++  });
++
++  test('7. area + city -> area displayed, city NOT displayed as a second filter', () => {
++    const areas = [area({ slug: 'athens-center', name_en: 'Athens Center' })];
++    const result = deriveActiveFilters(raw({ area: 'athens-center', city: 'Athens' }), areas, [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'area', value: 'athens-center', label: 'Area: Athens Center' }]);
++  });
++
++  test('8. existing category filter is represented', () => {
++    const categories = [category({ slug: 'hair', name: 'Hair' })];
++    const result = deriveActiveFilters(raw({ category: 'hair' }), [], categories, 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'category', value: 'hair', label: 'Category: Hair' }]);
++  });
++
++  test('invalid category slug (categories loaded, no match) -> no misleading chip', () => {
++    const categories = [category({ slug: 'hair' })];
++    const result = deriveActiveFilters(raw({ category: 'fake-category' }), [], categories, 'en', LABELS);
++    assert.deepEqual(result, []);
++  });
++
++  test('existing min_rating filter is represented', () => {
++    const result = deriveActiveFilters(raw({ minRating: '4' }), [], [], 'en', LABELS);
++    assert.deepEqual(result, [{ type: 'min_rating', value: '4', label: 'Rating: 4+' }]);
++  });
++
++  test('unknown/corrupted min_rating value does not produce a chip', () => {
++    const result = deriveActiveFilters(raw({ minRating: '99' }), [], [], 'en', LABELS);
++    assert.deepEqual(result, []);
++  });
++
++  test('9. all filter types together, in stable chip order: query, area, category, min_rating', () => {
++    const areas = [area({ slug: 'athens-center', name_en: 'Athens Center' })];
++    const categories = [category({ slug: 'hair', name: 'Hair' })];
++    const result = deriveActiveFilters(
++      raw({ q: 'manicure', area: 'athens-center', category: 'hair', minRating: '4' }),
++      areas, categories, 'en', LABELS,
++    );
++    assert.deepEqual(result.map(f => f.type), ['query', 'area', 'category', 'min_rating']);
++  });
++
++  test('resolves area/category names per the given locale', () => {
++    const areas = [area({ slug: 'athens-center', name_ru: 'Центр Афин' })];
++    const result = deriveActiveFilters(raw({ area: 'athens-center' }), areas, [], 'ru', LABELS);
++    assert.deepEqual(result, [{ type: 'area', value: 'athens-center', label: 'Area: Центр Афин' }]);
++  });
++});
++
++describe('T-054: humanizeSlug', () => {
++  test('title-cases hyphen-separated words', () => {
++    assert.equal(humanizeSlug('athens-center'), 'Athens Center');
++    assert.equal(humanizeSlug('nea-ionia'), 'Nea Ionia');
++    assert.equal(humanizeSlug('piraeus'), 'Piraeus');
++  });
++});
++
++describe('T-054: URL mutation helpers', () => {
++  function params(query: string): URLSearchParams {
++    return new URLSearchParams(query);
++  }
++
++  test('19. remove query preserves area/view and resets page', () => {
++    const result = removeQueryFilter(params('q=manicure&area=piraeus&view=map&page=2'));
++    assert.equal(result.get('q'), null);
++    assert.equal(result.get('area'), 'piraeus');
++    assert.equal(result.get('view'), 'map');
++    assert.equal(result.get('page'), null);
++  });
++
++  test('20. remove area also removes legacy city', () => {
++    const result = removeAreaFilter(params('area=piraeus&city=Athens&view=list&page=3'));
++    assert.equal(result.get('area'), null);
++    assert.equal(result.get('city'), null);
++    assert.equal(result.get('view'), 'list');
++    assert.equal(result.get('page'), null);
++  });
++
++  test('21. remove legacy city preserves query/view', () => {
++    const result = removeLegacyCityFilter(params('city=Athens&q=manicure&view=map&page=2'));
++    assert.equal(result.get('city'), null);
++    assert.equal(result.get('q'), 'manicure');
++    assert.equal(result.get('view'), 'map');
++    assert.equal(result.get('page'), null);
++  });
++
++  test('remove category preserves unrelated filters, resets page', () => {
++    const result = removeCategoryFilter(params('category=hair&area=piraeus&page=2'));
++    assert.equal(result.get('category'), null);
++    assert.equal(result.get('area'), 'piraeus');
++    assert.equal(result.get('page'), null);
++  });
++
++  test('remove min_rating preserves unrelated filters, resets page', () => {
++    const result = removeMinRatingFilter(params('min_rating=4&q=manicure&page=2'));
++    assert.equal(result.get('min_rating'), null);
++    assert.equal(result.get('q'), 'manicure');
++    assert.equal(result.get('page'), null);
++  });
++
++  test('removeActiveFilter dispatches correctly for every filter type', () => {
++    const p = params('q=manicure&area=piraeus&city=Athens&category=hair&min_rating=4&page=2');
++    assert.equal(removeActiveFilter(p, { type: 'query', value: 'manicure', label: '' }).get('q'), null);
++    assert.equal(removeActiveFilter(p, { type: 'area', value: 'piraeus', label: '' }).get('area'), null);
++    assert.equal(removeActiveFilter(p, { type: 'legacy_city', value: 'Athens', label: '' }).get('city'), null);
++    assert.equal(removeActiveFilter(p, { type: 'category', value: 'hair', label: '' }).get('category'), null);
++    assert.equal(removeActiveFilter(p, { type: 'min_rating', value: '4', label: '' }).get('min_rating'), null);
++  });
++
++  test('22. clear-all removes every effective filter, including q (pre-existing bug fixed)', () => {
++    const result = clearAllActiveFilters(params('q=manicure&area=piraeus&city=Athens&category=hair&min_rating=4&page=2'));
++    assert.equal(result.get('q'), null);
++    assert.equal(result.get('area'), null);
++    assert.equal(result.get('city'), null);
++    assert.equal(result.get('category'), null);
++    assert.equal(result.get('min_rating'), null);
++    assert.equal(result.get('page'), null);
++  });
++
++  test('23. clear-all preserves list/map view', () => {
++    const result = clearAllActiveFilters(params('q=manicure&view=map'));
++    assert.equal(result.get('view'), 'map');
++  });
++
++  test('24. empty/absent params are cleaned (deleting an absent key is a safe no-op)', () => {
++    const result = clearAllActiveFilters(params('view=list'));
++    assert.equal(result.toString(), 'view=list');
++  });
++
++  test('mutation helpers never mutate the input URLSearchParams', () => {
++    const p = params('q=manicure&area=piraeus');
++    const before = p.toString();
++    removeQueryFilter(p);
++    removeAreaFilter(p);
++    clearAllActiveFilters(p);
++    assert.equal(p.toString(), before);
++  });
++
++  test('unrelated/unknown params survive clear-all (preserve-by-default, not an allowlist)', () => {
++    const result = clearAllActiveFilters(params('q=manicure&some_future_param=xyz'));
++    assert.equal(result.get('some_future_param'), 'xyz');
++  });
++});
+diff --git a/frontend/lib/searchContext.ts b/frontend/lib/searchContext.ts
+new file mode 100644
+index 0000000..7b80f14
+--- /dev/null
++++ b/frontend/lib/searchContext.ts
+@@ -0,0 +1,186 @@
++// T-054: canonical effective-filter model for the search results page —
++// pure, dependency-free (no React, no browser globals) so it's directly
++// unit-testable and the single source of truth both the results-summary
++// chips and the URL-mutation (remove/clear) logic build on.
++import type { Locale } from '@/i18n/request';
++import type { AreaItem, Category } from '@/lib/api';
++import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
++
++export type ActiveSearchFilter =
++  | { type: 'query'; value: string; label: string }
++  | { type: 'area'; value: string; label: string }
++  | { type: 'legacy_city'; value: string; label: string }
++  | { type: 'category'; value: string; label: string }
++  | { type: 'min_rating'; value: string; label: string };
++
++export interface RawSearchState {
++  area: string;
++  city: string;
++  q: string;
++  category: string;
++  minRating: string;
++}
++
++export interface FilterTypeLabels {
++  area: string;
++  legacy_city: string;
++  category: string;
++  query: string;
++  min_rating: string;
++}
++
++const KNOWN_MIN_RATINGS = new Set(['3', '4', '4.5']);
++
++/**
++ * Light, locale-agnostic fallback label for a slug whose canonical metadata
++ * (areas/categories) hasn't loaded yet — "athens-center" -> "Athens Center".
++ * Used only until the real list arrives; see resolveSlugLabel below. Kept
++ * separate from CSS truncation, which is a rendering concern, not a data one.
++ */
++export function humanizeSlug(slug: string): string {
++  return slug
++    .split('-')
++    .filter(Boolean)
++    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
++    .join(' ');
++}
++
++interface SlugResolution {
++  /** true once the canonical list has loaded, regardless of whether a match was found */
++  resolved: boolean;
++  /** the label to show, or null if the filter must not be shown at all (resolved + no match = invalid) */
++  label: string | null;
++}
++
++function resolveSlugLabel(slug: string, canonicalLoaded: boolean, matchName: string | undefined): SlugResolution {
++  if (!canonicalLoaded) {
++    // Not yet loaded — show a readable guess derived purely from already-
++    // available URL state, rather than waiting on a fetch (avoids an
++    // avoidable hydration delay), and never the raw un-humanized slug.
++    return { resolved: false, label: humanizeSlug(slug) };
++  }
++  if (matchName === undefined) {
++    // Loaded, and the slug doesn't correspond to anything real — genuinely
++    // invalid; never show a misleading chip for it.
++    return { resolved: true, label: null };
++  }
++  return { resolved: true, label: matchName };
++}
++
++/**
++ * Derives the list of effective (i.e. actually applied) search filters from
++ * raw URL state, for display as chips and as input to the URL-mutation
++ * helpers below. Order matches the UI's left-to-right chip order.
++ */
++export function deriveActiveFilters(
++  raw: RawSearchState,
++  areas: AreaItem[],
++  categories: Category[],
++  locale: Locale,
++  labels: FilterTypeLabels,
++): ActiveSearchFilter[] {
++  const filters: ActiveSearchFilter[] = [];
++
++  const q = raw.q.trim();
++  if (q) {
++    filters.push({ type: 'query', value: q, label: `${labels.query}: ${q}` });
++  }
++
++  const area = raw.area.trim();
++  const city = raw.city.trim();
++
++  if (area) {
++    const match = findAreaBySlug(areas, area);
++    const matchName = match ? getAreaName(match, locale) : undefined;
++    const { label } = resolveSlugLabel(area, areas.length > 0, matchName);
++    if (label !== null) {
++      filters.push({ type: 'area', value: area, label: `${labels.area}: ${label}` });
++    }
++  } else if (city) {
++    // Canonical `area` is authoritative when present — city is only ever
++    // shown as its own filter when there is no area to supersede it, so a
++    // user is never silently filtered by a hidden legacy param.
++    filters.push({ type: 'legacy_city', value: city, label: `${labels.legacy_city}: ${city}` });
++  }
++
++  const category = raw.category.trim();
++  if (category) {
++    const match = categories.find(c => c.slug === category);
++    const { label } = resolveSlugLabel(category, categories.length > 0, match?.name);
++    if (label !== null) {
++      filters.push({ type: 'category', value: category, label: `${labels.category}: ${label}` });
++    }
++  }
++
++  const minRating = raw.minRating.trim();
++  if (minRating && KNOWN_MIN_RATINGS.has(minRating)) {
++    filters.push({ type: 'min_rating', value: minRating, label: `${labels.min_rating}: ${minRating}+` });
++  }
++
++  return filters;
++}
++
++/** Always resets pagination — the result set changes whenever any filter changes. */
++function withoutPage(params: URLSearchParams): URLSearchParams {
++  const next = new URLSearchParams(params);
++  next.delete('page');
++  return next;
++}
++
++export function removeQueryFilter(current: URLSearchParams): URLSearchParams {
++  const next = withoutPage(current);
++  next.delete('q');
++  return next;
++}
++
++export function removeAreaFilter(current: URLSearchParams): URLSearchParams {
++  // Reuses T-007's buildAreaUrlParams — touching the Area control (including
++  // clearing it) already deletes the legacy `city` param too, so it cannot
++  // silently become active again after area removal.
++  return buildAreaUrlParams(current, '');
++}
++
++export function removeLegacyCityFilter(current: URLSearchParams): URLSearchParams {
++  const next = withoutPage(current);
++  next.delete('city');
++  return next;
++}
++
++export function removeCategoryFilter(current: URLSearchParams): URLSearchParams {
++  const next = withoutPage(current);
++  next.delete('category');
++  return next;
++}
++
++export function removeMinRatingFilter(current: URLSearchParams): URLSearchParams {
++  const next = withoutPage(current);
++  next.delete('min_rating');
++  return next;
++}
++
++export function removeActiveFilter(current: URLSearchParams, filter: ActiveSearchFilter): URLSearchParams {
++  switch (filter.type) {
++    case 'query': return removeQueryFilter(current);
++    case 'area': return removeAreaFilter(current);
++    case 'legacy_city': return removeLegacyCityFilter(current);
++    case 'category': return removeCategoryFilter(current);
++    case 'min_rating': return removeMinRatingFilter(current);
++  }
++}
++
++/**
++ * Removes every effective search/filter parameter — area, legacy city,
++ * query, category, min_rating — and pagination. Preserves everything else
++ * verbatim (view, and any future/unrelated param), matching the same
++ * preserve-by-default pattern already used throughout this file rather than
++ * an allowlist that would need updating for every new unrelated param.
++ */
++export function clearAllActiveFilters(current: URLSearchParams): URLSearchParams {
++  const next = withoutPage(current);
++  next.delete('area');
++  next.delete('city');
++  next.delete('q');
++  next.delete('category');
++  next.delete('min_rating');
++  return next;
++}
+diff --git a/frontend/lib/useFilterChipFocus.test.ts b/frontend/lib/useFilterChipFocus.test.ts
+new file mode 100644
+index 0000000..a31833e
+--- /dev/null
++++ b/frontend/lib/useFilterChipFocus.test.ts
+@@ -0,0 +1,43 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'useFilterChipFocus.ts'), 'utf-8');
++
++describe('T-054: useFilterChipFocus', () => {
++  test('only acts when a removal was explicitly marked AND the count actually changed — never on an unrelated render', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [filterCount]);'));
++    assert.ok(effectBody.includes('pendingIndexRef.current !== null && prevCountRef.current !== filterCount'));
++  });
++
++  test('resets the pending flag before acting, so it cannot fire twice for one removal', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [filterCount]);'));
++    const resetIdx = effectBody.indexOf('pendingIndexRef.current = null;');
++    const focusIdx = effectBody.indexOf('.focus()');
++    assert.ok(resetIdx > -1 && focusIdx > -1 && resetIdx < focusIdx);
++  });
++
++  test('priority order: next chip at the same index, then clear-all, then the summary region', () => {
++    const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('}, [filterCount]);'));
++    const nextChipIdx = effectBody.indexOf('nextChip.focus()');
++    const clearAllIdx = effectBody.indexOf('clearAllRef.current.focus()');
++    const summaryIdx = effectBody.indexOf('summaryRef.current?.focus()');
++    assert.ok(nextChipIdx > -1 && clearAllIdx > -1 && summaryIdx > -1);
++    assert.ok(nextChipIdx < clearAllIdx && clearAllIdx < summaryIdx);
++  });
++
++  test('the "next chip" lookup is scoped to data-chip-index within the container, not a global document query', () => {
++    assert.ok(source.includes('containerRef.current?.querySelector<HTMLButtonElement>(`[data-chip-index="${idx}"]`)'));
++  });
++
++  test('markRemoval accepts an out-of-range index (e.g. -1) as the documented clear-all signal', () => {
++    assert.ok(/"clear all".*never matches a real chip/s.test(source) || source.includes('out-of-range value (e.g. -1) for "clear all"'));
++  });
++
++  test('exposes exactly the 4 refs + markRemoval a caller needs, nothing else', () => {
++    assert.ok(source.includes('return { containerRef, clearAllRef, summaryRef, markRemoval };'));
++  });
++});
+diff --git a/frontend/lib/useFilterChipFocus.ts b/frontend/lib/useFilterChipFocus.ts
+new file mode 100644
+index 0000000..da249cc
+--- /dev/null
++++ b/frontend/lib/useFilterChipFocus.ts
+@@ -0,0 +1,50 @@
++'use client';
++import { useEffect, useRef } from 'react';
++
++/**
++ * T-054: after a user removes an active-filter chip (or clears all), moves
++ * focus predictably rather than letting it fall to <body> once the clicked
++ * button's own DOM node is gone (same class of problem T-042 solved for
++ * Retry). Priority: the chip that shifted into the removed one's index
++ * (i.e. "the next chip"), then the clear-all button, then the results
++ * summary region itself.
++ *
++ * `markRemoval(index)` must be called synchronously in the same event
++ * handler that triggers the URL mutation, BEFORE the navigation resolves —
++ * it only records intent; the actual focus move happens once `filterCount`
++ * (computed from the post-navigation URL state) is observed to differ,
++ * confirming the removal actually took effect. This is also what prevents
++ * an unrelated render (e.g. the initial mount, or an ordinary search
++ * finishing loading) from ever moving focus: without an explicit pending
++ * mark, the effect below never fires.
++ */
++export function useFilterChipFocus(filterCount: number) {
++  const containerRef = useRef<HTMLUListElement>(null);
++  const clearAllRef = useRef<HTMLButtonElement>(null);
++  const summaryRef = useRef<HTMLDivElement>(null);
++  const pendingIndexRef = useRef<number | null>(null);
++  const prevCountRef = useRef(filterCount);
++
++  useEffect(() => {
++    if (pendingIndexRef.current !== null && prevCountRef.current !== filterCount) {
++      const idx = pendingIndexRef.current;
++      pendingIndexRef.current = null;
++      const nextChip = containerRef.current?.querySelector<HTMLButtonElement>(`[data-chip-index="${idx}"]`);
++      if (nextChip) {
++        nextChip.focus();
++      } else if (clearAllRef.current) {
++        clearAllRef.current.focus();
++      } else {
++        summaryRef.current?.focus();
++      }
++    }
++    prevCountRef.current = filterCount;
++  }, [filterCount]);
++
++  /** Call with the removed chip's index; use any out-of-range value (e.g. -1) for "clear all", which never matches a real chip and so always falls through to clear-all-or-summary. */
++  function markRemoval(index: number): void {
++    pendingIndexRef.current = index;
++  }
++
++  return { containerRef, clearAllRef, summaryRef, markRemoval };
++}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 6ff8adf..241e791 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -31,7 +31,8 @@
+     "all_cats": "Κατηγορία",
+     "no_results": "Δεν βρέθηκαν αποτελέσματα",
+     "placeholder": "Αναζήτηση...",
+-    "results_count": "{count} αποτελέσματα",
++    "results_heading": "Αποτελέσματα αναζήτησης",
++    "results_summary": "{count, plural, =0 {Δεν βρέθηκαν σαλόνια} one {Βρέθηκε # σαλόνι} other {Βρέθηκαν # σαλόνια}}",
+     "filter_city": "Πόλη",
+     "filter_area": "Περιοχή",
+     "all_areas": "Όλες οι περιοχές",
+@@ -50,7 +51,13 @@
+     "next": "Επόμ. →",
+     "results_load_error": "Δεν ήταν δυνατή η φόρτωση των αποτελεσμάτων",
+     "map_load_error": "Δεν ήταν δυνατή η φόρτωση του χάρτη",
+-    "retry": "Δοκιμάστε ξανά"
++    "retry": "Δοκιμάστε ξανά",
++    "filter_query": "Αναζήτηση",
++    "clear_all_filters": "Εκκαθάριση όλων των φίλτρων",
++    "remove_filter": "Αφαίρεση φίλτρου: {filter}",
++    "no_matches_title": "Δεν βρέθηκαν σαλόνια",
++    "no_matches_description": "Κανένα σαλόνι δεν ταιριάζει με τα τρέχοντα φίλτρα σας.",
++    "view_all_salons": "Προβολή όλων των σαλονιών"
+   },
+   "salon": {
+     "callSalon": "Κλήση",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index ce282d2..a7552f6 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -31,7 +31,8 @@
+     "all_cats": "Category",
+     "no_results": "No results found",
+     "placeholder": "Search...",
+-    "results_count": "{count} results",
++    "results_heading": "Search results",
++    "results_summary": "{count, plural, =0 {No salons found} one {# salon found} other {# salons found}}",
+     "filter_city": "City",
+     "filter_area": "Area",
+     "all_areas": "All areas",
+@@ -50,7 +51,13 @@
+     "next": "Next →",
+     "results_load_error": "Could not load results",
+     "map_load_error": "Could not load the map",
+-    "retry": "Try again"
++    "retry": "Try again",
++    "filter_query": "Search",
++    "clear_all_filters": "Clear all filters",
++    "remove_filter": "Remove filter: {filter}",
++    "no_matches_title": "No salons found",
++    "no_matches_description": "No salons match your current filters.",
++    "view_all_salons": "View all salons"
+   },
+   "salon": {
+     "callSalon": "Call",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index e177c1f..8d876bd 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -31,7 +31,8 @@
+     "all_cats": "Категория",
+     "no_results": "Ничего не найдено",
+     "placeholder": "Поиск...",
+-    "results_count": "{count} результатов",
++    "results_heading": "Результаты поиска",
++    "results_summary": "{count, plural, =0 {Салоны не найдены} one {# салон найден} few {# салона найдено} many {# салонов найдено} other {# салона найдено}}",
+     "filter_city": "Город",
+     "filter_area": "Район",
+     "all_areas": "Все районы",
+@@ -50,7 +51,13 @@
+     "next": "Вперёд →",
+     "results_load_error": "Не удалось загрузить результаты",
+     "map_load_error": "Не удалось загрузить карту",
+-    "retry": "Повторить"
++    "retry": "Повторить",
++    "filter_query": "Поиск",
++    "clear_all_filters": "Сбросить все фильтры",
++    "remove_filter": "Убрать фильтр: {filter}",
++    "no_matches_title": "Салоны не найдены",
++    "no_matches_description": "Ни один салон не соответствует текущим фильтрам.",
++    "view_all_salons": "Показать все салоны"
+   },
+   "salon": {
+     "callSalon": "Позвонить",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index dd08d76..0048576 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -31,7 +31,8 @@
+     "all_cats": "Категорія",
+     "no_results": "Нічого не знайдено",
+     "placeholder": "Пошук...",
+-    "results_count": "{count} результатів",
++    "results_heading": "Результати пошуку",
++    "results_summary": "{count, plural, =0 {Салонів не знайдено} one {# салон знайдено} few {# салони знайдено} many {# салонів знайдено} other {# салону знайдено}}",
+     "filter_city": "Місто",
+     "filter_area": "Район",
+     "all_areas": "Усі райони",
+@@ -50,7 +51,13 @@
+     "next": "Вперед →",
+     "results_load_error": "Не вдалося завантажити результати",
+     "map_load_error": "Не вдалося завантажити карту",
+-    "retry": "Повторити"
++    "retry": "Повторити",
++    "filter_query": "Пошук",
++    "clear_all_filters": "Скинути всі фільтри",
++    "remove_filter": "Прибрати фільтр: {filter}",
++    "no_matches_title": "Салонів не знайдено",
++    "no_matches_description": "Жоден салон не відповідає поточним фільтрам.",
++    "view_all_salons": "Показати всі салони"
+   },
+   "salon": {
+     "callSalon": "Зателефонувати",
+diff --git a/frontend/package.json b/frontend/package.json
+index acc4ad1..212ccff 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts components/AsyncSection.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
