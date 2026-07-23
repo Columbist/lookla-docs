@@ -1,0 +1,1256 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index ed5aa17..26b3ff8 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -612,41 +612,31 @@ Localized:
+ 
+ ---
+ 
+-### T-015 — Implement useAnalytics hook and contact_action events
+-**Priority:** P0 | **Owner:** FE | **Estimate:** 2h | **Epic:** EPIC-04
+-**Dependencies:** T-014
+-
+-**Description:** Create `hooks/useAnalytics.ts` and use it in `ContactButtons.tsx`.
+-
+-```typescript
+-// hooks/useAnalytics.ts
+-export function useAnalytics() {
+-  const trackContact = (action_type: 'phone' | 'whatsapp' | 'website', salon_id: number, salon_name: string) => {
+-    if (typeof window !== 'undefined' && window.gtag) {
+-      window.gtag('event', 'contact_action', {
+-        action_type,
+-        salon_id,
+-        salon_name,
+-      });
+-    }
+-  };
+-  return { trackContact };
+-}
+-```
+-
+-**Usage in ContactButtons.tsx:**
+-```tsx
+-const { trackContact } = useAnalytics();
+-// On CTA click:
+-onClick={() => trackContact('phone', salon.id, salon.name)}
+-```
+-
+-**Acceptance Criteria:**
+-- [ ] `contact_action` event appears in GA4 Realtime when clicking "Call salon"
+-- [ ] `contact_action` event appears when clicking "Message on WhatsApp"
+-- [ ] `contact_action` event appears when clicking "Visit website"
+-- [ ] Each event includes `action_type`, `salon_id`, `salon_name` custom parameters
+-- [ ] No error in browser console when `gtag` is not loaded (conditional check)
++### T-015 — Consent-gated GA4 product events
++**Priority:** P0 | **Owner:** FE | **Estimate:** 2h (revised — actual scope was a closed 5-event catalogue with a full PII-guard design, not a single hook) | **Epic:** EPIC-04
++**Dependencies:** T-013 ✅, T-014 Stage 1 + Stage 2 ✅, T-018 ✅
++**Status:** Implemented (branch `feat/T-015-product-analytics-events`), pending independent review and production DebugView verification before being marked ✅ Completed.
++
++**Correction to the original spec above (superseded before implementation, per architect review):** the original design's own sample code sent `salon_name` as a GA4 event parameter — personally/commercially identifying data that has no business leaving the browser in an analytics payload, and inconsistent with T-014/T-018's whole consent-gating design intent. The original also scoped only `contact_action` via a single `useAnalytics()` hook. The corrected, actually-implemented scope: a closed 5-event catalogue (`salon_open`, `contact_action`, `search_results_view`, `area_select`, `language_change`) behind one central `trackEvent()` function in `frontend/lib/analytics.ts` (T-014's existing transport module, not a new hook), with a two-layer PII guard (per-event parameter allowlist + a universal denylist) enforced inside `trackEvent` itself — not left to each call site to self-police.
++
++**Full specification:** see `docs/06_ENGINEERING/ANALYTICS_EVENTS.md` — event table, exact parameter contracts, PII guard design, duplicate-prevention strategy per event, cardinality notes, and the GA4 Admin custom-dimension/key-event checklist (deliberately deferred, manual, not automated by this change).
++
++**Architecture summary:**
++- `trackEvent()` (`lib/analytics.ts`): TypeScript function overloads restrict callers to the 5 approved name/parameter-shape combinations at compile time; at runtime, an explicit `ANALYTICS_EVENT_NAMES` allowlist, per-event parameter schemas (numeric-id / canonical-slug / closed-enum validators), and a `DENIED_PARAM_KEYS` denylist plus a universal `isSafeGenericValue()` check (no whitespace/`@`/URL-scheme, bounded length) gate every call. No-ops unless `window.gtag` already exists (T-014 already initialized it — `trackEvent` never triggers initialization itself) and `getAnalyticsConsent()` reads `'granted'` live from the cookie at call time. Never queues a dropped call for later replay. Never throws.
++- `salon_id` is always `String(salon.id)` — the numeric DB primary key — never `salon.slug`, which was found during implementation to typically embed the salon's business name (e.g. `harris-anagnostopoulos-12608`), which would have made it personally identifying.
++- Component wiring: `SalonCard.tsx` (salon_open: search_list/homepage/masters), `MapView.tsx` (salon_open: search_map, from the marker preview's "view" link only — the preview's own phone quick-dial button is deliberately not instrumented, out of `contact_action`'s `page: 'salon_detail'`-only contract), `ContactButtons.tsx` (contact_action, 3 independent flat buttons, T-010's exact 3-action contract untouched, no Viber), `search/page.tsx` (search_results_view via a ref-based normalized-state-key dedup, not time-based debounce; area_select for the search filter, guarded against reselecting the already-active area), `AreaGrid.tsx` (area_select: homepage_grid), `LanguageSwitcher.tsx` (language_change, now takes an explicit `surface: 'header'|'footer'` prop since both `Header.tsx` and `Footer.tsx` render it, guarded against firing on a same-locale reselect).
++
++**Verification:** 353/353 frontend tests passing (68 new for T-015, including a mocked-transport suite proving exact `trackEvent` payloads without any live GA4 property — consent gating, denied-key/nested-object/overlong-value/invalid-enum rejection, no-replay-after-regrant, and PII-shape denylist checks all run against a hand-rolled `window.gtag` mock, not a live network call). `npm run lint` and `npm run build` both clean, no new warnings. Explicit T-014 non-regression tests confirm the Stage 2 fixes (dataLayer `arguments` object, apex-domain cookie deletion, duplicate-initial-page_view guard) are untouched by this change.
++
++**Acceptance criteria:**
++- [x] Only the 5 approved events are callable — enforced by both TypeScript overloads and a runtime allowlist
++- [x] No event fires before consent, during rejection, or after withdrawal; no replay on regrant
++- [x] No PII (name/email/phone/address/message/token/GPS/URL/etc.) reaches any event, enforced by a schema allowlist + universal denylist inside `trackEvent` itself, not by caller discipline
++- [x] No duplicate firing — verified structurally (single click-owner per surface) plus, for `search_results_view`, a ref-based dedup key
++- [x] T-010's ContactButtons contract (exactly phone/WhatsApp/website, no Viber) untouched
++- [x] `trackEvent` never triggers GA initialization and never throws into the UI
++- [ ] Production DebugView verification (real payloads, real consent states) — pending, required before this task is marked ✅ Completed
++- [ ] Independent review — pending
+ 
+ ---
+ 
+diff --git a/docs/06_ENGINEERING/ANALYTICS_EVENTS.md b/docs/06_ENGINEERING/ANALYTICS_EVENTS.md
+new file mode 100644
+index 0000000..783906b
+--- /dev/null
++++ b/docs/06_ENGINEERING/ANALYTICS_EVENTS.md
+@@ -0,0 +1,80 @@
++# GA4 Product Event Specification (T-015)
++
++Status: implemented, pending production verification (DebugView) before T-015 is marked complete. See `IMPLEMENTATION_BACKLOG.md`'s T-015 entry for the completion record once that's done.
++
++This is the single source of truth for Lookla's GA4 product-event catalogue. It is deliberately closed — `trackEvent()` in `frontend/lib/analytics.ts` only accepts these 5 event/parameter combinations, enforced both at compile time (TypeScript overloads) and at runtime (an explicit name allowlist, per-event parameter schemas, and a universal PII denylist). Adding a 6th event means updating this document, the schema in `analytics.ts`, and the test suite in the same change — not just wiring a new `trackEvent()` call somewhere.
++
++## Naming convention
++
++`snake_case`, present-tense verb where applicable (`salon_open`, not `salon_opened`/`SalonOpen`). Matches GA4's own recommended event-naming convention.
++
++## Consent requirement
++
++All 5 events are gated identically: `trackEvent()` no-ops (silently, never throws) unless `window.gtag` already exists (GA already initialized by T-014 — `trackEvent` never triggers initialization itself) **and** `getAnalyticsConsent()` reads `'granted'` from the live `lookla_consent` cookie at the moment of the call. Consent is never cached inside `trackEvent` — a mid-session withdrawal takes effect on the very next call. A call made while consent is absent/rejected/withdrawn is dropped, not queued; there is no replay when consent is later granted.
++
++## Event catalogue
++
++| Event | Trigger | Parameters | Prohibited data | Owner |
++|---|---|---|---|---|
++| `salon_open` | User opens a salon detail page from a discovery surface (card/marker click, keyboard activation) | `salon_id: string` (numeric DB id), `source: 'search_list'\|'search_map'\|'homepage'\|'masters'`, `locale: 'el'\|'en'\|'ru'\|'uk'` | salon name, phone, address, URL query string, `salon.slug` | `components/SalonCard.tsx` (search_list, homepage, masters); `components/MapView.tsx` (search_map) |
++| `contact_action` | Immediately before a phone/WhatsApp/website contact action navigates/deep-links | `salon_id: string`, `channel: 'phone'\|'whatsapp'\|'website'`, `page: 'salon_detail'`, `locale` | phone number, WhatsApp URL, destination website URL/hostname, salon name | `components/ContactButtons.tsx` |
++| `search_results_view` | A search/list/map result set finishes loading successfully and the normalized state materially changed | `area: string\|'all'` (canonical slug), `result_count_bucket: '0'\|'1_5'\|'6_20'\|'21_50'\|'51_plus'`, `view: 'list'\|'map'`, `locale` | free-text search query, exact result count, latitude/longitude, map viewport bounds | `app/[locale]/search/page.tsx` |
++| `area_select` | User selects a canonical area from the homepage grid or the search filter | `area: string` (canonical slug), `source: 'homepage_grid'\|'search_filter'`, `locale` | arbitrary URL text, the legacy `city` param | `components/AreaGrid.tsx` (homepage_grid); `app/[locale]/search/page.tsx`'s `selectArea()` (search_filter) |
++| `language_change` | User explicitly picks a different language from the header or footer switcher | `from_locale`, `to_locale`, `surface: 'header'\|'footer'` | — | `components/LanguageSwitcher.tsx` |
++
++## Allowed values
++
++- `locale`/`from_locale`/`to_locale`: exactly `el`, `en`, `ru`, or `uk` — matches `i18n/request.ts`'s `Locale` type.
++- `salon_id`: `String(salon.id)`, the numeric primary key already exposed to the frontend by the API — **never** `salon.slug`. Real slugs observed in production embed the salon's business name (e.g. `harris-anagnostopoulos-12608`), which would make `salon_id` personally identifying if used.
++- `area`: a canonical area slug from `/api/areas` (e.g. `athens-center`) or the literal `'all'` (only valid for `search_results_view`, meaning no area filter is active). Never the legacy `city` query param, never arbitrary text.
++- `result_count_bucket`: one of 5 fixed buckets (`bucketResultCount()` in `analytics.ts`) — the exact count is never transmitted.
++- `channel`, `page`, `source`, `view`, `surface`: fixed closed enums, one value set per event (see table above).
++
++## PII guard design
++
++Two independent layers, both enforced inside `trackEvent()` itself (not left to callers to self-police):
++
++1. **Per-event schema (allowlist).** Each event has an exact set of permitted parameter keys, each with its own validator (numeric-id regex, canonical-slug regex, or closed-enum membership check). `trackEvent` builds its output by iterating the *schema's* keys, not the caller's — any key a caller passes that isn't in the schema is structurally never copied to the payload, valid or not.
++2. **Universal denylist (defense-in-depth).** On top of the schema: an explicit `DENIED_PARAM_KEYS` set (email, phone, name, address, message, token, lat/lng, query, URL, cookie, user_id, and related variants) — if *any* of these key names appear anywhere in the caller's raw input object, the entire event is dropped, even though the schema would have ignored them anyway. And every string value, regardless of key, must pass `isSafeGenericValue()`: no whitespace, no `@`, no URL-scheme prefix (`tel:`, `mailto:`, `https://`, etc.), bounded to 64 characters. None of the catalogue's legitimate values (enum tokens, hyphenated slugs, digit strings) ever contain a space, `@`, or scheme prefix — but a name, address, message, email, or destination URL would.
++
++If a value is not a string (an object, array, number, boolean, `null`, `undefined`), the whole event is dropped — this is what makes "the generic API must not accept a nested object" true structurally: nothing but `typeof value === 'string'` ever reaches the schema/denylist checks in the first place.
++
++`trackEvent` never throws — every code path is wrapped in `try/catch`; a broken analytics call cannot break the product.
++
++## Duplicate-prevention strategy
++
++No event in this catalogue uses time-based debounce as its primary guard. Per event:
++
++- **`salon_open`**: exactly one click handler per discovery surface (`SalonCard`'s single wrapping `<Link>`, `MapView`'s single "view" link in the marker preview) — no parent/child nesting exists that could double-fire. The destination page (`SalonDetailClient.tsx`) never calls `trackEvent` itself, so hydration cannot re-fire it.
++- **`contact_action`**: three flat, independent `<a>` tags in `ContactButtons.tsx`, none nested inside another trackable element.
++- **`search_results_view`**: a `useRef`-held last-tracked normalized-state key (`area|result_count_bucket|view|locale`, built by `buildSearchResultsViewKey()`), compared by exact string equality on every render. Gated on `loading`/`searchError` (list) or `mapLoading`/`mapError` (map) so it never fires mid-load or after a failed API call. A genuinely different state — including one reached via browser back/forward — always fires, since the key changes.
++- **`area_select`**: `selectArea()` guards with `if (slug && slug !== area)` before tracking — clearing to "All areas" and reselecting the already-active area are both no-ops for tracking (though navigation still proceeds either way). `AreaGrid`'s homepage click always tracks, since there's no "currently active area" concept on the homepage.
++- **`language_change`**: `switchLocale()` guards with `if (locale === currentLocale) return;` before tracking or navigating.
++
++## Cardinality considerations
++
++Every parameter is either a bounded closed enum (≤5 values) or a stable low-cardinality identifier (`salon_id`: bounded by the actual number of salons in the catalogue; `area`: bounded by the number of canonical areas GA4 already knows about). None of the 5 events carry a high-cardinality or unbounded-growth parameter (no raw counts, no free text, no timestamps, no session/user identifiers).
++
++## GA4 Admin — custom dimension checklist (manual, not automated by this change)
++
++T-015 does not register any custom dimension in GA4 — that's a manual Admin-console action, deliberately deferred. Recommended review list once real event volume exists:
++
++- `source` (salon_open, area_select)
++- `channel` (contact_action)
++- `page` (contact_action — currently always `salon_detail`, so low value until a second page type exists)
++- `area` (search_results_view, area_select)
++- `result_count_bucket` (search_results_view)
++- `view` (search_results_view)
++- `locale` / `from_locale` / `to_locale` / `surface` (language_change)
++
++**`salon_id` is explicitly NOT recommended for automatic custom-dimension registration** — consider cardinality (grows with the salon catalogue) and actual reporting needs before registering it; a per-salon custom dimension may not be the right GA4 reporting shape at all (per-salon breakdowns are likely better served by BigQuery export or a different tool once volume justifies it).
++
++## Key events — deferred decision
++
++No event is marked as a GA4 "key event" (formerly "conversion") by this change. Recommendation: `contact_action` is the most plausible candidate for a future key event, matching DEC-017's stated success metric (visitor→contact conversion) — but that decision should wait until real event quality and volume have been validated in production, not be made automatically at launch.
++
++## Known, deliberate gaps
++
++- **`MapView.tsx`'s phone quick-dial button** (in the marker preview card) is **not instrumented**. `contact_action`'s approved contract requires `page: 'salon_detail'`; this button lives on the search/map page, not the salon detail page. Extending the contract to cover it is a candidate for a future ticket, not silently folded into T-015.
++- **`masters` page** currently has no salon listings (placeholder/empty state) — `salon_open`'s `'masters'` source value exists in the type contract for forward compatibility but has no live call site yet.
++- **City-filtered searches** (`?city=...`, a legacy pre-area filter path) report `area: 'all'` in `search_results_view`, since `city` is not canonical area metadata. This is a known simplification, not a bug.
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 3e9b2ef..cb5abcc 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -7,6 +7,7 @@ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api'
+ import { getAreaName, findAreaBySlug, buildAreaUrlParams } from '@/lib/areaFilter';
+ import type { Locale } from '@/i18n/request';
+ import SalonCard from '@/components/SalonCard';
++import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import dynamic from 'next/dynamic';
+ 
+ const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+@@ -32,11 +33,13 @@ function SearchContent({ locale }: { locale: string }) {
+   const [mapSalons, setMapSalons] = useState<SalonMapItem[]>([]);
+   const [total, setTotal] = useState(0);
+   const [loading, setLoading] = useState(true);
++  const [searchError, setSearchError] = useState(false);
+   const [loadingMore, setLoadingMore] = useState(false);
+   const [categories, setCategories] = useState<Category[]>([]);
+   const [areas, setAreas] = useState<AreaItem[]>([]);
+   const [areasError, setAreasError] = useState(false);
+   const [mapLoading, setMapLoading] = useState(false);
++  const [mapError, setMapError] = useState(false);
+   const [filtersOpen, setFiltersOpen] = useState(false);
+   const filtersRef = useRef<HTMLDivElement>(null);
+ 
+@@ -45,6 +48,12 @@ function SearchContent({ locale }: { locale: string }) {
+   const hasMoreRef = useRef(false);
+   const busyRef = useRef(false);
+ 
++  // T-015: last normalized state we've already sent search_results_view for
++  // — a ref (not time-based debounce), compared exactly, so a materially
++  // identical rerender never fires again but a genuinely different state
++  // (including one reached via browser back/forward) always does.
++  const lastTrackedSearchKey = useRef<string | null>(null);
++
+   useEffect(() => {
+     fetch(`/api/categories?lang=${locale}`).then(r => r.json()).then(setCategories).catch(() => {});
+     fetch(`/api/areas`)
+@@ -99,6 +108,7 @@ function SearchContent({ locale }: { locale: string }) {
+     hasMoreRef.current = false;
+     busyRef.current = false;
+     setLoading(true);
++    setSearchError(false);
+     setSalons([]);
+     fetch(`/api/salons?${buildParams(1)}`)
+       .then(r => r.json())
+@@ -108,7 +118,7 @@ function SearchContent({ locale }: { locale: string }) {
+         pageRef.current = 1;
+         hasMoreRef.current = 1 < (d.pages || 1);
+       })
+-      .catch(() => { setSalons([]); setTotal(0); hasMoreRef.current = false; })
++      .catch(() => { setSalons([]); setTotal(0); hasMoreRef.current = false; setSearchError(true); })
+       .finally(() => setLoading(false));
+   }, [area, city, q, category, minRating]); // eslint-disable-line react-hooks/exhaustive-deps
+ 
+@@ -116,6 +126,7 @@ function SearchContent({ locale }: { locale: string }) {
+   useEffect(() => {
+     if (view !== 'map') return;
+     setMapLoading(true);
++    setMapError(false);
+     const params = new URLSearchParams();
+     if (area) params.set('area', area);
+     if (city) params.set('city', city);
+@@ -125,10 +136,33 @@ function SearchContent({ locale }: { locale: string }) {
+     fetch(`/api/salons/map?${params}`)
+       .then(r => r.json())
+       .then(d => setMapSalons(Array.isArray(d) ? d : []))
+-      .catch(() => setMapSalons([]))
++      .catch(() => { setMapSalons([]); setMapError(true); })
+       .finally(() => setMapLoading(false));
+   }, [view, area, city, q, category, minRating]);
+ 
++  // T-015: search_results_view — fires once per materially distinct
++  // (area, result_count_bucket, view, locale) state, only after a
++  // successful load (never while loading, never on API error). Watches
++  // both the list and map data sources; whichever one backs the currently
++  // active `view` is the one that can fire.
++  useEffect(() => {
++    if (view === 'map') {
++      if (mapLoading || mapError) return;
++      const bucket = bucketResultCount(mapSalons.length);
++      const key = buildSearchResultsViewKey(area || 'all', bucket, 'map', locale as Locale);
++      if (key === lastTrackedSearchKey.current) return;
++      lastTrackedSearchKey.current = key;
++      trackEvent('search_results_view', { area: area || 'all', result_count_bucket: bucket, view: 'map', locale: locale as Locale });
++    } else {
++      if (loading || searchError) return;
++      const bucket = bucketResultCount(total);
++      const key = buildSearchResultsViewKey(area || 'all', bucket, 'list', locale as Locale);
++      if (key === lastTrackedSearchKey.current) return;
++      lastTrackedSearchKey.current = key;
++      trackEvent('search_results_view', { area: area || 'all', result_count_bucket: bucket, view: 'list', locale: locale as Locale });
++    }
++  }, [view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]);
++
+   // IntersectionObserver — fires loadMore when sentinel enters viewport
+   useEffect(() => {
+     const el = sentinelRef.current;
+@@ -149,8 +183,14 @@ function SearchContent({ locale }: { locale: string }) {
+   }, [sp, router, pathname]);
+ 
+   const selectArea = useCallback((slug: string) => {
++    // T-015: only a genuine change to a real canonical area fires — clearing
++    // back to "All areas" (slug === '') and reselecting the already-active
++    // area are both navigation-only, not a trackable area_select.
++    if (slug && slug !== area) {
++      trackEvent('area_select', { area: slug, source: 'search_filter', locale: locale as Locale });
++    }
+     router.push(`${pathname}?${buildAreaUrlParams(sp, slug)}`);
+-  }, [sp, router, pathname]);
++  }, [sp, router, pathname, area, locale]);
+ 
+   const clearFilters = useCallback(() => {
+     const p = new URLSearchParams(sp.toString());
+@@ -282,7 +322,7 @@ function SearchContent({ locale }: { locale: string }) {
+                   <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" />
+                 ))
+               ) : salons.length > 0 ? (
+-                salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} />)
++                salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />)
+               ) : area ? (
+                 <div className="col-span-3 text-center py-16 text-gray-400 space-y-3">
+                   <p>
+diff --git a/frontend/components/AreaGrid.tsx b/frontend/components/AreaGrid.tsx
+index 587a27e..43d9355 100644
+--- a/frontend/components/AreaGrid.tsx
++++ b/frontend/components/AreaGrid.tsx
+@@ -1,7 +1,9 @@
++'use client';
+ import Link from 'next/link';
+ import type { AreaItem } from '@/lib/api';
+ import type { Locale } from '@/i18n/request';
+ import { getAreaName } from '@/lib/areaFilter';
++import { trackEvent } from '@/lib/analytics';
+ 
+ const SALONS_WORD: Record<string, string> = {
+   el: 'σαλόνια', en: 'salons', ru: 'салонов', uk: 'салонів',
+@@ -16,6 +18,7 @@ export default function AreaGrid({ areas, locale }: { areas: AreaItem[]; locale:
+         <Link
+           key={area.slug}
+           href={`${prefix}/search?area=${area.slug}`}
++          onClick={() => trackEvent('area_select', { area: area.slug, source: 'homepage_grid', locale: locale as Locale })}
+           className="p-4 bg-white rounded-xl border border-gray-100 hover:border-pink-200 hover:shadow-sm transition-all min-h-[64px] flex flex-col justify-center"
+         >
+           <div className="text-base font-semibold text-gray-800 truncate">{getAreaName(area, locale as Locale)}</div>
+diff --git a/frontend/components/ContactButtons.tsx b/frontend/components/ContactButtons.tsx
+index 17bb05a..cee2214 100644
+--- a/frontend/components/ContactButtons.tsx
++++ b/frontend/components/ContactButtons.tsx
+@@ -2,6 +2,8 @@
+ import { useTranslations } from 'next-intl';
+ import ReportButton from '@/components/ReportButton';
+ import { resolveContactActions, hasAnyContactAction } from '@/lib/contactActions';
++import { trackEvent } from '@/lib/analytics';
++import type { Locale } from '@/i18n/request';
+ 
+ interface ContactButtonsProps {
+   phone: string | null;
+@@ -13,6 +15,23 @@ interface ContactButtonsProps {
+ 
+ const BUTTON_CLASS = 'flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-base font-semibold min-h-[48px]';
+ 
++/**
++ * T-015: fires immediately before navigation/deep-link activation — never
++ * the phone number, WhatsApp URL, destination URL, or salon name, only the
++ * internal numeric salon id and a closed channel enum. This is the single
++ * owner of the contact_action event for all three buttons below; nothing
++ * else in the render tree (no wrapping card, no nested icon) also tracks
++ * this click, so there is no double-firing to guard against.
++ */
++function trackContact(salonId: number, channel: 'phone' | 'whatsapp' | 'website', locale: string): void {
++  trackEvent('contact_action', {
++    salon_id: String(salonId),
++    channel,
++    page: 'salon_detail',
++    locale: locale as Locale,
++  });
++}
++
+ export default function ContactButtons({ phone, websiteUrl, salonName, salonId, locale }: ContactButtonsProps) {
+   const t = useTranslations('salon');
+ 
+@@ -32,6 +51,7 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+       {actions.callHref && (
+         <a
+           href={actions.callHref}
++          onClick={() => trackContact(salonId, 'phone', locale)}
+           aria-label={`${t('callSalon')} ${salonName}`}
+           className={`${BUTTON_CLASS} bg-green-50 text-green-700 hover:bg-green-100`}
+         >
+@@ -44,6 +64,7 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+           href={actions.whatsappHref}
+           target="_blank"
+           rel="noopener noreferrer"
++          onClick={() => trackContact(salonId, 'whatsapp', locale)}
+           aria-label={`${t('messageWhatsApp')} ${salonName}`}
+           className={`${BUTTON_CLASS} bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
+         >
+@@ -55,6 +76,7 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+           href={actions.websiteHref}
+           target="_blank"
+           rel="noopener noreferrer"
++          onClick={() => trackContact(salonId, 'website', locale)}
+           aria-label={`${t('visitWebsite')} ${salonName}`}
+           className={`${BUTTON_CLASS} bg-blue-50 text-blue-700 hover:bg-blue-100`}
+         >
+diff --git a/frontend/components/Footer.tsx b/frontend/components/Footer.tsx
+index 674a1e7..96a564d 100644
+--- a/frontend/components/Footer.tsx
++++ b/frontend/components/Footer.tsx
+@@ -30,7 +30,7 @@ export default function Footer() {
+       </div>
+       <div className="max-w-6xl mx-auto px-4 pt-4 text-center text-sm text-gray-400">
+         © 2026 Lookla — Beauty Marketplace Greece
+-        <LanguageSwitcher currentLocale={locale} />
++        <LanguageSwitcher currentLocale={locale} surface="footer" />
+       </div>
+     </footer>
+   );
+diff --git a/frontend/components/Header.tsx b/frontend/components/Header.tsx
+index 244feee..96968e2 100644
+--- a/frontend/components/Header.tsx
++++ b/frontend/components/Header.tsx
+@@ -62,7 +62,7 @@ export default function Header({ locale }: { locale: string }) {
+             </Link>
+           </div>
+           <div className="pt-3 flex justify-center">
+-            <LanguageSwitcher currentLocale={locale} />
++            <LanguageSwitcher currentLocale={locale} surface="header" />
+           </div>
+         </div>
+       )}
+diff --git a/frontend/components/LanguageSwitcher.tsx b/frontend/components/LanguageSwitcher.tsx
+index 61b9baa..a66b94f 100644
+--- a/frontend/components/LanguageSwitcher.tsx
++++ b/frontend/components/LanguageSwitcher.tsx
+@@ -1,13 +1,25 @@
+ 'use client';
+ import { usePathname, useRouter } from '@/i18n/navigation';
++import { trackEvent } from '@/lib/analytics';
++import type { Locale } from '@/i18n/request';
+ 
+ const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
+ 
+-export default function LanguageSwitcher({ currentLocale }: { currentLocale: string }) {
++interface Props {
++  currentLocale: string;
++  /** T-015: which surface this instance is mounted on — Header and Footer both render this same component. */
++  surface: 'header' | 'footer';
++}
++
++export default function LanguageSwitcher({ currentLocale, surface }: Props) {
+   const router = useRouter();
+   const pathname = usePathname();
+ 
++  // T-015: selecting the already-active language is not a real choice, so
++  // it must not fire — checked before anything else, including navigation.
+   const switchLocale = (locale: string) => {
++    if (locale === currentLocale) return;
++    trackEvent('language_change', { from_locale: currentLocale as Locale, to_locale: locale as Locale, surface });
+     router.replace(pathname, { locale });
+   };
+ 
+diff --git a/frontend/components/MapView.tsx b/frontend/components/MapView.tsx
+index 68ef248..b818c64 100644
+--- a/frontend/components/MapView.tsx
++++ b/frontend/components/MapView.tsx
+@@ -2,6 +2,8 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { useTranslations } from 'next-intl';
+ import type { SalonMapItem } from '@/lib/api';
++import { trackEvent } from '@/lib/analytics';
++import type { Locale } from '@/i18n/request';
+ 
+ const TILES: Record<string, { url: string; attribution: string }> = {
+   el: {
+@@ -174,6 +176,9 @@ export default function MapView({ salons, locale }: Props) {
+                 </p>
+               )}
+               <div className="flex gap-2 mt-2">
++                {/* T-015: this quick-dial button is not instrumented — contact_action's
++                    approved contract is scoped to page: 'salon_detail' only, and this
++                    is the search/map page. Out of scope for T-015's approved catalogue. */}
+                 {selected.phone_primary && (
+                   <a
+                     href={`tel:${selected.phone_primary}`}
+@@ -184,6 +189,7 @@ export default function MapView({ salons, locale }: Props) {
+                 )}
+                 <a
+                   href={`${prefix}/salons/${selected.slug || selected.id}`}
++                  onClick={() => trackEvent('salon_open', { salon_id: String(selected.id), source: 'search_map', locale: locale as Locale })}
+                   className="text-xs bg-pink-600 text-white px-3 py-1 rounded-lg font-medium"
+                 >
+                   {t('view')}
+diff --git a/frontend/components/SalonCard.tsx b/frontend/components/SalonCard.tsx
+index fbfe56e..0168c80 100644
+--- a/frontend/components/SalonCard.tsx
++++ b/frontend/components/SalonCard.tsx
+@@ -1,6 +1,9 @@
++'use client';
+ import Link from 'next/link';
+ import type { SalonListItem } from '@/lib/api';
+ import { getVerificationLabelKey } from '@/lib/verificationLabel';
++import { trackEvent } from '@/lib/analytics';
++import type { Locale } from '@/i18n/request';
+ 
+ const STARS = (r?: string) => {
+   const n = parseFloat(r || '0');
+@@ -57,11 +60,20 @@ interface Props {
+   salon: SalonListItem;
+   locale: string;
+   category?: string;
++  /** T-015: which discovery surface this card is rendered on — required so salon_open's source parameter is always accurate, never guessed. */
++  source: 'search_list' | 'homepage' | 'masters';
+ }
+ 
+-export default function SalonCard({ salon, locale, category }: Props) {
++export default function SalonCard({ salon, locale, category, source }: Props) {
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const href = `${prefix}/salons/${salon.slug || salon.id}`;
++
++  // T-015: the internal numeric id only — never salon.slug, which typically
++  // embeds the salon's business name (e.g. "harris-anagnostopoulos-12608")
++  // and would make this personally identifying.
++  function handleOpen() {
++    trackEvent('salon_open', { salon_id: String(salon.id), source, locale: locale as Locale });
++  }
+   const [openLabel, closedLabel] = OPEN_LABEL[locale] ?? OPEN_LABEL.en;
+   const fromLabel = FROM_LABEL[locale] ?? 'από';
+   const genderIcon = category ? CATEGORY_GENDER[category] : undefined;
+@@ -71,7 +83,7 @@ export default function SalonCard({ salon, locale, category }: Props) {
+     : undefined;
+ 
+   return (
+-    <Link href={href} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
++    <Link href={href} onClick={handleOpen} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
+       {/* Photo */}
+       <div className="relative h-44 bg-gradient-to-br from-pink-50 to-purple-50">
+         {salon.primary_photo ? (
+diff --git a/frontend/lib/analytics.test.ts b/frontend/lib/analytics.test.ts
+index 3969ca2..a754127 100644
+--- a/frontend/lib/analytics.test.ts
++++ b/frontend/lib/analytics.test.ts
+@@ -1,9 +1,16 @@
+-import { test, describe } from 'node:test';
++import { test, describe, afterEach } from 'node:test';
+ import assert from 'node:assert/strict';
+ import fs from 'node:fs';
+ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+-import { isGa4Configured, GA4_MEASUREMENT_ID } from './analytics';
++import {
++  isGa4Configured,
++  GA4_MEASUREMENT_ID,
++  trackEvent,
++  bucketResultCount,
++  buildSearchResultsViewKey,
++  ANALYTICS_EVENT_NAMES,
++} from './analytics';
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ 
+@@ -194,3 +201,500 @@ describe('T-014: Docker build-arg wiring for NEXT_PUBLIC_* vars (they are build-
+     assert.ok(dockerfile.includes('ARG NEXT_PUBLIC_GA4_ID=""'));
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// T-015: consent-gated GA4 product events
++// ---------------------------------------------------------------------------
++
++function mockBrowser(opts: { consent?: '1' | '0' | null; gtag?: boolean }): unknown[][] {
++  const calls: unknown[][] = [];
++  (globalThis as any).document = { cookie: opts.consent ? `lookla_consent=${opts.consent}` : '' };
++  (globalThis as any).window = opts.gtag ? { gtag: (...args: unknown[]) => { calls.push(args); } } : {};
++  return calls;
++}
++
++function setConsentCookie(value: '1' | '0'): void {
++  (globalThis as any).document.cookie = `lookla_consent=${value}`;
++}
++
++function clearBrowser(): void {
++  delete (globalThis as any).window;
++  delete (globalThis as any).document;
++}
++
++describe('T-015: bucketResultCount — exact counts are never the transmitted value', () => {
++  test('buckets low/zero counts', () => {
++    assert.equal(bucketResultCount(0), '0');
++    assert.equal(bucketResultCount(1), '1_5');
++    assert.equal(bucketResultCount(5), '1_5');
++  });
++  test('buckets mid counts', () => {
++    assert.equal(bucketResultCount(6), '6_20');
++    assert.equal(bucketResultCount(20), '6_20');
++    assert.equal(bucketResultCount(21), '21_50');
++    assert.equal(bucketResultCount(50), '21_50');
++  });
++  test('buckets large counts', () => {
++    assert.equal(bucketResultCount(51), '51_plus');
++    assert.equal(bucketResultCount(9999), '51_plus');
++  });
++  test('negative/malformed counts fall into the "0" bucket rather than throwing or producing a nonsense bucket', () => {
++    assert.equal(bucketResultCount(-1), '0');
++  });
++});
++
++describe('T-015: buildSearchResultsViewKey — stable normalized dedup key', () => {
++  test('matches the documented area|bucket|view|locale shape', () => {
++    assert.equal(buildSearchResultsViewKey('athens-center', '6_20', 'list', 'el'), 'athens-center|6_20|list|el');
++  });
++  test('different inputs produce different keys', () => {
++    const a = buildSearchResultsViewKey('athens-center', '6_20', 'list', 'el');
++    const b = buildSearchResultsViewKey('athens-center', '6_20', 'map', 'el');
++    assert.notEqual(a, b);
++  });
++});
++
++describe('T-015: trackEvent — core API', () => {
++  afterEach(clearBrowser);
++
++  test('unknown event name is rejected — no gtag call', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    (trackEvent as any)('not_a_real_event', { foo: 'bar' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('event before GA initialization (no window.gtag) is ignored', () => {
++    const calls = mockBrowser({ consent: '1', gtag: false });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('event without consent (cookie unset) is ignored', () => {
++    const calls = mockBrowser({ consent: null, gtag: true });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('event after rejection (consent=0) is ignored', () => {
++    const calls = mockBrowser({ consent: '0', gtag: true });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('event after withdrawal mid-session is ignored on the very next call — trackEvent reads the live cookie every time, not a cached value', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 1);
++    setConsentCookie('0');
++    trackEvent('language_change', { from_locale: 'en', to_locale: 'ru', surface: 'header' });
++    assert.equal(calls.length, 1, 'no new call after withdrawal');
++  });
++
++  test('event after regrant is sent', () => {
++    const calls = mockBrowser({ consent: '0', gtag: true });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 0);
++    setConsentCookie('1');
++    trackEvent('language_change', { from_locale: 'en', to_locale: 'ru', surface: 'header' });
++    assert.equal(calls.length, 1);
++  });
++
++  test('no replay of events dropped during the denied period — regrant sends only the new call, nothing from before', () => {
++    const calls = mockBrowser({ consent: '0', gtag: true });
++    trackEvent('area_select', { area: 'athens-center', source: 'homepage_grid', locale: 'el' });
++    trackEvent('area_select', { area: 'piraeus', source: 'homepage_grid', locale: 'el' });
++    assert.equal(calls.length, 0);
++    setConsentCookie('1');
++    trackEvent('area_select', { area: 'glyfada', source: 'homepage_grid', locale: 'el' });
++    assert.equal(calls.length, 1);
++    assert.equal((calls[0][2] as any).area, 'glyfada');
++  });
++
++  test('trackEvent never throws into the UI, even with malformed input', () => {
++    mockBrowser({ consent: '1', gtag: true });
++    assert.doesNotThrow(() => (trackEvent as any)('salon_open', null));
++    assert.doesNotThrow(() => (trackEvent as any)('salon_open', undefined));
++    assert.doesNotThrow(() => (trackEvent as any)('salon_open', 'a string, not an object'));
++    assert.doesNotThrow(() => (trackEvent as any)('salon_open', ['array', 'not', 'object']));
++    assert.doesNotThrow(() => (trackEvent as any)(null, { a: 'b' }));
++    assert.doesNotThrow(() => (trackEvent as any)(undefined, undefined));
++  });
++
++  test('does not trigger GA initialization itself — a call with no window.gtag never creates one', () => {
++    const calls = mockBrowser({ consent: '1', gtag: false });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'header' });
++    assert.equal(calls.length, 0);
++    assert.equal(typeof (globalThis as any).window.gtag, 'undefined', 'trackEvent must not have created window.gtag');
++  });
++
++  test('only approved event names are exported/allowlisted', () => {
++    assert.deepEqual([...ANALYTICS_EVENT_NAMES].sort(), [
++      'area_select', 'contact_action', 'language_change', 'salon_open', 'search_results_view',
++    ]);
++  });
++});
++
++describe('T-015: trackEvent — PII and payload-quality guards', () => {
++  afterEach(clearBrowser);
++
++  test('disallowed parameter keys anywhere in the input drop the whole event', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: '123', source: 'homepage', locale: 'el', ...( { phone: '+30 210 1234567' } as any) });
++    assert.equal(calls.length, 0);
++  });
++
++  test('a nested arbitrary object as a parameter value drops the whole event', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: '123', source: { nested: 'object' } as any, locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('an array as a parameter value drops the whole event', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: '123', source: ['array'] as any, locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('overlong values are rejected — event dropped, not truncated and sent', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('area_select', { area: 'a'.repeat(100), source: 'homepage_grid', locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('only approved parameters reach gtag — an extra unexpected key never reaches the payload', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('area_select', { area: 'athens-center', source: 'homepage_grid', locale: 'el', ...( { extra_unexpected_key: 'value' } as any) });
++    assert.equal(calls.length, 1);
++    const sentParams = calls[0][2] as Record<string, unknown>;
++    assert.deepEqual(Object.keys(sentParams).sort(), ['area', 'locale', 'source']);
++  });
++
++  test('salon_id must be the numeric internal id, not a business-name-bearing slug', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: 'harris-anagnostopoulos-12608', source: 'homepage', locale: 'el' });
++    assert.equal(calls.length, 0, 'a slug-shaped salon_id must be rejected, not silently sent');
++
++    trackEvent('salon_open', { salon_id: '12608', source: 'homepage', locale: 'el' });
++    assert.equal(calls.length, 1, 'a real numeric id is accepted');
++  });
++
++  test('email-shaped values are rejected in any parameter', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('area_select', { area: 'user@example.com', source: 'homepage_grid', locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('values containing whitespace (free text, names, addresses, messages) are rejected in any parameter', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('area_select', { area: 'Ermou Street 28', source: 'homepage_grid', locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('URL-scheme-shaped values (tel:, mailto:, https://, wa.me links) are rejected in any parameter', () => {
++    const calls1 = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: 'tel:+302101234567', source: 'homepage', locale: 'el' });
++    assert.equal(calls1.length, 0);
++    clearBrowser();
++
++    const calls2 = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: '123', source: 'https://evil.example' as any, locale: 'el' });
++    assert.equal(calls2.length, 0);
++  });
++
++  test('an invalid enum value for a closed parameter drops the event rather than passing through unchecked', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('contact_action', { salon_id: '1', channel: 'viber' as any, page: 'salon_detail', locale: 'el' });
++    assert.equal(calls.length, 0);
++  });
++
++  test('a missing required parameter drops the event', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('contact_action', { salon_id: '1', channel: 'phone', locale: 'el' } as any);
++    assert.equal(calls.length, 0);
++  });
++
++  test('none of the 5 event schemas contain any denylisted key name', () => {
++    const source = readSource('lib/analytics.ts');
++    const schemaBlock = source.slice(source.indexOf('const EVENT_SCHEMAS'), source.indexOf('const MAX_PARAM_LENGTH') > -1 ? source.indexOf('export function trackEvent') : source.length);
++    const deniedNames = ['email', 'phone:', 'whatsapp:', 'address:', 'message:', 'notes:', 'token:', 'lat:', 'lng:', 'query:', 'url:', 'cookie:', 'user_id:'];
++    for (const denied of deniedNames) {
++      assert.ok(!schemaBlock.includes(denied), `EVENT_SCHEMAS must not define a "${denied}" key`);
++    }
++  });
++});
++
++describe('T-015: happy-path payloads for each of the 5 approved events (mocked transport, exact shape)', () => {
++  afterEach(clearBrowser);
++
++  test('salon_open sends exactly salon_id/source/locale', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('salon_open', { salon_id: '42', source: 'search_list', locale: 'en' });
++    assert.equal(calls.length, 1);
++    assert.deepEqual(calls[0], ['event', 'salon_open', { salon_id: '42', source: 'search_list', locale: 'en' }]);
++  });
++
++  test('contact_action sends exactly salon_id/channel/page/locale', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('contact_action', { salon_id: '42', channel: 'phone', page: 'salon_detail', locale: 'en' });
++    assert.equal(calls.length, 1);
++    assert.deepEqual(calls[0], ['event', 'contact_action', { salon_id: '42', channel: 'phone', page: 'salon_detail', locale: 'en' }]);
++  });
++
++  test('search_results_view sends exactly area/result_count_bucket/view/locale', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('search_results_view', { area: 'all', result_count_bucket: '6_20', view: 'list', locale: 'en' });
++    assert.equal(calls.length, 1);
++    assert.deepEqual(calls[0], ['event', 'search_results_view', { area: 'all', result_count_bucket: '6_20', view: 'list', locale: 'en' }]);
++  });
++
++  test('area_select sends exactly area/source/locale', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('area_select', { area: 'athens-center', source: 'search_filter', locale: 'en' });
++    assert.equal(calls.length, 1);
++    assert.deepEqual(calls[0], ['event', 'area_select', { area: 'athens-center', source: 'search_filter', locale: 'en' }]);
++  });
++
++  test('language_change sends exactly from_locale/to_locale/surface', () => {
++    const calls = mockBrowser({ consent: '1', gtag: true });
++    trackEvent('language_change', { from_locale: 'el', to_locale: 'en', surface: 'footer' });
++    assert.equal(calls.length, 1);
++    assert.deepEqual(calls[0], ['event', 'language_change', { from_locale: 'el', to_locale: 'en', surface: 'footer' }]);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// T-015: component wiring — source-inspection tests (no jsdom in this test
++// runner, same pattern already established for GoogleAnalytics.tsx above).
++// ---------------------------------------------------------------------------
++
++describe('T-015: SalonCard.tsx — salon_open, single owner, no PII', () => {
++  const source = readSource('components/SalonCard.tsx');
++
++  test('accepts an explicit source prop rather than guessing it', () => {
++    assert.ok(/source:\s*'search_list'\s*\|\s*'homepage'\s*\|\s*'masters'/.test(source));
++  });
++
++  test('salon_open uses the numeric salon.id, never salon.slug', () => {
++    const fn = source.slice(source.indexOf('function handleOpen'), source.indexOf('function handleOpen') + 300);
++    assert.ok(fn.includes('salon_id: String(salon.id)'));
++    assert.ok(!fn.includes('salon.slug'), 'must never use salon.slug as salon_id — slugs embed the business name');
++  });
++
++  test('exactly one onClick in the whole file, on the single wrapping Link — no nested handler could double-fire', () => {
++    const onClickMatches = source.match(/onClick=/g) || [];
++    assert.equal(onClickMatches.length, 1);
++    assert.ok(/<Link href=\{href\} onClick=\{handleOpen\}/.test(source));
++  });
++
++  test('no salon name, address, or phone is passed to trackEvent', () => {
++    const fn = source.slice(source.indexOf('function handleOpen'), source.indexOf('function handleOpen') + 300);
++    assert.ok(!/salon\.name|salon\.address|salon\.phone/.test(fn));
++  });
++});
++
++describe('T-015: ContactButtons.tsx — contact_action, single owner per button, no PII, T-010 contract preserved', () => {
++  const source = readSource('components/ContactButtons.tsx');
++
++  test('exactly 3 onClick handlers — call, whatsapp, website — each on its own flat <a>, no nesting', () => {
++    const onClickMatches = source.match(/onClick=\{\(\) => trackContact/g) || [];
++    assert.equal(onClickMatches.length, 3);
++    assert.ok(source.includes("trackContact(salonId, 'phone', locale)"));
++    assert.ok(source.includes("trackContact(salonId, 'whatsapp', locale)"));
++    assert.ok(source.includes("trackContact(salonId, 'website', locale)"));
++  });
++
++  test('trackContact sends only salon_id/channel/page/locale — never a phone number, href, or salonName value', () => {
++    const fn = source.slice(source.indexOf('function trackContact'), source.indexOf('export default function'));
++    assert.ok(fn.includes("salon_id: String(salonId)"));
++    assert.ok(fn.includes("page: 'salon_detail'"));
++    // 'phone'/'whatsapp'/'website' as channel enum tokens are expected and fine —
++    // what must never appear is a reference to the *value* behind those buttons.
++    assert.ok(!/actions\.|salonName|websiteUrl|callHref|whatsappHref|websiteHref/.test(fn), 'trackContact must not reference the actual phone/URL/name values, only the channel enum');
++  });
++
++  test('page is hardcoded to salon_detail, not derived from a route/URL', () => {
++    assert.ok(/page:\s*'salon_detail'/.test(source));
++  });
++
++  test('T-010 contract untouched: still exactly call/whatsapp/website, no Viber, no booking', () => {
++    assert.ok(!/viber/i.test(source));
++    assert.ok(!/booking/i.test(source));
++    assert.ok(source.includes('actions.callHref'));
++    assert.ok(source.includes('actions.whatsappHref'));
++    assert.ok(source.includes('actions.websiteHref'));
++  });
++});
++
++describe('T-015: MapView.tsx — salon_open for the map surface; quick-dial phone button deliberately not instrumented', () => {
++  const source = readSource('components/MapView.tsx');
++
++  test('the "view" link fires salon_open with source: search_map, using the numeric id', () => {
++    // href legitimately uses selected.slug || selected.id for navigation —
++    // only the onClick/trackEvent call is checked for the salon_id value.
++    const onClickBlock = source.slice(source.indexOf("onClick={() => trackEvent('salon_open'"), source.indexOf("onClick={() => trackEvent('salon_open'") + 200);
++    assert.ok(onClickBlock.includes("source: 'search_map'"));
++    assert.ok(onClickBlock.includes('salon_id: String(selected.id)'));
++    assert.ok(!onClickBlock.includes('selected.slug'), 'must never use the slug as salon_id');
++  });
++
++  test('the phone quick-dial button has no trackEvent call — out of the approved contact_action contract (page must be salon_detail)', () => {
++    const phoneBlock = source.slice(source.indexOf('selected.phone_primary &&'), source.indexOf('selected.phone_primary &&') + 250);
++    assert.ok(!phoneBlock.includes('trackEvent'));
++  });
++
++  test('only one onClick with trackEvent exists in the file (the view link) — the marker click and phone button do not track', () => {
++    const trackingOnClicks = (source.match(/onClick=\{\(\) => trackEvent/g) || []).length;
++    assert.equal(trackingOnClicks, 1);
++  });
++});
++
++describe('T-015: AreaGrid.tsx — area_select from the homepage grid', () => {
++  const source = readSource('components/AreaGrid.tsx');
++
++  test('is a client component (needs onClick)', () => {
++    assert.ok(source.startsWith("'use client';"));
++  });
++
++  test('fires area_select with source: homepage_grid and the canonical area.slug, not free text', () => {
++    assert.ok(source.includes("trackEvent('area_select', { area: area.slug, source: 'homepage_grid'"));
++  });
++
++  test('exactly one onClick — one Link per area, no nested trackable element', () => {
++    const onClickMatches = source.match(/onClick=/g) || [];
++    assert.equal(onClickMatches.length, 1);
++  });
++});
++
++describe('T-015: LanguageSwitcher.tsx — language_change, same-locale guard, dual-surface support', () => {
++  const source = readSource('components/LanguageSwitcher.tsx');
++
++  test('accepts an explicit surface prop rather than guessing header vs footer', () => {
++    assert.ok(/surface:\s*'header'\s*\|\s*'footer'/.test(source));
++  });
++
++  test('selecting the already-active locale returns before tracking or navigating', () => {
++    const fn = source.slice(source.indexOf('const switchLocale'), source.indexOf('return (') > -1 ? source.indexOf('return (') : source.length);
++    const guardIdx = fn.indexOf("if (locale === currentLocale) return;");
++    const trackIdx = fn.indexOf('trackEvent(');
++    assert.ok(guardIdx > -1 && trackIdx > -1 && guardIdx < trackIdx, 'the same-locale guard must run before trackEvent');
++  });
++
++  test('sends exactly from_locale/to_locale/surface', () => {
++    assert.ok(source.includes("trackEvent('language_change', { from_locale: currentLocale as Locale, to_locale: locale as Locale, surface });"));
++  });
++});
++
++describe('T-015: Header.tsx / Footer.tsx — pass distinct surface values to LanguageSwitcher', () => {
++  test('Header passes surface="header"', () => {
++    const source = readSource('components/Header.tsx');
++    assert.ok(source.includes('<LanguageSwitcher currentLocale={locale} surface="header" />'));
++  });
++
++  test('Footer passes surface="footer"', () => {
++    const source = readSource('components/Footer.tsx');
++    assert.ok(source.includes('<LanguageSwitcher currentLocale={locale} surface="footer" />'));
++  });
++});
++
++describe('T-015: search/page.tsx — search_results_view and area_select (search_filter source)', () => {
++  const source = readSource('app/[locale]/search/page.tsx');
++
++  test('SalonCard is rendered with source="search_list"', () => {
++    assert.ok(source.includes('source="search_list"'));
++  });
++
++  test('selectArea only tracks a genuine change to a real area, never a clear-to-all or a reselect of the current area', () => {
++    const fn = source.slice(source.indexOf('const selectArea'), source.indexOf('const clearFilters'));
++    assert.ok(/if \(slug && slug !== area\)/.test(fn));
++    const guardIdx = fn.indexOf('if (slug && slug !== area)');
++    const trackIdx = fn.indexOf("trackEvent('area_select'");
++    assert.ok(guardIdx > -1 && trackIdx > -1 && guardIdx < trackIdx);
++  });
++
++  test('area_select from the filter uses source: search_filter', () => {
++    assert.ok(source.includes("trackEvent('area_select', { area: slug, source: 'search_filter'"));
++  });
++
++  test('search_results_view is gated on loading/error state for both list and map before ever computing a bucket', () => {
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
++    assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
++  });
++
++  test('search_results_view uses a ref-based normalized-key comparison for dedup, not a time-based debounce', () => {
++    assert.ok(source.includes('lastTrackedSearchKey'));
++    assert.ok(!/setTimeout|debounce/i.test(source.slice(source.indexOf('lastTrackedSearchKey'), source.indexOf('lastTrackedSearchKey') + 2000)));
++  });
++
++  test('list-view bucket comes from total (bucketed), map-view bucket comes from mapSalons.length (bucketed) — never the exact count sent raw', () => {
++    assert.ok(source.includes('bucketResultCount(total)'));
++    assert.ok(source.includes('bucketResultCount(mapSalons.length)'));
++  });
++
++  test('search API failure sets an explicit error flag distinct from a genuine empty result', () => {
++    const listEffect = source.slice(source.indexOf('// Reset + initial fetch'), source.indexOf('// Map fetch'));
++    assert.ok(listEffect.includes('setSearchError(true)'));
++    assert.ok(listEffect.includes('setSearchError(false)'));
++  });
++
++  test('map API failure sets an explicit error flag distinct from a genuine empty result', () => {
++    const mapEffect = source.slice(source.indexOf('// Map fetch'), source.indexOf('// IntersectionObserver'));
++    assert.ok(mapEffect.includes('setMapError(true)'));
++    assert.ok(mapEffect.includes('setMapError(false)'));
++  });
++
++  test('the free-text search query (q) is never passed as the area parameter', () => {
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    assert.ok(!/area:\s*q\b/.test(effectBlock));
++  });
++});
++
++describe('T-015: no other double-firing surfaces exist', () => {
++  test('ContactButtons: no nested <a>/<button> inside any of the 3 tracked buttons — only a <span> for the phone suffix', () => {
++    const source = readSource('components/ContactButtons.tsx');
++    const returnBlock = source.slice(source.indexOf('return (\n    <div className="grid grid-cols-2'));
++    const nestedInteractive = (returnBlock.match(/<(a|button)[\s>]/g) || []).length;
++    // Exactly 3 <a> tags total (call/whatsapp/website) — none nested inside another.
++    assert.equal(nestedInteractive, 3);
++  });
++
++  test('SalonDetailClient.tsx never calls trackEvent on mount/hydration — salon_open only ever fires from the page the user came FROM', () => {
++    const source = readSource('app/[locale]/salons/[slug]/SalonDetailClient.tsx');
++    assert.ok(!source.includes('trackEvent'), 'the salon detail page itself must never track salon_open — only the originating card/link does');
++    assert.ok(!source.includes("from '@/lib/analytics'"));
++  });
++
++  test('ContactButtons hrefs are unchanged by the T-015 instrumentation — real navigation/deep-links still work', () => {
++    const source = readSource('components/ContactButtons.tsx');
++    assert.ok(source.includes('href={actions.callHref}'));
++    assert.ok(source.includes('href={actions.whatsappHref}'));
++    assert.ok(source.includes('href={actions.websiteHref}'));
++    assert.ok(source.includes('target="_blank"'));
++    assert.ok(source.includes('rel="noopener noreferrer"'));
++  });
++});
++
++describe('T-015: T-014 non-regression — page-view infra untouched by product-event instrumentation', () => {
++  test('analytics.ts still exports the T-014 page-view/consent functions unchanged', () => {
++    const source = readSource('lib/analytics.ts');
++    assert.ok(source.includes('export function initGtagIfNeeded()'));
++    assert.ok(source.includes('export function sendPageView('));
++    assert.ok(source.includes('export function updateAnalyticsConsent('));
++    assert.ok(source.includes('export function deleteGa4Cookies()'));
++  });
++
++  test('the dataLayer arguments-object fix (T-014 Stage 2 root cause) is untouched', () => {
++    const source = readSource('lib/analytics.ts');
++    assert.ok(/window\.gtag = function gtag\(\) \{\s*window\.dataLayer!?\.push\(arguments\);/.test(source));
++  });
++
++  test('the apex-domain cookie-deletion fix (T-014 Stage 2) is untouched', () => {
++    const source = readSource('lib/analytics.ts');
++    assert.ok(/parts\.length >= 2/.test(source));
++  });
++
++  test('GoogleAnalytics.tsx duplicate-initial-page_view guard (T-014 Stage 2) is untouched', () => {
++    const source = readSource('components/GoogleAnalytics.tsx');
++    assert.ok(/if \(path === lastTrackedPath\.current\) return;/.test(source));
++  });
++});
+diff --git a/frontend/lib/analytics.ts b/frontend/lib/analytics.ts
+index ff236ff..c77d852 100644
+--- a/frontend/lib/analytics.ts
++++ b/frontend/lib/analytics.ts
+@@ -12,6 +12,9 @@
+  * resuming) after the script has already loaded once.
+  */
+ 
++import type { Locale } from '@/i18n/request';
++import { getAnalyticsConsent } from './consent';
++
+ export const GA4_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA4_ID || '';
+ 
+ declare global {
+@@ -104,3 +107,220 @@ export function deleteGa4Cookies(): void {
+ export function _resetForTests(): void {
+   initialized = false;
+ }
++
++// ---------------------------------------------------------------------------
++// T-015: consent-gated GA4 product events.
++//
++// A closed catalogue by design — trackEvent() only accepts the 5 approved
++// event name/parameter-shape combinations below, enforced both at compile
++// time (function overloads) and at runtime (ANALYTICS_EVENT_NAMES allowlist
++// + per-event parameter schemas + a universal denylist). No free-form event
++// name or parameter object from a component can ever reach gtag().
++//
++// None of these events carry PII: no name, email, phone, message text, free-
++// text search query, exact GPS, or destination URL. Every parameter is
++// either a stable non-personal ID (salon_id — the numeric DB primary key,
++// never salon.slug, which typically embeds the business name), a canonical
++// slug (area), or a closed low-cardinality enum.
++// ---------------------------------------------------------------------------
++
++const LOCALE_VALUES: readonly Locale[] = ['el', 'en', 'ru', 'uk'];
++function isLocale(v: string): v is Locale {
++  return (LOCALE_VALUES as readonly string[]).includes(v);
++}
++
++function isOneOf<T extends string>(allowed: readonly T[]): (v: string) => v is T {
++  return (v: string): v is T => (allowed as readonly string[]).includes(v);
++}
++
++/**
++ * Internal salon primary-key IDs only — never a slug. Real slugs observed in
++ * production embed the salon's business name (e.g.
++ * "harris-anagnostopoulos-12608"), which would make salon_id personally
++ * identifying; the numeric id field never does. Bounded to a realistic
++ * primary-key length as a sanity check, not as a cryptographic guarantee.
++ */
++const NUMERIC_ID_RE = /^\d{1,12}$/;
++function isNumericId(v: string): boolean {
++  return NUMERIC_ID_RE.test(v);
++}
++
++/** Canonical area slugs only (e.g. "athens-center") — never arbitrary URL/user text. */
++const AREA_SLUG_RE = /^[a-z0-9-]{1,64}$/;
++function isAreaSlug(v: string): boolean {
++  return AREA_SLUG_RE.test(v);
++}
++
++const RESULT_COUNT_BUCKETS = ['0', '1_5', '6_20', '21_50', '51_plus'] as const;
++export type ResultCountBucket = (typeof RESULT_COUNT_BUCKETS)[number];
++
++/** Buckets a raw result count for search_results_view — the exact count is never transmitted. */
++export function bucketResultCount(count: number): ResultCountBucket {
++  if (count <= 0) return '0';
++  if (count <= 5) return '1_5';
++  if (count <= 20) return '6_20';
++  if (count <= 50) return '21_50';
++  return '51_plus';
++}
++
++/** Stable normalized state key for search_results_view dedup — see buildSearchResultsViewKey below. */
++export function buildSearchResultsViewKey(area: string, bucket: ResultCountBucket, view: 'list' | 'map', locale: Locale): string {
++  return `${area}|${bucket}|${view}|${locale}`;
++}
++
++export const ANALYTICS_EVENT_NAMES = [
++  'salon_open',
++  'contact_action',
++  'search_results_view',
++  'area_select',
++  'language_change',
++] as const;
++export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number];
++
++export interface SalonOpenParams {
++  salon_id: string;
++  source: 'search_list' | 'search_map' | 'homepage' | 'masters';
++  locale: Locale;
++}
++export interface ContactActionParams {
++  salon_id: string;
++  channel: 'phone' | 'whatsapp' | 'website';
++  page: 'salon_detail';
++  locale: Locale;
++}
++export interface SearchResultsViewParams {
++  area: string;
++  result_count_bucket: ResultCountBucket;
++  view: 'list' | 'map';
++  locale: Locale;
++}
++export interface AreaSelectParams {
++  area: string;
++  source: 'homepage_grid' | 'search_filter';
++  locale: Locale;
++}
++export interface LanguageChangeParams {
++  from_locale: Locale;
++  to_locale: Locale;
++  surface: 'header' | 'footer';
++}
++
++/**
++ * Explicit key-name backstop, in addition to the per-event schemas below.
++ * The schemas already only ever copy their own named keys out of a caller's
++ * object — anything else is structurally ignored — so this list is
++ * defense-in-depth for the case a future schema edit accidentally
++ * introduces one of these names: if present anywhere in the raw input
++ * object, the entire event is dropped rather than silently stripped.
++ */
++const DENIED_PARAM_KEYS = new Set([
++  'email', 'phone', 'phone_number', 'whatsapp', 'whatsapp_number', 'viber', 'viber_number',
++  'name', 'user_name', 'salon_name', 'address', 'street', 'message', 'text', 'notes',
++  'description', 'report_description', 'review_text', 'service_name', 'google_account_id',
++  'token', 'access_token', 'refresh_token', 'auth_token', 'verification_token',
++  'lat', 'lng', 'latitude', 'longitude', 'bounds', 'viewport', 'query', 'q', 'search_query',
++  'url', 'destination_url', 'website_url', 'page_location', 'cookie', 'user_id', 'id',
++]);
++
++const MAX_PARAM_LENGTH = 64;
++
++/**
++ * Universal denylist applied to every parameter value regardless of key —
++ * on top of, not instead of, the per-event schema checks below. No space,
++ * no '@', no URL scheme, bounded length: every legitimate value in the
++ * approved catalogue is a short enum token, a hyphenated slug, or a digit
++ * string, and none of them ever look like this — but a name, address,
++ * message, email, or destination URL would.
++ */
++function isSafeGenericValue(v: string): boolean {
++  if (typeof v !== 'string') return false;
++  if (v.length === 0 || v.length > MAX_PARAM_LENGTH) return false;
++  if (/\s/.test(v)) return false;
++  if (v.includes('@')) return false;
++  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return false; // blocks tel:, mailto:, https://, wa.me-style, etc.
++  return true;
++}
++
++const EVENT_SCHEMAS: Record<AnalyticsEventName, Record<string, (v: string) => boolean>> = {
++  salon_open: {
++    salon_id: isNumericId,
++    source: isOneOf(['search_list', 'search_map', 'homepage', 'masters']),
++    locale: isLocale,
++  },
++  contact_action: {
++    salon_id: isNumericId,
++    channel: isOneOf(['phone', 'whatsapp', 'website']),
++    page: isOneOf(['salon_detail']),
++    locale: isLocale,
++  },
++  search_results_view: {
++    area: (v: string) => v === 'all' || isAreaSlug(v),
++    result_count_bucket: isOneOf(RESULT_COUNT_BUCKETS),
++    view: isOneOf(['list', 'map']),
++    locale: isLocale,
++  },
++  area_select: {
++    area: isAreaSlug,
++    source: isOneOf(['homepage_grid', 'search_filter']),
++    locale: isLocale,
++  },
++  language_change: {
++    from_locale: isLocale,
++    to_locale: isLocale,
++    surface: isOneOf(['header', 'footer']),
++  },
++};
++
++/**
++ * The single entry point for all T-015 product events.
++ *
++ * - No-ops (silently, never throws) unless GA is already initialized
++ *   (window.gtag exists) AND current consent is 'granted' — read live from
++ *   the cookie on every call, never cached, so a mid-session withdrawal
++ *   takes effect on the very next call with no extra wiring.
++ * - Never calls initGtagIfNeeded() itself — T-015 rides on T-014's already-
++ *   consented transport, it does not decide when GA gets initialized.
++ * - Never queues a dropped call for later replay — a call made while
++ *   consent is absent/rejected/withdrawn is simply gone, not deferred.
++ * - Only the 5 approved event names are callable at all (enforced by the
++ *   overloads below); for each, only its own named parameters — after
++ *   passing both the per-event schema and the universal denylist above —
++ *   ever reach gtag().
++ */
++export function trackEvent(name: 'salon_open', parameters: SalonOpenParams): void;
++export function trackEvent(name: 'contact_action', parameters: ContactActionParams): void;
++export function trackEvent(name: 'search_results_view', parameters: SearchResultsViewParams): void;
++export function trackEvent(name: 'area_select', parameters: AreaSelectParams): void;
++export function trackEvent(name: 'language_change', parameters: LanguageChangeParams): void;
++export function trackEvent(
++  name: AnalyticsEventName,
++  parameters: SalonOpenParams | ContactActionParams | SearchResultsViewParams | AreaSelectParams | LanguageChangeParams,
++): void {
++  try {
++    if (!(ANALYTICS_EVENT_NAMES as readonly string[]).includes(name)) return;
++    if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
++    if (getAnalyticsConsent() !== 'granted') return;
++
++    const raw = parameters as unknown;
++    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return;
++    const rawRecord = raw as Record<string, unknown>;
++
++    for (const key of Object.keys(rawRecord)) {
++      if (DENIED_PARAM_KEYS.has(key)) return;
++    }
++
++    const schema = EVENT_SCHEMAS[name];
++    const sanitized: Record<string, string> = {};
++    for (const key of Object.keys(schema)) {
++      const value = rawRecord[key];
++      if (typeof value !== 'string') return;
++      if (!isSafeGenericValue(value)) return;
++      if (!schema[key](value)) return;
++      sanitized[key] = value;
++    }
++
++    window.gtag('event', name, sanitized);
++  } catch {
++    // Never throw into the UI — a broken analytics call must not break the product.
++  }
++}
