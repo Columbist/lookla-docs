@@ -1109,7 +1109,7 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 ### T-054 — Search Results Context & Filter Recovery (SQC-01A)
 **Priority:** P0 (second ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-007 ✅ Area URL-state, T-015 ✅ Search analytics baseline, T-042 ✅ Unified async states
-**Status:** Implemented (branch `feat/T-054-search-results-context`), pending independent review.
+**Status:** ✅ Completed (2026-07-24) — reviewed, merged to `main` (PR #51), `beauty_web` rebuilt/redeployed alone (API/DB/Redis/crawler/crawler_worker untouched), full production verification passing against `https://lookla.gr`.
 
 **Goal:** make the search-results page immediately understandable and recoverable — a stable results summary with the canonical total, visible chips for every effective filter, individual filter removal, a clear-all action, and an actionable filtered-empty state. Frontend-only; no backend/ranking/filter/SalonCard/analytics-event changes.
 
@@ -1132,6 +1132,16 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 **Isolated production verification (2026-07-23):** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage exactly — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container (confirmed unaffected — uptime unchanged throughout). 63/63 Playwright checks passing across all 15 required scenarios: unfiltered/area/query/legacy-city/area+query/area+city-together search, filtered zero-results (actionable, `role="status"`, no Retry), individual chip removal (URL + focus), clear-all (URL + focus), browser back/forward (correct filter-context restoration), list/map view (canonical total preserved in both), loading (no false zero), API error+retry, keyboard-only chip removal (Enter key, correct accessible name, focus preserved), 3 mobile breakpoints (320/375/768px — chips wrap, no horizontal overflow), and all 4 locales (correct heading/pluralization/localized chips, zero console/hydration errors) — including real production data exercising plural categories (90 → Russian "many", Ukrainian "many") beyond what the unit tests' synthetic values covered.
 
+**Production verification (2026-07-24):** Playwright directly against `https://lookla.gr` (real deployed build, `beauty_web` rebuilt/redeployed alone; API/DB/Redis/crawler/crawler_worker uptime unchanged throughout), covering the three pre-existing gaps this ticket fixes plus the full acceptance-criteria set. 28/28 substantive checks passing:
+- API 500 on `/api/salons`: count shows nothing (never "0"), error state is `role="alert"`, Retry restores a real total.
+- Clear-all: removed `area`/`q`/`min_rating`/`page`, preserved `view=map`, focus landed on the results-summary region (never `<body>`).
+- Removing the `area` chip when `area=piraeus&city=Athens` were both present: `city` was already correctly suppressed as a visible second filter beforehand, and removing `area` deleted `city` from the URL too — no silent reactivation.
+- Canonical total (76) displayed correctly even with only 20 cards actually rendered on the page; list and map views showed the identical canonical total (90) for the same filters.
+- Russian ("90 салонов найдено") and Ukrainian ("90 салонів знайдено") pluralization correct on real production data.
+- No horizontal overflow at 320px/375px with a long free-text query chip.
+- Browser back/forward correctly restored the prior filter context's chips and its own matching count.
+- Analytics: exactly one `search_results_view` fired with exactly `{area, result_count_bucket, view, locale}` (no new field); `area_select` fired from the filter-panel's own area `<select>` with exactly `{area, source, locale}`; no event name outside the T-014 `page_view` + 5 T-015 product events appeared; the raw query value did not appear in any T-015 product event's own parameters (GA4's standard `dl`/document-location field on `page_view` naturally includes the full current URL, including `?q=...`, as normal page-context metadata — this is universal GA4 behavior on every hit type, not a T-015 product-event parameter, and was correctly excluded from this check once the two were properly distinguished).
+
 **Acceptance Criteria:**
 - [x] Stable results summary with the canonical total (never card-count/marker-count), correct locale-aware pluralization
 - [x] Visible chips for every effective filter (query, area, legacy city, category, min_rating)
@@ -1142,8 +1152,8 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 - [x] No backend/database/ranking/filter/SalonCard changes
 - [x] No new GA4 events; existing `search_results_view`/`area_select`/`salon_open` untouched
 - [x] Accessibility: polite count region, assertive error (unchanged from T-042), precise localized remove-button accessible names, predictable focus after removal/clear-all, keyboard flow verified
-- [x] Production verification — 63/63 checks passing (see above)
-- [ ] Independent review — pending
+- [x] Production verification — 63/63 isolated checks + 28/28 live production checks passing (see above)
+- [x] Independent review — approved (PR #51)
 
 ---
 
