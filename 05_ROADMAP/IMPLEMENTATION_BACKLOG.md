@@ -1157,6 +1157,41 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-055 — SalonCard Information Hierarchy & Click Target Optimization (SQC-01A)
+**Priority:** P0 (third ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-015 ✅ Search analytics baseline, T-054 ✅ Search results context
+**Status:** Implemented (branch `feat/T-055-salon-card-hierarchy`), pending independent review.
+
+**Goal:** improve how information is organized inside `SalonCard.tsx` — accessible name, click target, and visual hierarchy — without touching data, ranking, the search API, or analytics. No backend/database/ranking/SalonCard-data-field/GA-taxonomy changes.
+
+**Inventory findings (live audit against production, pre-implementation):** the card is a single outer `<Link>` with zero nested interactive elements (already correct — no change needed there). Without an explicit `aria-label`, the computed accessible name was the raw, unseparated concatenation of every descendant text node, e.g. `"OpenΚουρείο JUST HAIRΕιρήνης 15, Πειραιάς★★★★★5.0(520)"` — unusable for screen reader users. Sampling 72 live cards: rating present on 72/72, open/closed badge on 69/72 (96%), price on 0/72, verified badge on 0/72 — rating and open-status are near-universal signals; price/verified are rare, conditionally-rendered secondary elements that already reserve no empty space when absent (confirmed via raw HTML dump — zero DOM footprint, no placeholder branch). Longest real salon name on a live page: 62 characters, visually truncated to one line with no way to recover the full name.
+
+**Accessible-name fix:** `buildCardAriaLabel()` builds `"{name}, {city}, {rating word} {rating}, {open/closed}"`, each clause included only when the underlying field is actually present (never a dangling separator, never a placeholder for missing data). Deliberately excludes street/number (redundant once city is present), the decorative star glyphs (screen readers announce them as literal Unicode character names), and the review count (available as plain visible/accessible text in the card body, not duplicated into the label). Verified against the actual computed accessible name (Playwright `getByRole('link', { name })`, not just attribute presence) across all 4 locales on the real built app.
+
+**Name truncation:** salon name switches `line-clamp-1` → `line-clamp-2` with `title={salon.name}` added for pointer users, and the full name is always present in the card's `aria-label` regardless of visual truncation. Backed by a live DOM measurement (swapping the CSS class on the production DOM and measuring `getBoundingClientRect().height` before/after): height increase is uniform within any given grid row (263.5px → 281px, 0px variance) — a predictable, non-ragged cost. Mobile-viewport verification (320/375/390/768px) confirms no horizontal overflow at any breakpoint.
+
+**Architecture:** all changes confined to `frontend/components/SalonCard.tsx` — `buildCardAriaLabel()` (exported, unit-tested directly), `aria-label={cardAriaLabel}` on the outer `<Link>`, `aria-hidden="true"` on the star-glyph `<span>` only (numeric rating/count remain plain accessible text, per instruction to keep them in the label *or* as separate accessible text, not both hidden), `title=` + `line-clamp-2` on the name `<h3>`. `handleOpen`'s `trackEvent('salon_open', ...)` call and the price/verified conditional-rendering blocks are byte-identical to before — no code change there, confirmed by regression tests.
+
+**Analytics invariants:** zero new `trackEvent` call sites; `handleOpen` unchanged byte-for-byte (T-015 contract: `salon_id` always `String(salon.id)`, never `salon.slug`). A regression test asserts the exact source string of the `trackEvent` call site is unchanged.
+
+**Verification:** 497/497 frontend tests passing (24 new for T-055 — `buildCardAriaLabel()` unit tests for all 4 locales and every present/absent field combination, plus source-level regression tests for the single-`<Link>`/no-nested-interactive contract, the byte-identical `trackEvent` call, and the still-conditional price/verified rendering). `npm run lint` and `npm run build` both clean, no new warnings (pre-existing `<img>`-vs-`next/image` warning on this file predates T-055).
+
+**Isolated production verification:** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container. All 4 locales × 9 checks passing: computed accessible name is non-null, differs from the raw concatenation bug, and excludes star glyphs; `getByRole('link', { name: <computed aria-label> })` actually resolves the card (proving the label really is the accessible name, not just an attribute); zero nested interactive elements; star-glyph spans are `aria-hidden`; name heading has `title=` and `line-clamp-2`; card heights uniform within a row (0px variance); zero console/page errors. Mobile breakpoints (320/375/390/768px) confirmed no horizontal overflow; the height difference between 1-column and 2-column layouts at different breakpoints was traced to CSS Grid's default `align-items: stretch` equalizing cards within the same row (pre-existing behavior, not a regression). The `salon_open` GA4 beacon itself could not be observed in this isolated build (the measurement ID/consent flag are baked in only via the Docker build's env args, confirmed in T-054) — covered instead by the byte-identical source regression test, with the live beacon to be checked against production after deploy.
+
+**Acceptance Criteria:**
+- [x] Whole-card accessible name fixed: no longer the raw unseparated concatenation, verified as the actual computed accessible name (not just attribute presence) across all 4 locales
+- [x] Decorative stars excluded from the accessible name via `aria-hidden`; numeric rating/count remain accessible text
+- [x] Full salon name always reachable (aria-label + title=), visual truncation improved (line-clamp-2) with a measured, uniform height cost
+- [x] Rating/open-status treated as primary constant hierarchy; price/verified remain conditional secondary elements with no reserved empty space
+- [x] No removal of verified/min_price, no business-meaning change, no "Price unavailable" substitute text, no new data, no backend/type-contract change
+- [x] Single outer `<Link>` preserved; no nested interactive elements introduced
+- [x] No data/ranking/API/analytics-taxonomy changes; `salon_open` call site byte-identical
+- [x] Isolated production verification — 4 locales × 9 checks passing (see above)
+- [ ] Live production verification — pending deploy
+- [ ] Independent review — pending
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
