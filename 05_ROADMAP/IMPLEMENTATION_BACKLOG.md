@@ -1106,6 +1106,57 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-054 — Search Results Context & Filter Recovery (SQC-01A)
+**Priority:** P0 (second ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-007 ✅ Area URL-state, T-015 ✅ Search analytics baseline, T-042 ✅ Unified async states
+**Status:** ✅ Completed (2026-07-24) — reviewed, merged to `main` (PR #51), `beauty_web` rebuilt/redeployed alone (API/DB/Redis/crawler/crawler_worker untouched), full production verification passing against `https://lookla.gr`.
+
+**Goal:** make the search-results page immediately understandable and recoverable — a stable results summary with the canonical total, visible chips for every effective filter, individual filter removal, a clear-all action, and an actionable filtered-empty state. Frontend-only; no backend/ranking/filter/SalonCard/analytics-event changes.
+
+**Search URL-state inventory (pre-implementation):** `area`/`city`/`q`/`category`/`min_rating` are all real, currently-applied filters sent to `/api/salons` and `/api/salons/map`; `view` (list/map) and `page` are not filters. Found three pre-existing gaps during inventory: (1) the results count showed a raw `${total} ${t('results')}` string-concatenation with no pluralization, and did not check `searchError` at all — a failed request displayed **"0 results"**, indistinguishable from a genuine empty search; (2) `clearFilters()` (the existing filter-dropdown's own clear button) never removed `q`, so "Clear filters" didn't actually clear the search query; (3) `city` was still sent to the API and could survive certain navigations even when `area` (canonical) was present, with no UI indication a hidden legacy filter was active.
+
+**Effective-filter precedence:** canonical `area` is authoritative — `city` is only ever shown as its own chip when `area` is absent, so a user is never silently filtered by a hidden legacy param. Values are trimmed; whitespace-only/invalid values never produce a chip. Area/category slugs resolve to their localized name once the canonical metadata (`/api/areas`, `/api/categories`) has loaded; before it loads, a locale-agnostic humanized fallback (`athens-center` → `Athens Center`) is shown instead of either the raw slug or an artificial delay, per architect instruction to derive initial visible filter context from already-available URL state. If metadata has loaded and the slug still matches nothing, the chip is dropped entirely (never a misleading chip for a genuinely invalid slug).
+
+**Result-count source:** the existing `total` state (set from the `/api/salons` response's `total` field) — never rendered-card-count, never map-marker-count. Reused as-is for both list and map views, since the list fetch already runs unconditionally regardless of which view is displayed. Rendered through a single ICU `{count, plural, ...}` message per locale (`search.results_summary`), verified directly against `intl-messageformat` (the library next-intl uses internally) for all 4 locales' correct CLDR plural categories, including Russian/Ukrainian one/few/many/other. Loading shows a fixed-height skeleton (not empty/collapsed, avoiding layout shift); error shows nothing (not "0").
+
+**Architecture:**
+- `lib/searchContext.ts` — pure, dependency-free `deriveActiveFilters()` (the `ActiveSearchFilter` model) plus per-filter-type and clear-all URL-mutation helpers (`removeQueryFilter`, `removeAreaFilter` — reuses T-007's `buildAreaUrlParams` so area removal already deletes legacy `city` too — `removeLegacyCityFilter`, `removeCategoryFilter`, `removeMinRatingFilter`, `removeActiveFilter` dispatcher, `clearAllActiveFilters`). `clearAllActiveFilters` fixes the pre-existing `q`-not-cleared bug; the existing filter-dropdown's own `clearFilters()` is deliberately left untouched (different, narrower, pre-existing scope) to avoid unrelated behavior change.
+- `components/ActiveFilterChips.tsx` — one real `<button>` per chip inside a semantic `<ul aria-label="Active filters">`, no nested interactive controls, one click = one URL update via `router.push` (matching this page's existing, consistent strategy — no `router.replace` introduced).
+- `lib/useFilterChipFocus.ts` — after a chip removal or clear-all, moves focus to the chip that shifted into the removed one's index, else the clear-all button, else the results-summary region — never `<body>`. Same "mark intent, act only once the count actually changed" pattern as T-042's `useFocusOnStatusRecovery`, so an unrelated render never steals focus.
+- `search/page.tsx` — new `<h1>`"Search results" heading (page previously had no heading at all) + `aria-live="polite"` count region + chips + conditional clear-all, wired above the existing T-042 `AsyncSection`. The list/map `empty` branches now key off `activeFilters.length > 0` (previously only `area`), giving every filter type — not just area — the actionable "No salons found" / explanation / "View all salons" recovery contract; a genuinely filter-free zero-result case keeps the old neutral message with no recovery action. Retry (T-042, error-only) is completely untouched.
+- New translation keys (all 4 locales): `search.results_heading`, `search.results_summary` (ICU plural, replaces the previously-dead `results_count`), `search.filter_query`, `search.clear_all_filters`, `search.remove_filter`, `search.no_matches_title`, `search.no_matches_description`, `search.view_all_salons`.
+
+**Analytics invariants:** no new `trackEvent` call sites added anywhere in this change — `removeFilter`/`clearAll`/`ActiveFilterChips` contain zero analytics calls. `search_results_view` and `area_select` call sites are byte-identical to pre-T-054. A regression test asserts every `trackEvent` call in the page uses one of the 5 T-015-approved event names.
+
+**Verification:** 473/473 frontend tests passing (74 new for T-054 — pure-function tests for `searchContext.ts`'s filter derivation and URL mutations, `intl-messageformat`-backed pluralization tests for all 4 locales' real CLDR plural categories, `useFilterChipFocus`/`ActiveFilterChips` behavior, and extensive `search/page.tsx` wiring/accessibility/analytics-invariant regression tests). `npm run lint` and `npm run build` both clean, no new warnings.
+
+**Isolated production verification (2026-07-23):** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage exactly — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container (confirmed unaffected — uptime unchanged throughout). 63/63 Playwright checks passing across all 15 required scenarios: unfiltered/area/query/legacy-city/area+query/area+city-together search, filtered zero-results (actionable, `role="status"`, no Retry), individual chip removal (URL + focus), clear-all (URL + focus), browser back/forward (correct filter-context restoration), list/map view (canonical total preserved in both), loading (no false zero), API error+retry, keyboard-only chip removal (Enter key, correct accessible name, focus preserved), 3 mobile breakpoints (320/375/768px — chips wrap, no horizontal overflow), and all 4 locales (correct heading/pluralization/localized chips, zero console/hydration errors) — including real production data exercising plural categories (90 → Russian "many", Ukrainian "many") beyond what the unit tests' synthetic values covered.
+
+**Production verification (2026-07-24):** Playwright directly against `https://lookla.gr` (real deployed build, `beauty_web` rebuilt/redeployed alone; API/DB/Redis/crawler/crawler_worker uptime unchanged throughout), covering the three pre-existing gaps this ticket fixes plus the full acceptance-criteria set. 28/28 substantive checks passing:
+- API 500 on `/api/salons`: count shows nothing (never "0"), error state is `role="alert"`, Retry restores a real total.
+- Clear-all: removed `area`/`q`/`min_rating`/`page`, preserved `view=map`, focus landed on the results-summary region (never `<body>`).
+- Removing the `area` chip when `area=piraeus&city=Athens` were both present: `city` was already correctly suppressed as a visible second filter beforehand, and removing `area` deleted `city` from the URL too — no silent reactivation.
+- Canonical total (76) displayed correctly even with only 20 cards actually rendered on the page; list and map views showed the identical canonical total (90) for the same filters.
+- Russian ("90 салонов найдено") and Ukrainian ("90 салонів знайдено") pluralization correct on real production data.
+- No horizontal overflow at 320px/375px with a long free-text query chip.
+- Browser back/forward correctly restored the prior filter context's chips and its own matching count.
+- Analytics: exactly one `search_results_view` fired with exactly `{area, result_count_bucket, view, locale}` (no new field); `area_select` fired from the filter-panel's own area `<select>` with exactly `{area, source, locale}`; no event name outside the T-014 `page_view` + 5 T-015 product events appeared; the raw query value did not appear in any T-015 product event's own parameters (GA4's standard `dl`/document-location field on `page_view` naturally includes the full current URL, including `?q=...`, as normal page-context metadata — this is universal GA4 behavior on every hit type, not a T-015 product-event parameter, and was correctly excluded from this check once the two were properly distinguished).
+
+**Acceptance Criteria:**
+- [x] Stable results summary with the canonical total (never card-count/marker-count), correct locale-aware pluralization
+- [x] Visible chips for every effective filter (query, area, legacy city, category, min_rating)
+- [x] Individual filter removal (one click/keypress = one URL update, focus preserved)
+- [x] Clear-all action, removing every effective filter including query (fixes the pre-existing `clearFilters()` gap)
+- [x] Actionable filtered empty state, never framed as an error, never shows Retry
+- [x] Legacy `city` handled correctly: authoritative `area` suppresses it as a second filter; standalone `city` remains visible so no hidden filter state
+- [x] No backend/database/ranking/filter/SalonCard changes
+- [x] No new GA4 events; existing `search_results_view`/`area_select`/`salon_open` untouched
+- [x] Accessibility: polite count region, assertive error (unchanged from T-042), precise localized remove-button accessible names, predictable focus after removal/clear-all, keyboard flow verified
+- [x] Production verification — 63/63 isolated checks + 28/28 live production checks passing (see above)
+- [x] Independent review — approved (PR #51)
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
