@@ -1157,10 +1157,10 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
-### T-055 — SalonCard Information Hierarchy & Click Target Optimization (SQC-01A)
+### T-055 — SalonCard Information Hierarchy & Click Target Optimization (SQC-01A) ✅ Completed
 **Priority:** P0 (third ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-015 ✅ Search analytics baseline, T-054 ✅ Search results context
-**Status:** Implemented (branch `feat/T-055-salon-card-hierarchy`), pending independent review.
+**Status:** Merged and deployed (PR #52, branch `feat/T-055-salon-card-hierarchy`). Production-verified 2026-07-24.
 
 **Goal:** improve how information is organized inside `SalonCard.tsx` — accessible name, click target, and visual hierarchy — without touching data, ranking, the search API, or analytics. No backend/database/ranking/SalonCard-data-field/GA-taxonomy changes.
 
@@ -1176,7 +1176,11 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 **Verification:** 497/497 frontend tests passing (24 new for T-055 — `buildCardAriaLabel()` unit tests for all 4 locales and every present/absent field combination, plus source-level regression tests for the single-`<Link>`/no-nested-interactive contract, the byte-identical `trackEvent` call, and the still-conditional price/verified rendering). `npm run lint` and `npm run build` both clean, no new warnings (pre-existing `<img>`-vs-`next/image` warning on this file predates T-055).
 
-**Isolated production verification:** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container. All 4 locales × 9 checks passing: computed accessible name is non-null, differs from the raw concatenation bug, and excludes star glyphs; `getByRole('link', { name: <computed aria-label> })` actually resolves the card (proving the label really is the accessible name, not just an attribute); zero nested interactive elements; star-glyph spans are `aria-hidden`; name heading has `title=` and `line-clamp-2`; card heights uniform within a row (0px variance); zero console/page errors. Mobile breakpoints (320/375/390/768px) confirmed no horizontal overflow; the height difference between 1-column and 2-column layouts at different breakpoints was traced to CSS Grid's default `align-items: stretch` equalizing cards within the same row (pre-existing behavior, not a regression). The `salon_open` GA4 beacon itself could not be observed in this isolated build (the measurement ID/consent flag are baked in only via the Docker build's env args, confirmed in T-054) — covered instead by the byte-identical source regression test, with the live beacon to be checked against production after deploy.
+**Isolated production verification:** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container. All 4 locales × 9 checks passing: computed accessible name is non-null, differs from the raw concatenation bug, and excludes star glyphs; `getByRole('link', { name: <computed aria-label> })` actually resolves the card (proving the label really is the accessible name, not just an attribute); zero nested interactive elements; star-glyph spans are `aria-hidden`; name heading has `title=` and `line-clamp-2`; card heights uniform within a row (0px variance); zero console/page errors. Mobile breakpoints (320/375/390/768px) confirmed no horizontal overflow; the height difference between 1-column and 2-column layouts at different breakpoints was traced to CSS Grid's default `align-items: stretch` equalizing cards within the same row (pre-existing behavior, not a regression). The `salon_open` GA4 beacon itself could not be observed in this isolated build (the measurement ID/consent flag are baked in only via the Docker build's env args, confirmed in T-054) — covered instead by the byte-identical source regression test, with the live beacon checked against production after deploy (see below).
+
+**Merge and deploy (2026-07-24):** PR #52 approved and merged to `main` (CI green: backend + frontend both pass). Rebuilt and redeployed `beauty_web` only via `docker compose build web && docker compose up -d --no-deps web` (12m41s build, no errors) — `api`/`db`/`redis`/`crawler`/`crawler_worker` untouched throughout, uptime unaffected.
+
+**Live production verification (2026-07-24):** against `https://lookla.gr`, all 4 locales × 5 widths (320/375/390/768/1280px) — zero horizontal overflow; every sampled `aria-label` structured, localized, and star-glyph-free (e.g. `"Harris Anagnostopoulos, Καλαμάτα, rating 5.0, Open"` / `"…, βαθμολογία 5.0, Ανοιχτό"` / `"…, рейтинг 5.0, Открыто"` / `"…, рейтинг 5.0, Відкрито"`); the 62-char long-name card's full name confirmed present in both `aria-label` and `title=`. Price rendering confirmed on a real priced salon (id 10647 "La Main Nail Salon", `min_price=5.0`) — renders `€` correctly; a priceless card's rating/price row has exactly 1 child, no reserved-space placeholder. Both mouse click and keyboard (Enter) activation each produced exactly one navigation to the salon detail page and exactly one `salon_open` push to `dataLayer` with the correct T-015 contract (`{"salon_id":"12608","source":"search_list","locale":"en"}`) — confirmed via `dataLayer` inspection after finding the raw GA4 `collect` network beacon unreliable to observe directly within a short window (GA4 batches non-initial hits with an observed multi-second delay, consistent with the same finding in T-054's verification). Zero console/page errors throughout. `is_verified` is currently `false` for all ~6,300 production salons (confirmed by scanning the live API) — the verified-badge rendering path has no real-data example to smoke-test today; that logic is untouched by T-055 and covered by the source-level regression test instead.
 
 **Acceptance Criteria:**
 - [x] Whole-card accessible name fixed: no longer the raw unseparated concatenation, verified as the actual computed accessible name (not just attribute presence) across all 4 locales
@@ -1185,10 +1189,10 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 - [x] Rating/open-status treated as primary constant hierarchy; price/verified remain conditional secondary elements with no reserved empty space
 - [x] No removal of verified/min_price, no business-meaning change, no "Price unavailable" substitute text, no new data, no backend/type-contract change
 - [x] Single outer `<Link>` preserved; no nested interactive elements introduced
-- [x] No data/ranking/API/analytics-taxonomy changes; `salon_open` call site byte-identical
+- [x] No data/ranking/API/analytics-taxonomy changes; `salon_open` call site byte-identical, confirmed firing correctly in production for both mouse and keyboard activation
 - [x] Isolated production verification — 4 locales × 9 checks passing (see above)
-- [ ] Live production verification — pending deploy
-- [ ] Independent review — pending
+- [x] Live production verification — 4 locales × 5 widths + price/click/keyboard checks passing (see above)
+- [x] Independent review — approved (PR #52)
 
 ---
 
