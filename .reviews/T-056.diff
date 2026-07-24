@@ -1,8 +1,8 @@
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index b7ca47a..f326389 100644
+index b7ca47a..831c3ee 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -1196,6 +1196,53 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+@@ -1196,6 +1196,55 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
  
  ---
  
@@ -38,6 +38,8 @@ index b7ca47a..f326389 100644
 +**Verification:** 581/581 frontend tests passing (77 new for T-056 — direct execution against real `history`-object mocks for `ensureEntryId`/`getValidSnapshot`/`saveSnapshot`/`computeSearchKey`/`isValidSnapshot` in `lib/searchReturnState.test.ts`, plus source-wiring regression tests in `app/[locale]/search/searchReturnRestoration.test.ts` covering save timing, scroll tracking, restoration sequence, invalidation, the map boundary, analytics invariants, accessibility, and the documented MapView limitation). `npm run lint` and `npm run build` both clean, no new warnings.
 +
 +**Isolated production verification:** built and ran the actual `next build` standalone production output on a throwaway port, proxying to the real backend API. Root-caused two real bugs during this pass, both fixed and re-verified (not merely asserted from code review): (1) the Next.js scroll-to-top-on-navigation race described above, fixed via the capture-phase click freeze; (2) the `view=map`-toggle stale-entry-id bug described above, fixed via the dedicated tracking effect. Final clean run: all 8 primary scenarios (mouse click, keyboard Enter, 320px, 375px, and all 4 locales) passing every check — 48/48 cards restored with identical order, scroll restored to an exact pixel match (0px diff, measured against the same click-time baseline the product code itself uses), zero duplicate `page=1` fetches, zero console/page errors, correct next-page continuation, zero duplicate cards. The `view=map` boundary scenario confirmed both the URL-preservation fix and the safe MapView-hard-navigation fallback. One transient `/api/salons/map` 500 (host memory pressure under the unfiltered 2000-marker query, matching the standing, previously-documented host-resource-constraint pattern from T-014/T-051) was observed and is unrelated to this ticket's code — retried cleanly.
++
++**Hard-reload invariant — explicit review round:** independent review correctly identified that the deliverables hadn't explicitly proven "hard reload must not restore a stale snapshot" as its own scenario, distinct from a fresh visit. Reproduced exactly as requested against the isolated standalone build: load 48 cards → open a salon → Back (confirms 48 restored, `history.state.entryId` recorded) → `page.reload()` → confirms exactly 24 cards (fresh page 1, not the stale 48), confirms a real `/api/salons?...page=1` request actually fired, confirms `history.state.entryId` is **unchanged** across the reload (the reviewer's premise about `history.state` surviving a reload is correct) yet restoration still correctly did not happen — because the in-memory `Map` the snapshot itself lives in does not survive the reload's fresh JS realm, unlike `history.state` (a separate, browser-native mechanism) or `sessionStorage` (deliberately not used — see Storage mechanism above). Matching identity alone was never what protected against reload; the storage mechanism is the actual load-bearing guarantee, now stated explicitly rather than left implicit. Additionally confirmed: the snapshot is retained (not deleted) after a successful restore — `Back → Forward → Back` restores correctly both times; visiting a second, different salon from an already-restored list still restores correctly on a subsequent Back. Added structural regression tests (`lib/searchReturnState.test.ts`) asserting no `sessionStorage`/`localStorage` reference exists anywhere in the actual code (only in the explanatory comment) and that the cache is a plain module-scope `Map` — guarding this exact property against a future silent regression. (A unit-test-level simulation of "a fresh JS realm" via a cache-busted dynamic `import()` was attempted first but abandoned: Node/`tsx`'s module loader resolved the cache-busted specifier back to the same underlying module instance, so it could not faithfully reproduce real reload isolation — the actual browser reproduction above is the authoritative proof, not a unit test standing in for it.) This ticket does not use `performance.getEntriesByType('navigation')` or any navigation-type detection at all — the design doesn't need to distinguish Back from reload by navigation type, since it relies purely on the realm-scoped lifetime of the in-memory cache, which is unaffected by that question either way.
 +
 +**Acceptance Criteria:**
 +- [x] Back restores loaded results (card count, order) and pagination/`hasMore` state
@@ -594,12 +596,15 @@ index 0000000..1e7812e
 +});
 diff --git a/frontend/lib/searchReturnState.test.ts b/frontend/lib/searchReturnState.test.ts
 new file mode 100644
-index 0000000..bfc5e4e
+index 0000000..a08acab
 --- /dev/null
 +++ b/frontend/lib/searchReturnState.test.ts
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,302 @@
 +import { test, describe, beforeEach } from 'node:test';
 +import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
 +import {
 +  ensureEntryId,
 +  readCurrentEntryId,
@@ -611,6 +616,9 @@ index 0000000..bfc5e4e
 +  __clearSnapshotCacheForTests,
 +  type SearchReturnSnapshot,
 +} from './searchReturnState';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'searchReturnState.ts'), 'utf-8');
 +
 +// Minimal fake History — real enough to exercise the actual merge/idempotency
 +// logic, without needing jsdom (this repo's test runner is plain node --test).
@@ -859,6 +867,40 @@ index 0000000..bfc5e4e
 +    assert.equal(got?.total, 48);
 +    assert.equal(got?.currentPage, 2);
 +  });
++});
++
++describe('T-056: hard-reload invariant — the storage mechanism itself, not just id matching, is what makes reload safe', () => {
++  test('no sessionStorage/localStorage API is referenced anywhere in the actual code (only in the explanatory comment) — a regression here would silently make the reload-safety argument false', () => {
++    const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++    assert.ok(!/\bsessionStorage\b/.test(codeOnly), 'sessionStorage must not be used in code — see the Cookie Policy constraint documented at the top of this file');
++    assert.ok(!/\blocalStorage\b/.test(codeOnly), 'localStorage must not be used in code');
++  });
++
++  test('the snapshot cache is declared as a plain module-scope Map, not wrapped around any Storage API', () => {
++    assert.ok(source.includes('const snapshotCache = new Map<string, SearchReturnSnapshot>();'));
++  });
++
++  test('history.state.entryId genuinely persists on its own — matching identity alone is NOT what protects against reload (this is why the storage-mechanism choice above is the actual load-bearing guarantee, not the id-matching logic)', () => {
++    const entryId = 'reload-premise-entry';
++    const h = fakeHistory({ __lookla: { entryId } });
++    assert.equal(readCurrentEntryId(h), entryId, 'confirms history.state really does carry an id forward independent of any JS module — this is real, unavoidable browser behavior, not something this module controls or could suppress even if it wanted to');
++  });
++
++  // The actual reload reproduction (module-cache-busted dynamic import) turned out not to
++  // achieve true module isolation under this test runner's loader — Node/tsx resolved the
++  // cache-busted specifier back to the same underlying module instance, so a unit test cannot
++  // faithfully simulate "a fresh JS realm" the way a real page reload provides one. The
++  // authoritative proof is therefore an actual browser reproduction, not a unit test:
++  // isolated Playwright run against the real standalone build — load 48 cards, Back (confirms
++  // 48 restored), page.reload(), confirms exactly 24 cards (fresh page 1), confirms a real
++  // /api/salons?page=1 request fires, confirms history.state.entryId is UNCHANGED across the
++  // reload (proving the above premise held) yet restoration still correctly did not happen —
++  // because the in-memory Map from the pre-reload JS realm is simply gone. Also confirmed:
++  // Back -> Forward -> Back restores correctly both times (snapshot is retained, not deleted
++  // on first use), and visiting a second, different salon from an already-restored list still
++  // restores correctly afterward. All of this only follows from the storage-mechanism tests
++  // immediately above (no sessionStorage/localStorage, plain in-memory Map) — restated here so
++  // the dependency is explicit rather than assumed.
 +});
 diff --git a/frontend/lib/searchReturnState.ts b/frontend/lib/searchReturnState.ts
 new file mode 100644
