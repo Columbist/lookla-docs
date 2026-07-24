@@ -1,0 +1,298 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index e5dbac5..3d34c19 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1157,6 +1157,41 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+ 
+ ---
+ 
++### T-055 — SalonCard Information Hierarchy & Click Target Optimization (SQC-01A)
++**Priority:** P0 (third ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-015 ✅ Search analytics baseline, T-054 ✅ Search results context
++**Status:** Implemented (branch `feat/T-055-salon-card-hierarchy`), pending independent review.
++
++**Goal:** improve how information is organized inside `SalonCard.tsx` — accessible name, click target, and visual hierarchy — without touching data, ranking, the search API, or analytics. No backend/database/ranking/SalonCard-data-field/GA-taxonomy changes.
++
++**Inventory findings (live audit against production, pre-implementation):** the card is a single outer `<Link>` with zero nested interactive elements (already correct — no change needed there). Without an explicit `aria-label`, the computed accessible name was the raw, unseparated concatenation of every descendant text node, e.g. `"OpenΚουρείο JUST HAIRΕιρήνης 15, Πειραιάς★★★★★5.0(520)"` — unusable for screen reader users. Sampling 72 live cards: rating present on 72/72, open/closed badge on 69/72 (96%), price on 0/72, verified badge on 0/72 — rating and open-status are near-universal signals; price/verified are rare, conditionally-rendered secondary elements that already reserve no empty space when absent (confirmed via raw HTML dump — zero DOM footprint, no placeholder branch). Longest real salon name on a live page: 62 characters, visually truncated to one line with no way to recover the full name.
++
++**Accessible-name fix:** `buildCardAriaLabel()` builds `"{name}, {city}, {rating word} {rating}, {open/closed}"`, each clause included only when the underlying field is actually present (never a dangling separator, never a placeholder for missing data). Deliberately excludes street/number (redundant once city is present), the decorative star glyphs (screen readers announce them as literal Unicode character names), and the review count (available as plain visible/accessible text in the card body, not duplicated into the label). Verified against the actual computed accessible name (Playwright `getByRole('link', { name })`, not just attribute presence) across all 4 locales on the real built app.
++
++**Name truncation:** salon name switches `line-clamp-1` → `line-clamp-2` with `title={salon.name}` added for pointer users, and the full name is always present in the card's `aria-label` regardless of visual truncation. Backed by a live DOM measurement (swapping the CSS class on the production DOM and measuring `getBoundingClientRect().height` before/after): height increase is uniform within any given grid row (263.5px → 281px, 0px variance) — a predictable, non-ragged cost. Mobile-viewport verification (320/375/390/768px) confirms no horizontal overflow at any breakpoint.
++
++**Architecture:** all changes confined to `frontend/components/SalonCard.tsx` — `buildCardAriaLabel()` (exported, unit-tested directly), `aria-label={cardAriaLabel}` on the outer `<Link>`, `aria-hidden="true"` on the star-glyph `<span>` only (numeric rating/count remain plain accessible text, per instruction to keep them in the label *or* as separate accessible text, not both hidden), `title=` + `line-clamp-2` on the name `<h3>`. `handleOpen`'s `trackEvent('salon_open', ...)` call and the price/verified conditional-rendering blocks are byte-identical to before — no code change there, confirmed by regression tests.
++
++**Analytics invariants:** zero new `trackEvent` call sites; `handleOpen` unchanged byte-for-byte (T-015 contract: `salon_id` always `String(salon.id)`, never `salon.slug`). A regression test asserts the exact source string of the `trackEvent` call site is unchanged.
++
++**Verification:** 497/497 frontend tests passing (24 new for T-055 — `buildCardAriaLabel()` unit tests for all 4 locales and every present/absent field combination, plus source-level regression tests for the single-`<Link>`/no-nested-interactive contract, the byte-identical `trackEvent` call, and the still-conditional price/verified rendering). `npm run lint` and `npm run build` both clean, no new warnings (pre-existing `<img>`-vs-`next/image` warning on this file predates T-055).
++
++**Isolated production verification:** built and ran the actual `next build` standalone production output (matching the deployed Dockerfile's runner stage — same `public/`/`.next/static` layout) on a throwaway port, proxying to the real backend API, entirely separate from the live `beauty_web` container. All 4 locales × 9 checks passing: computed accessible name is non-null, differs from the raw concatenation bug, and excludes star glyphs; `getByRole('link', { name: <computed aria-label> })` actually resolves the card (proving the label really is the accessible name, not just an attribute); zero nested interactive elements; star-glyph spans are `aria-hidden`; name heading has `title=` and `line-clamp-2`; card heights uniform within a row (0px variance); zero console/page errors. Mobile breakpoints (320/375/390/768px) confirmed no horizontal overflow; the height difference between 1-column and 2-column layouts at different breakpoints was traced to CSS Grid's default `align-items: stretch` equalizing cards within the same row (pre-existing behavior, not a regression). The `salon_open` GA4 beacon itself could not be observed in this isolated build (the measurement ID/consent flag are baked in only via the Docker build's env args, confirmed in T-054) — covered instead by the byte-identical source regression test, with the live beacon to be checked against production after deploy.
++
++**Acceptance Criteria:**
++- [x] Whole-card accessible name fixed: no longer the raw unseparated concatenation, verified as the actual computed accessible name (not just attribute presence) across all 4 locales
++- [x] Decorative stars excluded from the accessible name via `aria-hidden`; numeric rating/count remain accessible text
++- [x] Full salon name always reachable (aria-label + title=), visual truncation improved (line-clamp-2) with a measured, uniform height cost
++- [x] Rating/open-status treated as primary constant hierarchy; price/verified remain conditional secondary elements with no reserved empty space
++- [x] No removal of verified/min_price, no business-meaning change, no "Price unavailable" substitute text, no new data, no backend/type-contract change
++- [x] Single outer `<Link>` preserved; no nested interactive elements introduced
++- [x] No data/ranking/API/analytics-taxonomy changes; `salon_open` call site byte-identical
++- [x] Isolated production verification — 4 locales × 9 checks passing (see above)
++- [ ] Live production verification — pending deploy
++- [ ] Independent review — pending
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/components/SalonCard.test.tsx b/frontend/components/SalonCard.test.tsx
+new file mode 100644
+index 0000000..d17a5d6
+--- /dev/null
++++ b/frontend/components/SalonCard.test.tsx
+@@ -0,0 +1,137 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { buildCardAriaLabel } from './SalonCard';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'SalonCard.tsx'), 'utf-8');
++
++describe('T-055: buildCardAriaLabel — whole-card accessible name', () => {
++  test('name + city + rating + status, comma-separated, in that order (en)', () => {
++    assert.equal(
++      buildCardAriaLabel({ name: 'Just Hair', city: 'Piraeus', rating: '5.0', statusLabel: 'Open', locale: 'en' }),
++      'Just Hair, Piraeus, rating 5.0, Open',
++    );
++  });
++
++  test('omits city clause entirely when address_city is absent (no dangling comma)', () => {
++    assert.equal(
++      buildCardAriaLabel({ name: 'Just Hair', rating: '5.0', statusLabel: 'Open', locale: 'en' }),
++      'Just Hair, rating 5.0, Open',
++    );
++  });
++
++  test('omits rating clause entirely when rating_google is absent', () => {
++    assert.equal(
++      buildCardAriaLabel({ name: 'Just Hair', city: 'Piraeus', statusLabel: 'Open', locale: 'en' }),
++      'Just Hair, Piraeus, Open',
++    );
++  });
++
++  test('omits status clause entirely when is_open_now is undefined/null', () => {
++    assert.equal(
++      buildCardAriaLabel({ name: 'Just Hair', city: 'Piraeus', rating: '5.0', locale: 'en' }),
++      'Just Hair, Piraeus, rating 5.0',
++    );
++  });
++
++  test('name-only when every optional field is absent', () => {
++    assert.equal(buildCardAriaLabel({ name: 'Just Hair', locale: 'en' }), 'Just Hair');
++  });
++
++  test('never includes street/number — only city, per the T-055 direction to keep the label short', () => {
++    const label = buildCardAriaLabel({ name: 'Just Hair', city: 'Piraeus', rating: '5.0', statusLabel: 'Open', locale: 'en' });
++    assert.ok(!label.includes('Eirinis') && !label.includes('15'));
++  });
++
++  test('never includes the star glyphs or review count — those stay out of the label', () => {
++    const label = buildCardAriaLabel({ name: 'Just Hair', city: 'Piraeus', rating: '5.0', statusLabel: 'Open', locale: 'en' });
++    assert.ok(!label.includes('★') && !label.includes('('));
++  });
++
++  test('rating word is locale-specific (el/en/ru/uk)', () => {
++    assert.equal(buildCardAriaLabel({ name: 'X', rating: '5.0', locale: 'el' }), 'X, βαθμολογία 5.0');
++    assert.equal(buildCardAriaLabel({ name: 'X', rating: '5.0', locale: 'en' }), 'X, rating 5.0');
++    assert.equal(buildCardAriaLabel({ name: 'X', rating: '5.0', locale: 'ru' }), 'X, рейтинг 5.0');
++    assert.equal(buildCardAriaLabel({ name: 'X', rating: '5.0', locale: 'uk' }), 'X, рейтинг 5.0');
++  });
++
++  test('unknown locale falls back to English wording, matching every other per-locale dictionary in this file', () => {
++    assert.equal(buildCardAriaLabel({ name: 'X', rating: '5.0', locale: 'fr' }), 'X, rating 5.0');
++  });
++});
++
++describe('T-055 regression: single outer <Link>, no nested interactive elements (unchanged)', () => {
++  test('exactly one <Link ...> opening tag in the component (JSX only, not doc comments)', () => {
++    assert.equal((source.match(/\n\s*<Link\b/g) || []).length, 1);
++  });
++
++  test('no nested <a>, <button>, <input>, or <select> inside the card', () => {
++    const linkOpen = source.indexOf('<Link');
++    const linkClose = source.lastIndexOf('</Link>');
++    const body = source.slice(linkOpen, linkClose);
++    assert.ok(!/<a\s|<button|<input|<select/.test(body));
++  });
++
++  test('handleOpen still fires trackEvent("salon_open", ...) with salon_id as String(salon.id) — byte-identical to the T-015 contract', () => {
++    assert.ok(source.includes("trackEvent('salon_open', { salon_id: String(salon.id), source, locale: locale as Locale });"));
++  });
++
++  test('onClick={handleOpen} wired on the single outer Link — one click still fires exactly one salon_open event', () => {
++    assert.ok(/<Link href=\{href\} onClick=\{handleOpen\}/.test(source));
++  });
++});
++
++describe('T-055: accessible-name wiring on the card', () => {
++  test('aria-label={cardAriaLabel} is present on the outer Link', () => {
++    assert.ok(source.includes('aria-label={cardAriaLabel}'));
++  });
++
++  test('cardAriaLabel is built from buildCardAriaLabel with name/city/rating/statusLabel/locale', () => {
++    assert.ok(/const cardAriaLabel = buildCardAriaLabel\(\{[\s\S]*?name: salon\.name,[\s\S]*?city: salon\.address_city,[\s\S]*?rating: ratingValue,[\s\S]*?statusLabel,[\s\S]*?locale,[\s\S]*?\}\);/.test(source));
++  });
++
++  test('decorative star glyphs are aria-hidden (not part of the accessible name, not double-announced)', () => {
++    assert.ok(source.includes('<span className="text-yellow-400 text-xs" aria-hidden="true">{STARS(salon.rating_google)}</span>'));
++  });
++
++  test('numeric rating and review count remain plain accessible text (not hidden)', () => {
++    assert.ok(source.includes('<span className="text-xs text-gray-600 font-medium">{parseFloat(salon.rating_google).toFixed(1)}</span>'));
++    assert.ok(source.includes('<span className="text-xs text-gray-400">({salon.rating_count})</span>'));
++  });
++
++  test('img alt is unchanged (salon.name, no new decoration)', () => {
++    assert.ok(source.includes('alt={salon.name}'));
++  });
++});
++
++describe('T-055: salon name — full name reachable, visual truncation improved', () => {
++  test('name heading uses line-clamp-2 (not -1) and exposes title= for pointer users', () => {
++    assert.ok(source.includes('className="font-semibold text-gray-900 text-sm leading-tight mb-1 line-clamp-2" title={salon.name}'));
++  });
++
++  test('address line is unchanged (still single-line line-clamp-1) — only the name treatment changed', () => {
++    assert.ok(source.includes('className="text-xs text-gray-500 mb-2 line-clamp-1"'));
++  });
++});
++
++describe('T-055 regression: price/verified stay conditional secondary elements, no reserved space, no new data', () => {
++  test('min_price block is still purely conditional — no placeholder branch when absent', () => {
++    assert.ok(source.includes('{salon.min_price != null && salon.min_price > 0 && ('));
++    assert.ok(!/Price unavailable/i.test(source));
++  });
++
++  test('verified badge is still purely conditional — no placeholder branch when absent', () => {
++    assert.ok(source.includes('{verificationLabel && ('));
++  });
++
++  test('rating/price row is still a plain flex justify-between with no fixed min-width reserved for price', () => {
++    assert.ok(source.includes('<div className="flex items-center justify-between gap-2">'));
++  });
++
++  test('no new SalonListItem fields introduced — price_level stays unused, backend/type contract untouched', () => {
++    assert.ok(!source.includes('price_level'));
++  });
++});
+diff --git a/frontend/components/SalonCard.tsx b/frontend/components/SalonCard.tsx
+index 0168c80..0359a34 100644
+--- a/frontend/components/SalonCard.tsx
++++ b/frontend/components/SalonCard.tsx
+@@ -56,6 +56,40 @@ const VERIFICATION_LABEL: Record<string, Record<'infoReviewed' | 'ownerVerified'
+   uk: { infoReviewed: 'Інформацію перевірено', ownerVerified: 'Підтверджено власником' },
+ };
+ 
++// T-055: word used inside the card's accessible name — not the visible
++// "Rating" filter label (search namespace), a short mid-sentence noun.
++const RATING_WORD: Record<string, string> = {
++  el: 'βαθμολογία', en: 'rating', ru: 'рейтинг', uk: 'рейтинг',
++};
++
++/**
++ * T-055: builds the whole-card <Link>'s accessible name. Deliberately NOT
++ * a transcript of the visible content — no star glyphs (screen readers
++ * announce them as literal Unicode character names), no review count, no
++ * raw street address. Found via live audit that without an explicit
++ * aria-label, the computed accessible name was the raw concatenation of
++ * every text node with no separators at all, e.g.
++ * "OpenΚουρείο JUST HAIRΕιρήνης 15, Πειραιάς★★★★★5.0(520)" — unusable for
++ * screen reader users. This is a short, well-punctuated summary sufficient
++ * to distinguish and select a card: name, city, rating, open status —
++ * each clause included only when the underlying data is actually present.
++ */
++export function buildCardAriaLabel(params: {
++  name: string;
++  city?: string;
++  rating?: string;
++  statusLabel?: string;
++  locale: string;
++}): string {
++  const ratingWord = RATING_WORD[params.locale] ?? RATING_WORD.en;
++  return [
++    params.name,
++    params.city || undefined,
++    params.rating ? `${ratingWord} ${params.rating}` : undefined,
++    params.statusLabel,
++  ].filter(Boolean).join(', ');
++}
++
+ interface Props {
+   salon: SalonListItem;
+   locale: string;
+@@ -82,8 +116,25 @@ export default function SalonCard({ salon, locale, category, source }: Props) {
+     ? verificationLabels[getVerificationLabelKey(salon.is_owner_claimed)]
+     : undefined;
+ 
++  // T-055: rating value and open-status label are near-universal in real
++  // data (see inventory: 72/72 sampled cards had a rating, 69/72 had an
++  // open/closed badge) — they anchor the card's accessible name. Price and
++  // verification stay out of it: they're rare (0/72 and 0/72 in the same
++  // sample) and already exposed as visible/overlay text elsewhere.
++  const ratingValue = salon.rating_google ? parseFloat(salon.rating_google).toFixed(1) : undefined;
++  const statusLabel = salon.is_open_now !== undefined && salon.is_open_now !== null
++    ? (salon.is_open_now ? openLabel : closedLabel)
++    : undefined;
++  const cardAriaLabel = buildCardAriaLabel({
++    name: salon.name,
++    city: salon.address_city,
++    rating: ratingValue,
++    statusLabel,
++    locale,
++  });
++
+   return (
+-    <Link href={href} onClick={handleOpen} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
++    <Link href={href} onClick={handleOpen} aria-label={cardAriaLabel} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
+       {/* Photo */}
+       <div className="relative h-44 bg-gradient-to-br from-pink-50 to-purple-50">
+         {salon.primary_photo ? (
+@@ -110,7 +161,13 @@ export default function SalonCard({ salon, locale, category, source }: Props) {
+ 
+       {/* Info */}
+       <div className="p-3">
+-        <h3 className="font-semibold text-gray-900 text-sm leading-tight mb-1 line-clamp-1">{salon.name}</h3>
++        {/* T-055: line-clamp-2 (not -1) — verified via live DOM measurement that
++            this reserves a uniform 2-line height for every card (263.5px→281px,
++            0.0px variance either way), so longer names don't create ragged grid
++            rows. title= gives pointer users the full name on hover; the full
++            name is still always in the card's accessible name via aria-label
++            above, regardless of visual truncation. */}
++        <h3 className="font-semibold text-gray-900 text-sm leading-tight mb-1 line-clamp-2" title={salon.name}>{salon.name}</h3>
+         <p className="text-xs text-gray-500 mb-2 line-clamp-1">
+           {[salon.address_street, salon.address_number].filter(Boolean).join(' ')}{salon.address_city ? `, ${salon.address_city}` : ''}
+         </p>
+@@ -120,7 +177,7 @@ export default function SalonCard({ salon, locale, category, source }: Props) {
+           <div className="flex items-center gap-1 min-w-0">
+             {salon.rating_google ? (
+               <>
+-                <span className="text-yellow-400 text-xs">{STARS(salon.rating_google)}</span>
++                <span className="text-yellow-400 text-xs" aria-hidden="true">{STARS(salon.rating_google)}</span>
+                 <span className="text-xs text-gray-600 font-medium">{parseFloat(salon.rating_google).toFixed(1)}</span>
+                 <span className="text-xs text-gray-400">({salon.rating_count})</span>
+               </>
+diff --git a/frontend/package.json b/frontend/package.json
+index 212ccff..a747e74 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
