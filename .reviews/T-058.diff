@@ -1,0 +1,507 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index b14f51e..2fe9694 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1303,13 +1303,64 @@ Two findings during this pass, both investigated to a root cause and confirmed *
+ 
+ ---
+ 
++### T-058 — Prevent Duplicate Search Results Analytics on Back Restoration
++**Priority:** P0 (analytics data-quality cleanup, prerequisite for SQC-01B baseline collection) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-014 ✅ GA4 infrastructure, T-015 ✅ Product analytics events, T-054 ✅ Search results context, T-056 ✅ Search return-state restoration, T-057 ✅ Search controls accessibility
++**Status:** Implemented (branch `fix/T-058-search-results-view-dedup`), pending independent review.
++
++**Problem:** returning via browser Back from a salon detail page correctly restores the search results (T-056), but also re-emitted `search_results_view` for the exact same result state the user had already seen. Root cause: `page.tsx`'s T-015 dedup state (`lastTrackedSearchKey`) was a component-local `useRef`, reset to `null` on every remount — and Back has always remounted the search page (true before T-056 too, when Back also always re-fetched from page 1). Not a UX defect and not a T-056 regression, but it inflates `search_results_view` counts and distorts the Search→Salon CTR denominator SQC-01B's ranking work will depend on.
++
++**Event lifecycle inventory (Step 1):** `search_results_view` is owned by a single `useEffect` in `page.tsx`, gated on `[view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]`, firing only when `!loading && !searchError` (list) or `!mapLoading && !mapError` (map) — timing was already correct pre-T-058 (never fires while loading, never on error, never with a stale total, since `total`/`loading` are seeded together atomically by T-056's lazy initializers on a restoration). The only defect was WHERE the "already reported" memory lived.
++
++| Scenario | Component mount | Data source | Old dedup state | Event before T-058 | Event after T-058 |
++|---|---|---|---|---|---|
++| Fresh direct search | fresh | list fetch | ref (empty) | fires once | fires once |
++| Query change | same instance | list fetch | ref (same instance) | fires once | fires once |
++| Area change | same instance (new history entry) | list fetch | ref (same instance) | fires once | fires once |
++| List → Map | same instance (new history entry) | map fetch | ref (same instance) | fires once | fires once |
++| Salon open → Back | **remount** | T-056 restored snapshot | ref reset → **fires again (bug)** | fires again (bug) | **suppressed** |
++| Back to a different search state | remount | T-056 restored snapshot or fresh fetch | ref reset | fires (correct, different key) | fires (correct — different entry, no prior record) |
++| Forward to salon → Back again | remount | T-056 restored snapshot (still valid) | ref reset → fires again | fires again (bug) | **suppressed** (same entry, same key already recorded) |
++| Hard reload | fresh JS realm | fresh fetch | ref (empty), fresh realm | fires once | fires once (dedup store also realm-scoped, empty) |
++| API error → Retry success | same instance | list fetch | ref (same instance) | fires once (only on success) | fires once (unchanged) |
++
++**Canonical event identity (Step 2):** unchanged — reused `buildSearchResultsViewKey(area, bucket, view, locale)` and `bucketResultCount(total)` from `lib/analytics.ts` verbatim, no new key format invented. Never includes raw query, exact count, scroll position, page number, salon IDs, or the history-entry id.
++
++**Dedup ownership (Step 3):** moved the "already reported" memory to a new, deliberately separate module, `frontend/lib/searchResultsViewDedup.ts` — a small in-memory `Map<entryId, materialKey>` (same realm-scoped invalidation rationale as T-056's snapshot cache: wiped on hard reload/new tab, never sessionStorage/localStorage/cookies). `hasReportedSearchResultsView(entryId, key)` / `markSearchResultsViewReported(entryId, key)`, bounded at 500 entries (oldest evicted first) so a very long single-tab session can't grow it unboundedly. The tracking effect now does a **two-layer check**: the original `lastTrackedSearchKey` ref first (cheap same-mount short-circuit, unchanged), then the entryId-scoped store (the actual T-058 fix — survives a T-056 restoration remount, which resets the ref but never touches the store). `entryId` comes from the same `currentEntryIdRef` T-056 already maintains — no new identity concept, no second UUID scheme.
++
++**Separation from T-056 (Step 4):** deliberately a **separate small metadata map**, not a new field on `SearchReturnSnapshot` — confirmed by a regression test that `searchReturnState.ts` contains no reference to `lastTrackedSearchKey`/`searchResultsView`/`reportedKeys`. This means an invalid/expired/rejected T-056 snapshot has zero effect on the dedup store's correctness, and vice versa — a materially-identical state can be correctly deduped for analytics purposes even in a hypothetical future where UI restoration itself is skipped for some other reason.
++
++**History-entry semantic rule (Step 6):** **one `search_results_view` per materially distinct successful result state per browser history entry** — confirmed as the correct interpretation (no scope deviation needed). `Search A → Salon → Back to Search A` suppresses correctly (same entryId, same key, already recorded). `Search A → Search B` fires once for B (new history entry via `router.push`, fresh entryId, no prior record). `Search A → Search B → Back to Search A` correctly restores A's own event history (browser-native `history.state` is per-entry, so A's original entryId — and its dedup record — come back intact on Back, not sharing state with B).
++
++**Consent (Step 9):** untouched — `trackEvent()`'s own consent gate (`lib/analytics.ts`) is unchanged and re-checks live consent on every call regardless of dedup state; dedup happens entirely before `trackEvent()` is ever invoked, so a denied/withdrawn/rejected consent state still drops the call exactly as before, and no "replay" logic of any kind was added.
++
++**Verification:** 668/668 frontend tests passing (33 new for T-058: 10 direct unit tests for `hasReportedSearchResultsView`/`markSearchResultsViewReported` in `lib/searchResultsViewDedup.test.ts`, 23 source-wiring regression tests in `app/[locale]/search/searchResultsViewDedupWiring.test.ts` covering event identity, dedup ownership, privacy, timing, and T-054/T-055/T-056/T-057 non-regression). Three pre-existing tests needed their fixed-length source-slice windows widened (1200→2200 chars) after the new explanatory comment lengthened the tracking effect's surrounding text — a pure test-fixture adjustment, not a behavior change. `npm run lint` and `npm run build` both clean.
++
++**Isolated production verification:** built and ran the actual `next build` standalone output **with real `NEXT_PUBLIC_GA4_ID`/`NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` build args** (matching the Docker image's real values) — unlike T-056/T-057, which had to defer all GA4-specific verification to production because the default local build has no measurement ID baked in, this let the isolated pass genuinely exercise live `gtag()` call interception. All scenarios passing: fresh search emits exactly 1 `search_results_view` (4 locales + 375px mobile); Back restoration after loading 48 cards and opening a salon emits **zero** duplicate events (still exactly 1 total) while T-056 restoration itself still works correctly; a real area change (via the filter popover UI) and a real query change (via the search input) each emit exactly 1 new event, with no raw query text in any payload; list→map emits exactly 1 new event per the existing T-015 contract, and re-clicking the already-active view emits none; hard reload emits exactly 1 fresh event (not cumulative with the pre-reload count); a simulated API failure emits zero events, and a successful Retry emits exactly 1; no consent and rejected consent both correctly prevent `gtag` from ever initializing; and a mid-session consent withdrawal correctly prevents a subsequent new material state from firing (existing T-014/T-015 semantics, unmodified).
++
++**Safety checklist:** Backend changed: No. Database changed: No. Search API changed: No. Ranking changed: No. Default ordering changed: No. Public URL contract changed: No. New GA4 event added: No. Existing GA4 event renamed: No. Event parameters changed: No. Raw query sent to analytics: No. Exact total sent to analytics: No. History entry ID sent to analytics: No. Back restoration duplicates results event: No. Fresh hard reload emits results event: Yes. New material search state emits event: Yes. T-056 restoration preserved: Yes. T-057 controls preserved: Yes. Production touched before review: No. PM2 used: No. `crawler/celerybeat-schedule` touched: No. Dependabot changes mixed into branch: No.
++
++**Acceptance Criteria:**
++- [x] Back restoration to the same history entry and material state emits no duplicate `search_results_view`
++- [x] A genuinely new material state (query/area/rating/clear-all/list-map/hard-reload/direct-nav/Retry-success) still emits exactly one event
++- [x] History-entry id never reaches the GA4 payload — used only as a local dedup Map key
++- [x] No new/renamed GA4 events, no changed event parameters, no raw query or exact count in any payload
++- [x] Dedup state is a separate small in-memory store, not a change to the T-056 snapshot schema
++- [x] Consent semantics (no consent/rejected/withdrawn/regrant) unchanged — no new replay logic
++- [x] T-056 restoration and T-057 controls both regression-verified, unit tests and isolated Playwright
++- [x] Isolated production verification — real GA4 build args, 4 locales + mobile, all scenarios passing (see above)
++- [ ] Live production verification — pending deploy
++- [ ] Independent review — pending
++
++---
++
+ ### SQC-01A — Deferred candidates (unnumbered, not yet tickets)
+ 
+ Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+ 
+ - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
+ - **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
+-- **`search_results_view` re-fires on every Back-restoration (found during T-056 production verification, 2026-07-27).** Root cause: `page.tsx`'s pre-existing T-015 dedup ref (`lastTrackedSearchKey`) resets on every component remount, and Back has always remounted the page (true before T-056 too, when Back also always re-fetched from scratch) — so this isn't a T-056 regression, but it does mean every Back re-emits a `search_results_view` event for the *same* logical view the user already saw once. Not a UX defect (T-056's own restoration is otherwise correct and verified), but flagged explicitly because it can inflate `search_results_view` counts and distort result-count-bucket/CTR baselines — the same baseline SQC-01B's ranking work is waiting on. Worth resolving (e.g. persisting the dedup key alongside the return-state snapshot, or deriving it from `entryId` instead of a plain ref) before that baseline is treated as clean, but out of scope for a UI-focused SQC-01A ticket — likely belongs either as a small standalone analytics-hygiene ticket or as a prerequisite check item at the start of SQC-01B.
++- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27. Map accessibility above remains the next candidate (unofficial working number T-059, not yet reserved).
+ 
+ ---
+ 
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 28bb603..d10a37a 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -15,6 +15,7 @@ import { useFilterChipFocus } from '@/lib/useFilterChipFocus';
+ import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, removeQueryFilter, type ActiveSearchFilter } from '@/lib/searchContext';
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';
++import { hasReportedSearchResultsView, markSearchResultsViewReported } from '@/lib/searchResultsViewDedup';
+ import dynamic from 'next/dynamic';
+ 
+ const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+@@ -102,10 +103,14 @@ function SearchContent({ locale }: { locale: string }) {
+   // whatever closure it had at mount time) can still read fresh values.
+   const latestForSaveRef = useRef({ salons, total, view, area, city, q, category, minRating });
+ 
+-  // T-015: last normalized state we've already sent search_results_view for
+-  // — a ref (not time-based debounce), compared exactly, so a materially
+-  // identical rerender never fires again but a genuinely different state
+-  // (including one reached via browser back/forward) always does.
++  // T-015/T-058: last normalized state we've already sent search_results_view
++  // for. This ref is a cheap same-mount fast path only — it does NOT survive
++  // a T-056 restoration remount (search → salon → Back tears down and
++  // recreates this component), which was exactly the T-058 bug: a fresh ref
++  // meant a materially-identical restored state re-fired the event. Real
++  // cross-remount memory now lives in lib/searchResultsViewDedup.ts, keyed
++  // by the same per-history-entry id T-056 already tracks — see the effect
++  // below.
+   const lastTrackedSearchKey = useRef<string | null>(null);
+ 
+   useEffect(() => {
+@@ -339,25 +344,43 @@ function SearchContent({ locale }: { locale: string }) {
+ 
+   useEffect(() => { loadMapSalons(); }, [loadMapSalons]);
+ 
+-  // T-015: search_results_view — fires once per materially distinct
++  // T-015/T-058: search_results_view — fires once per materially distinct
+   // (area, result_count_bucket, view, locale) state, only after a
+   // successful load (never while loading, never on API error). Watches
+   // both the list and map data sources; whichever one backs the currently
+   // active `view` is the one that can fire.
++  //
++  // Two-layer dedup, deliberately in this order: (1) the local ref is a
++  // cheap same-mount short-circuit for the common case (re-renders that
++  // don't change the material key at all), checked first so most renders
++  // never touch the module-scope store; (2) the entryId-scoped store
++  // (lib/searchResultsViewDedup.ts) is what actually fixes T-058 — it
++  // remembers what was already reported for THIS history entry even across
++  // a T-056 restoration remount, which resets the local ref to null but
++  // never touches that store. If entryId is unavailable (history API
++  // blocked), the store's check always returns false — the same safe
++  // "no cross-remount memory" degradation T-056 itself falls back to for
++  // restoration in that case; the local ref still protects same-mount
++  // re-renders regardless.
+   useEffect(() => {
++    const entryId = currentEntryIdRef.current;
+     if (view === 'map') {
+       if (mapLoading || mapError) return;
+       const bucket = bucketResultCount(mapSalons.length);
+       const key = buildSearchResultsViewKey(area || 'all', bucket, 'map', locale as Locale);
+       if (key === lastTrackedSearchKey.current) return;
++      if (hasReportedSearchResultsView(entryId, key)) { lastTrackedSearchKey.current = key; return; }
+       lastTrackedSearchKey.current = key;
++      markSearchResultsViewReported(entryId, key);
+       trackEvent('search_results_view', { area: area || 'all', result_count_bucket: bucket, view: 'map', locale: locale as Locale });
+     } else {
+       if (loading || searchError) return;
+       const bucket = bucketResultCount(total);
+       const key = buildSearchResultsViewKey(area || 'all', bucket, 'list', locale as Locale);
+       if (key === lastTrackedSearchKey.current) return;
++      if (hasReportedSearchResultsView(entryId, key)) { lastTrackedSearchKey.current = key; return; }
+       lastTrackedSearchKey.current = key;
++      markSearchResultsViewReported(entryId, key);
+       trackEvent('search_results_view', { area: area || 'all', result_count_bucket: bucket, view: 'list', locale: locale as Locale });
+     }
+   }, [view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]);
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index 205b469..da0db15 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -51,7 +51,7 @@ describe('T-042: search results distinguish loading/empty/error/success via Asyn
+   });
+ 
+   test('T-015 search_results_view tracking still gates on the raw loading/error booleans, untouched by the AsyncSection refactor', () => {
+-    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2200);
+     assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
+     assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
+   });
+diff --git a/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts b/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts
+new file mode 100644
+index 0000000..7ef1f61
+--- /dev/null
++++ b/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts
+@@ -0,0 +1,152 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++function slice(startMarker: string, endMarker: string): string {
++  const start = source.indexOf(startMarker);
++  const end = source.indexOf(endMarker, start);
++  if (start === -1 || end === -1) throw new Error(`marker not found: "${startMarker}" or "${endMarker}"`);
++  return source.slice(start, end);
++}
++
++const trackingEffect = slice('T-015/T-058: search_results_view', 'IntersectionObserver — fires loadMore');
++
++describe('T-058: event identity — reuses the existing T-015 material key, unchanged', () => {
++  test('buildSearchResultsViewKey and bucketResultCount are imported and used, not reimplemented', () => {
++    assert.ok(source.includes("import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';"));
++    assert.ok(trackingEffect.includes('buildSearchResultsViewKey(area'));
++    assert.ok(trackingEffect.includes('bucketResultCount('));
++  });
++
++  test('the material key formula is unchanged: area|bucket|view|locale, from lib/analytics.ts, not redefined in page.tsx', () => {
++    assert.ok(!source.includes('.join(\'|\')'), 'the key format must live only in buildSearchResultsViewKey, not be re-derived in page.tsx');
++  });
++
++  test('the event payload sent to trackEvent still contains only the 4 approved SearchResultsViewParams keys', () => {
++    const calls = [...trackingEffect.matchAll(/trackEvent\('search_results_view', \{([^}]*)\}\)/g)];
++    assert.equal(calls.length, 2, 'expected exactly 2 trackEvent(search_results_view, ...) call sites (list branch + map branch)');
++    for (const call of calls) {
++      const body = call[1];
++      const keys = [...body.matchAll(/(\w+):/g)].map(m => m[1]);
++      assert.deepEqual(new Set(keys), new Set(['area', 'result_count_bucket', 'view', 'locale']));
++    }
++  });
++});
++
++describe('T-058: dedup ownership — entryId-scoped store, not a component-local-only ref', () => {
++  test('lib/searchResultsViewDedup is imported and both its functions are used in the tracking effect', () => {
++    assert.ok(source.includes("import { hasReportedSearchResultsView, markSearchResultsViewReported } from '@/lib/searchResultsViewDedup';"));
++    assert.ok(trackingEffect.includes('hasReportedSearchResultsView(entryId, key)'));
++    assert.ok(trackingEffect.includes('markSearchResultsViewReported(entryId, key)'));
++  });
++
++  test('entryId is read from currentEntryIdRef — the same T-056 per-history-entry id, not a newly invented identifier', () => {
++    assert.ok(trackingEffect.includes('const entryId = currentEntryIdRef.current;'));
++  });
++
++  test('the local lastTrackedSearchKey ref is still checked first (cheap same-mount fast path), before the module store', () => {
++    const localCheckIndex = trackingEffect.indexOf('key === lastTrackedSearchKey.current');
++    const storeCheckIndex = trackingEffect.indexOf('hasReportedSearchResultsView(entryId, key)');
++    assert.ok(localCheckIndex !== -1 && storeCheckIndex !== -1 && localCheckIndex < storeCheckIndex);
++  });
++
++  test('markSearchResultsViewReported is called before trackEvent, not after — the dedup record is never skipped by an early return inside trackEvent itself', () => {
++    const markIndex = trackingEffect.indexOf('markSearchResultsViewReported(entryId, key);\n      trackEvent(\'search_results_view\'');
++    assert.ok(markIndex !== -1, 'expected markSearchResultsViewReported immediately before the list-branch trackEvent call');
++  });
++
++  test('T-056 snapshot schema (SearchReturnSnapshot) is untouched — no filtersOpen-style field added for analytics, confirming Step 4\'s "separate small metadata map" choice', () => {
++    const snapshotFile = fs.readFileSync(path.join(here, '..', '..', '..', 'lib', 'searchReturnState.ts'), 'utf-8');
++    assert.ok(!snapshotFile.includes('lastTrackedSearchKey'));
++    assert.ok(!snapshotFile.includes('searchResultsView'));
++    assert.ok(!snapshotFile.includes('reportedKeys'));
++  });
++
++  test('the dedup store lives in its own file, not merged into searchReturnState.ts', () => {
++    assert.ok(fs.existsSync(path.join(here, '..', '..', '..', 'lib', 'searchResultsViewDedup.ts')));
++  });
++});
++
++describe('T-058: history-entry identity never reaches GA4', () => {
++  test('entryId is used only as a local Map key, never passed into a trackEvent(...) call', () => {
++    const calls = [...trackingEffect.matchAll(/trackEvent\([^)]*\)/gs)].map(m => m[0]);
++    for (const call of calls) {
++      assert.ok(!/entryId/.test(call), `trackEvent call must not reference entryId: ${call}`);
++    }
++  });
++
++  test('the dedup module never imports anything from analytics.ts (no accidental GA transport coupling)', () => {
++    const dedupFile = fs.readFileSync(path.join(here, '..', '..', '..', 'lib', 'searchResultsViewDedup.ts'), 'utf-8');
++    assert.ok(!dedupFile.includes("from '@/lib/analytics'"));
++    assert.ok(!dedupFile.includes('trackEvent'));
++    assert.ok(!dedupFile.includes('gtag'));
++  });
++});
++
++describe('T-058: timing invariants unchanged — still gates on settled, successful state only', () => {
++  test('list branch still requires !loading && !searchError before computing a key', () => {
++    assert.ok(trackingEffect.includes('if (loading || searchError) return;'));
++  });
++
++  test('map branch still requires !mapLoading && !mapError before computing a key', () => {
++    assert.ok(trackingEffect.includes('if (mapLoading || mapError) return;'));
++  });
++
++  test('no arbitrary timers (setTimeout/debounce) were introduced into the tracking effect', () => {
++    assert.ok(!trackingEffect.includes('setTimeout'));
++    assert.ok(!trackingEffect.includes('debounce'));
++  });
++
++  test('the effect dependency array is unchanged from pre-T-058 (same 9 dependencies, same gating variables)', () => {
++    assert.ok(trackingEffect.includes('}, [view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]);'));
++  });
++});
++
++describe('T-058 regression: no GA4 taxonomy change, no other event sites touched', () => {
++  test('only the 5 pre-existing T-015 event names appear anywhere in page.tsx', () => {
++    const calls = [...source.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]);
++    const allowed = new Set(['salon_open', 'contact_action', 'search_results_view', 'area_select', 'language_change']);
++    for (const name of calls) assert.ok(allowed.has(name), `unexpected trackEvent name: ${name}`);
++  });
++
++  test('area_select call site is byte-identical to before T-058', () => {
++    assert.ok(source.includes("trackEvent('area_select', { area: slug, source: 'search_filter', locale: locale as Locale });"));
++  });
++
++  test('SalonCard render call site (source of salon_open) is untouched', () => {
++    assert.ok(source.includes('<SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />'));
++  });
++
++  test('lib/analytics.ts trackEvent/consent implementation is completely untouched by T-058', () => {
++    const analyticsFile = fs.readFileSync(path.join(here, '..', '..', '..', 'lib', 'analytics.ts'), 'utf-8');
++    assert.ok(!analyticsFile.includes('searchResultsViewDedup'));
++    assert.ok(!analyticsFile.includes('entryId'));
++  });
++});
++
++describe('T-058 non-regression: T-054/T-055/T-056/T-057 wiring untouched', () => {
++  test('T-054 ActiveFilterChips / clearAll / removeFilter wiring is unchanged', () => {
++    assert.ok(source.includes('<ActiveFilterChips'));
++    assert.ok(source.includes('const { containerRef: chipsContainerRef, clearAllRef, summaryRef, markRemoval } = useFilterChipFocus(activeFilters.length);'));
++  });
++
++  test('T-056 save/restore snapshot effects are unchanged', () => {
++    assert.ok(source.includes("import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';"));
++    assert.ok(source.includes('const currentEntryIdRef = useRef<string | null>(mountEntryId);'));
++  });
++
++  test('T-057 search form/clear-query/filter-popover/List-Map wiring is unchanged', () => {
++    assert.ok(source.includes('role="search"'));
++    assert.ok(source.includes('const hasQuery = q.trim().length > 0;'));
++    assert.ok(source.includes("aria-pressed={view !== 'map'}"));
++  });
++
++  test('no map-marker file was touched (MapView import is the pre-existing dynamic() one, unmodified)', () => {
++    assert.ok(source.includes("const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });"));
++  });
++});
+diff --git a/frontend/app/[locale]/search/searchReturnRestoration.test.ts b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+index 1e7812e..d4a0bda 100644
+--- a/frontend/app/[locale]/search/searchReturnRestoration.test.ts
++++ b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+@@ -224,7 +224,7 @@ describe('T-056: analytics invariants — no new events, no double-counting, no
+   });
+ 
+   test('search_results_view still gates on the same loading/error/total/mapLoading/mapError booleans as before — restoration reuses those exact state variables, so it naturally participates in the existing "fires once per distinct state" contract without new code', () => {
+-    const block = slice('T-015: search_results_view', 'IntersectionObserver — fires loadMore');
++    const block = slice('T-015/T-058: search_results_view', 'IntersectionObserver — fires loadMore');
+     assert.ok(block.includes('if (loading || searchError) return;'));
+     assert.ok(block.includes('if (key === lastTrackedSearchKey.current) return;'));
+   });
+diff --git a/frontend/lib/analytics.test.ts b/frontend/lib/analytics.test.ts
+index a754127..deff8dd 100644
+--- a/frontend/lib/analytics.test.ts
++++ b/frontend/lib/analytics.test.ts
+@@ -616,7 +616,7 @@ describe('T-015: search/page.tsx — search_results_view and area_select (search
+   });
+ 
+   test('search_results_view is gated on loading/error state for both list and map before ever computing a bucket', () => {
+-    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2200);
+     assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
+     assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
+   });
+@@ -644,7 +644,7 @@ describe('T-015: search/page.tsx — search_results_view and area_select (search
+   });
+ 
+   test('the free-text search query (q) is never passed as the area parameter', () => {
+-    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 1200);
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2200);
+     assert.ok(!/area:\s*q\b/.test(effectBlock));
+   });
+ });
+diff --git a/frontend/lib/searchResultsViewDedup.test.ts b/frontend/lib/searchResultsViewDedup.test.ts
+new file mode 100644
+index 0000000..196a36d
+--- /dev/null
++++ b/frontend/lib/searchResultsViewDedup.test.ts
+@@ -0,0 +1,77 @@
++import { test, describe, beforeEach } from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  hasReportedSearchResultsView,
++  markSearchResultsViewReported,
++  __clearSearchResultsViewDedupForTests,
++} from './searchResultsViewDedup';
++
++beforeEach(() => {
++  __clearSearchResultsViewDedupForTests();
++});
++
++describe('T-058: hasReportedSearchResultsView / markSearchResultsViewReported', () => {
++  test('a never-reported entry+key pair returns false', () => {
++    assert.equal(hasReportedSearchResultsView('entry-1', 'athens|6_20|list|en'), false);
++  });
++
++  test('after marking, the exact same entry+key pair returns true', () => {
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    assert.equal(hasReportedSearchResultsView('entry-1', 'athens|6_20|list|en'), true);
++  });
++
++  test('same entry, a materially different key, is NOT considered reported', () => {
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    assert.equal(hasReportedSearchResultsView('entry-1', 'thessaloniki|6_20|list|en'), false);
++  });
++
++  test('same material key under a DIFFERENT entry id is NOT considered reported — no global shared dedup', () => {
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    assert.equal(hasReportedSearchResultsView('entry-2', 'athens|6_20|list|en'), false);
++  });
++
++  test('a null entryId always returns false for hasReportedSearchResultsView — never crashes, never falsely suppresses', () => {
++    assert.equal(hasReportedSearchResultsView(null, 'athens|6_20|list|en'), false);
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    assert.equal(hasReportedSearchResultsView(null, 'athens|6_20|list|en'), false);
++  });
++
++  test('marking with a null entryId is a safe no-op (never throws, never pollutes real entries)', () => {
++    markSearchResultsViewReported(null, 'athens|6_20|list|en');
++    assert.equal(hasReportedSearchResultsView(null, 'athens|6_20|list|en'), false);
++  });
++
++  test('re-marking the same entry with a NEW key overwrites the old one (only the latest material state per entry is remembered)', () => {
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    markSearchResultsViewReported('entry-1', 'athens|21_50|list|en');
++    assert.equal(hasReportedSearchResultsView('entry-1', 'athens|6_20|list|en'), false);
++    assert.equal(hasReportedSearchResultsView('entry-1', 'athens|21_50|list|en'), true);
++  });
++
++  test('the module-scope store starts empty for a fresh realm (simulated here via the test-only clear helper, matching what a real hard reload does)', () => {
++    markSearchResultsViewReported('entry-1', 'athens|6_20|list|en');
++    __clearSearchResultsViewDedupForTests();
++    assert.equal(hasReportedSearchResultsView('entry-1', 'athens|6_20|list|en'), false);
++  });
++
++  test('many distinct entries can be tracked independently without cross-contamination', () => {
++    for (let i = 0; i < 20; i++) {
++      markSearchResultsViewReported(`entry-${i}`, `area${i}|6_20|list|en`);
++    }
++    for (let i = 0; i < 20; i++) {
++      assert.equal(hasReportedSearchResultsView(`entry-${i}`, `area${i}|6_20|list|en`), true);
++      assert.equal(hasReportedSearchResultsView(`entry-${i}`, `area${i}|21_50|list|en`), false);
++    }
++  });
++
++  test('the store is bounded — exceeding the internal cap evicts the oldest entry rather than growing forever', () => {
++    // MAX_ENTRIES is 500; write 501 distinct entries and confirm the very
++    // first one was evicted while a recent one survives. Not asserting the
++    // exact cap value (an implementation detail) — only the bounded-ness.
++    for (let i = 0; i < 501; i++) {
++      markSearchResultsViewReported(`entry-${i}`, `k${i}`);
++    }
++    assert.equal(hasReportedSearchResultsView('entry-0', 'k0'), false, 'the oldest entry should have been evicted once the bound was exceeded');
++    assert.equal(hasReportedSearchResultsView('entry-500', 'k500'), true, 'a recent entry must still be remembered');
++  });
++});
+diff --git a/frontend/lib/searchResultsViewDedup.ts b/frontend/lib/searchResultsViewDedup.ts
+new file mode 100644
+index 0000000..a4558a6
+--- /dev/null
++++ b/frontend/lib/searchResultsViewDedup.ts
+@@ -0,0 +1,53 @@
++/**
++ * T-058: per-history-entry deduplication for the search_results_view
++ * product event — separate from T-056's SearchReturnSnapshot cache
++ * (lib/searchReturnState.ts) by design, even though both are keyed by the
++ * same entryId. T-056 owns UI restoration (cards/scroll/pagination); this
++ * module owns one narrow analytics-quality question ("has this exact
++ * material result state already been reported for this browser history
++ * entry?") and nothing else. Keeping them separate means a change to one
++ * can never accidentally corrupt the other, and an invalid/expired T-056
++ * snapshot has no bearing on whether this module still remembers what was
++ * already reported.
++ *
++ * Deliberately in-memory (a module-scope Map), matching T-056's own
++ * rationale: never sessionStorage/localStorage/cookies (Cookie Policy
++ * constraint — see searchReturnState.ts), and a hard reload or new tab
++ * starts a fresh JS realm with an empty map, which is exactly the "always
++ * fresh" behavior a reload needs. Only the material event key (a small
++ * derived string containing no query text, counts, or identifiers) is ever
++ * stored — never the GA4 payload itself, never anything sent to Google.
++ */
++
++const MAX_ENTRIES = 500;
++
++const reportedKeys = new Map<string, string>();
++
++/** True only when THIS exact material key was already reported for THIS exact history entry. A null/missing entryId (history API unavailable) always returns false — the same safe "no cross-remount memory" fallback T-056 uses for restoration in that case. */
++export function hasReportedSearchResultsView(entryId: string | null, materialKey: string): boolean {
++  if (!entryId) return false;
++  try {
++    return reportedKeys.get(entryId) === materialKey;
++  } catch {
++    return false;
++  }
++}
++
++/** Records the material key as reported for this entry. Never throws — a failed write must never break the calling render. Bounded: evicts the oldest entry (Map preserves insertion order) once the map would otherwise grow past MAX_ENTRIES, so a very long single-tab session can't leak memory unboundedly. */
++export function markSearchResultsViewReported(entryId: string | null, materialKey: string): void {
++  if (!entryId) return;
++  try {
++    if (!reportedKeys.has(entryId) && reportedKeys.size >= MAX_ENTRIES) {
++      const oldestKey = reportedKeys.keys().next().value;
++      if (oldestKey !== undefined) reportedKeys.delete(oldestKey);
++    }
++    reportedKeys.set(entryId, materialKey);
++  } catch {
++    // swallow — recording a dedup key must never break the render it's attached to
++  }
++}
++
++/** Test-only: clears the module-scope map between test cases. Not used by app code. */
++export function __clearSearchResultsViewDedupForTests(): void {
++  reportedKeys.clear();
++}
+diff --git a/frontend/package.json b/frontend/package.json
+index 1dda035..2e6907b 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",

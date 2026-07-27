@@ -1267,6 +1267,34 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-058 — Prevent Duplicate Search Results Analytics on Back Restoration ✅ Completed
+**Priority:** P0 (analytics data-quality cleanup, prerequisite for SQC-01B baseline collection) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-014 ✅ GA4 infrastructure, T-015 ✅ Product analytics events, T-054 ✅ Search results context, T-056 ✅ Search return-state restoration, T-057 ✅ Search controls accessibility
+**Status:** Merged and deployed (PR #55, branch `fix/T-058-search-results-view-dedup`). Production-verified 2026-07-27.
+
+**Problem:** returning via browser Back from a salon detail page correctly restores the search results (T-056), but also re-emitted `search_results_view` for the exact same result state the user had already seen. Root cause: the T-015 dedup state (`lastTrackedSearchKey`) was a component-local `useRef`, reset to `null` on every remount — and Back has always remounted the search page (true before T-056 too). Not a UX defect and not a T-056 regression, but it inflated `search_results_view` counts and distorted the Search→Salon CTR denominator SQC-01B's ranking work depends on.
+
+**Fix:** a new, deliberately separate small in-memory store (`lib/searchResultsViewDedup.ts`), keyed by the same per-history-entry id T-056 already tracks, remembers what material key was already reported per entry — survives the remount, wiped on hard reload/new tab (same realm-scoped invalidation rationale as T-056's own snapshot cache). Not a change to `SearchReturnSnapshot`'s schema — a separate metadata map, bounded at 500 entries. The canonical event identity (`area|bucket|view|locale`, from `lib/analytics.ts`), consent gating, and event parameters are all completely unchanged.
+
+**Semantic rule confirmed:** one `search_results_view` per materially distinct successful result state per browser history entry. `Search A → Salon → Back to Search A` suppresses correctly. `Search A → Search B` fires once for B (new history entry, fresh id). `Search A → Search B → Back to Search A` correctly restores A's own event history, since `history.state` is per-entry in the browser and each entry's own dedup record travels with it.
+
+**Verification:** 668/668 frontend tests passing (33 new). `npm run lint` and `npm run build` clean. Isolated `next build` standalone verification — built **with real GA4 build args** (unlike T-056/T-057, whose isolated builds had no measurement ID baked in) — genuinely exercised live `gtag()` interception across 4 locales + mobile: fresh loads, Back restoration (zero duplicate), area/query/view changes, hard reload, error/Retry, and consent no/rejected/withdrawn/regrant scenarios.
+
+**Live production verification (`https://lookla.gr`, 2026-07-27):** captured the exact event sequence directly against production: `search load → search_results_view ×1` → salon_open ×1 → Back → T-056 restoration confirmed → `search_results_view` after Back: **×0 additional**. Area/query changes each fire exactly 1 new event with no raw query leakage; list→map fires at most 1; hard reload fires exactly 1 fresh event; API failure fires zero, successful Retry fires exactly 1; consent withdrawal stops new events, regrant doesn't replay the denied period, a genuinely new state after regrant is tracked; product-event payloads contain only the 4 approved keys, no raw query, no exact count, no history-entry UUID. Zero console/hydration errors.
+
+**Acceptance Criteria:**
+- [x] Back restoration to the same history entry and material state emits no duplicate `search_results_view`
+- [x] A genuinely new material state still emits exactly one event
+- [x] History-entry id never reaches the GA4 payload
+- [x] No new/renamed GA4 events, no changed parameters, no raw query or exact count in any payload
+- [x] Dedup state is a separate small in-memory store, not a change to the T-056 snapshot schema
+- [x] Consent semantics unchanged — no new replay logic
+- [x] T-056 restoration and T-057 controls both regression-verified
+- [x] Isolated and live production verification passing (see above)
+- [x] Independent review — approved (PR #55)
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
