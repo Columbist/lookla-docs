@@ -1251,6 +1251,16 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 
 ---
 
+### SQC-01A — Deferred candidates (unnumbered, not yet tickets)
+
+Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+
+- **Combined search-controls accessibility ticket (recommended next).** Merges three scored candidates from the original inventory: list/map switch semantics + touch targets, search input semantics, filter popover keyboard semantics. All three are small, isolated, UI-only changes to existing controls on `search/page.tsx` — no data/ranking/API impact, similar risk profile to T-055. Awaiting a ticket number and detailed spec before implementation starts.
+- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
+- **`search_results_view` re-fires on every Back-restoration (found during T-056 production verification, 2026-07-27).** Root cause: `page.tsx`'s pre-existing T-015 dedup ref (`lastTrackedSearchKey`) resets on every component remount, and Back has always remounted the page (true before T-056 too, when Back also always re-fetched from scratch) — so this isn't a T-056 regression, but it does mean every Back re-emits a `search_results_view` event for the *same* logical view the user already saw once. Not a UX defect (T-056's own restoration is otherwise correct and verified), but flagged explicitly because it can inflate `search_results_view` counts and distort result-count-bucket/CTR baselines — the same baseline SQC-01B's ranking work is waiting on. Worth resolving (e.g. persisting the dedup key alongside the return-state snapshot, or deriving it from `entryId` instead of a plain ref) before that baseline is treated as clean, but out of scope for a UI-focused SQC-01A ticket — likely belongs either as a small standalone analytics-hygiene ticket or as a prerequisite check item at the start of SQC-01B.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
