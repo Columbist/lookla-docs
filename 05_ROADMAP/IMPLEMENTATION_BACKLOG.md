@@ -1254,7 +1254,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 ### T-057 — Search Controls Accessibility & Mobile Operability (SQC-01A)
 **Priority:** P0 (fifth ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-042 ✅ Unified async states, T-054 ✅ Search context and filter recovery, T-055 ✅ SalonCard accessibility, T-056 ✅ Search return-state restoration
-**Status:** Implemented (branch `feat/T-057-search-controls-a11y`), pending independent review.
+**Status:** ✅ Completed. Merged via PR #54 (approved after the `aria-haspopup` review round), deployed to production (`beauty_web` rebuilt and restarted alone — no other service touched), live production verification passed.
 
 **Goal:** fix known accessibility and mobile-operability defects in the primary search controls — query input, submit, clear-query, filter popover trigger/lifecycle, List/Map switch, touch-target sizing — without touching search behavior, ranking, the API contract, filters, or map markers.
 
@@ -1296,8 +1296,10 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 - [x] Zero new GA4 events; `search_results_view`/`salon_open`/`area_select` behavior unchanged
 - [x] T-056 return-state restoration unaffected — regression-verified both in unit tests and an isolated Playwright integration scenario
 - [x] Isolated production verification — 4 locales × 4 breakpoints, all checks passing (see above)
-- [ ] Live production verification — pending deploy
-- [ ] Independent review — pending
+- [x] Live production verification — passed on `https://lookla.gr`, 4 locales × 4 breakpoints, see below
+- [x] Independent review — approved (PR #54, after the `aria-haspopup` review round)
+
+**Live production verification (`https://lookla.gr`, 2026-07-27):** ran the full isolated-verification scenario directly against production (4 locales × {desktop, 320px, 375px, 768px}, plus the T-056 integration scenario), with the `lookla_consent` cookie pre-granted and `gtag()` calls intercepted at the JS layer (raw `collect?` network sniffing is unreliable for this — see the T-056 production-verification note on GA4 batching delay). All checks passed: `role="search"` landmark resolvable once per page; input/submit resolvable by localized accessible name in all 4 locales (confirmed literal strings: "Αναζήτηση" / "Search" / "Поиск" / "Пошук"); Enter submits exactly once (exactly one `/api/salons` request); clear-query removes only `q`, keeps focus in the input, disappears once empty; filter trigger confirmed to have **no `aria-haspopup` attribute at all** (the review-round fix, explicitly asserted); `aria-expanded` cycles `false → true → false` correctly for mouse and keyboard; `aria-controls` resolves to a real rendered `role="group"` panel; Escape closes and returns focus to the trigger; outside-click closes without forcing focus back; List/Map `aria-pressed` flips correctly, a redundant click on the already-active view causes no URL change, browser Back restores the previous view; all 5 measured targets ≥44×44px; no horizontal overflow at 320/375px; zero console/hydration errors. Analytics invariants re-verified live: no `search_cleared`/`filter_opened`/`view_switched`/`filter_closed` events; every fired T-015 product event is one of the 5 approved names; no raw query text in any product-event payload (T-014's separate `page_view` infra event — which legitimately includes the full path+query string by design, unrelated to T-015's narrower product-event contract — was correctly excluded from this check after an initial test-script false positive). T-056 integration scenario confirmed restoration (48/48 cards) and full control operability still hold in production after this ticket's changes.
 
 ---
 
