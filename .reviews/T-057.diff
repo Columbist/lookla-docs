@@ -1,0 +1,658 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index b7b2563..ae79e21 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1251,11 +1251,61 @@ Two findings during this pass, both investigated to a root cause and confirmed *
+ 
+ ---
+ 
++### T-057 — Search Controls Accessibility & Mobile Operability (SQC-01A)
++**Priority:** P0 (fifth ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-042 ✅ Unified async states, T-054 ✅ Search context and filter recovery, T-055 ✅ SalonCard accessibility, T-056 ✅ Search return-state restoration
++**Status:** Implemented (branch `feat/T-057-search-controls-a11y`), pending independent review.
++
++**Goal:** fix known accessibility and mobile-operability defects in the primary search controls — query input, submit, clear-query, filter popover trigger/lifecycle, List/Map switch, touch-target sizing — without touching search behavior, ranking, the API contract, filters, or map markers.
++
++**Ownership inventory (Step 1):** all affected controls live entirely in `frontend/app/[locale]/search/page.tsx` (`SearchContent`). Query state comes from `useSearchParams()` (`q`, `area`, `city`, `category`, `min_rating`, `view`); URL mutation goes through the existing `update()`/`removeQueryFilter()`/`buildAreaUrlParams()` helpers (T-054's `lib/searchContext.ts`), untouched. `frontend/components/SearchFilters.tsx` (53 lines) confirmed still dead code — zero importers anywhere in the tree — left untouched per the ticket's own instruction not to refactor unrelated dead code.
++
++**Search form (Step 2):** the query input and submit button are now wrapped in a single `<form role="search" onSubmit={handleSearchSubmit}>`. The old dual-path submission (`onKeyDown` for Enter + `onClick` for the button) is gone — native form submission (Enter or the `type="submit"` button) both funnel through one handler, so exactly one navigation fires per submission, never two. `handleSearchSubmit` calls `e.preventDefault()` (no full-page browser navigation) and trims the value before comparing against the current (also-trimmed) `q`, matching the canonical query form T-054's `deriveActiveFilters` and T-056's `computeSearchKey` already assume — submitting an unchanged query is a no-op, no redundant history entry.
++
++**Accessible names (Steps 3–4):** the input has a real, visually-hidden `<label htmlFor="search-query-input">` (new `search.search_label` key, "Search salons" / localized) — independent of the placeholder, which remains present but is no longer the only naming source. The submit button's decorative 🔍 is wrapped in `aria-hidden="true"`; the button itself carries `aria-label={t('search_submit')}`.
++
++**Clear-query (Step 5):** a new `type="button"` clear control (new `search.clear_search` key) renders only when `q.trim()` is non-empty — driven by the same URL-derived `q` the existing "query" active-filter chip already uses, so the two never disagree. Reuses T-054's `removeQueryFilter()` verbatim (deletes only `q` and `page`, preserving `area`/`category`/`min_rating`/`view`). Clears the input's value directly and refocuses it synchronously — safe because a searchParams-only navigation never unmounts this component (confirmed by T-056's own restore-or-fetch design), so there's no need for the effect-based focus-recovery pattern T-054's chip removal required. No new GA event; raw query is never read into the handler at all.
++
++**Filter popover (Steps 6–7):** trigger now exposes `aria-expanded={filtersOpen}` and `aria-controls` pointing at a `useId()`-generated id (React 18, SSR-safe, collision-free across instances). **Review-round correction:** the first implementation also added `aria-haspopup="true"`, reasoned (incorrectly) as a generic "opens a popup" signal distinct from `"dialog"`/`"menu"`/`"listbox"`. Independent review correctly identified that per the WAI-ARIA spec, `aria-haspopup="true"` is *defined* as exactly equivalent to `aria-haspopup="menu"` — there is no generic/neutral value in this attribute's vocabulary. Since the filter panel is a plain group of form controls (a `<select>`×3 and a clear button, no menuitems, no roving-tabindex/arrow-key navigation), claiming `"true"`/`"menu"` would misrepresent it to screen readers as a menu widget. Fixed by removing `aria-haspopup` entirely — `aria-expanded` + `aria-controls` alone is the correct, spec-accurate pattern for a non-modal disclosure/panel toggle that isn't a true popup-widget button. The popover panel itself gets `role="group"` and a new `search.filters_region_label` key. Escape closes the popover and returns focus to the trigger via a **dedicated** `keydown` listener, deliberately separate from the pre-existing outside-click `mousedown` listener — different event types can't race each other. Escape never mutates a filter value, never calls `router.push`/`update()`, never fires an event. Outside-click deliberately does **not** force focus anywhere (the user is already interacting with whatever they clicked) — only the Escape path moves focus.
++
++**List/Map (Step 8):** kept as plain toggle buttons (not converted to a tabs pattern, which would need `role="tablist"`/`role="tab"`/`aria-selected`/arrow-key handling — none of which the real implementation has). Both buttons now carry `aria-pressed` bound to `view`. Selecting the already-active view is now a guarded no-op (`view !== 'list' && update(...)`) — no redundant `router.push`, no redundant history entry, no redundant fetch.
++
++**Touch targets (Step 9):** measured before (375px): Search 41×36, Filter 42×34, List 65×36, Map 75×36 — all short of 44px height. After: query input/submit/clear are all `h-11`/`w-11` (44px); filter trigger and List/Map get `min-h-[44px] min-w-[44px]`. No target overlap, no horizontal overflow at 320/375px (verified — see below). Purely additive sizing/padding changes — no broader visual redesign.
++
++**Localization (Step 10):** 5 new keys per locale (`search_label`, `search_submit`, `clear_search`, `open_filters`, `filters_region_label`) added to all 4 locale files (el/en/ru/uk) — verified non-empty, distinct from the pre-existing `placeholder` key, and distinct from the English strings in the other 3 locales (no untranslated fallback).
++
++**Analytics invariants (Step 11):** zero new `trackEvent` call sites anywhere in the affected controls — verified by regex-scanning every `trackEvent(...)` call in the file against the fixed 5-name T-015 allowlist. None of `search_cleared`/`filter_opened`/`view_switched`/`filter_closed` were introduced. `search_results_view` continues to gate purely on the pre-existing `loading`/`searchError`/`total`/`mapLoading`/`mapError` state, untouched by this ticket — form submission, clear-query, filter-popover open/close, and Escape none of them call `trackEvent` directly.
++
++**T-056 compatibility (Step 12):** the filter popover's open/closed state is never written into a `SearchReturnSnapshot` (no `filtersOpen` field, verified by inspecting the exact `saveSnapshot({...})` call site). Opening/closing the popover never touches `currentEntryIdRef` or calls `ensureEntryId()`. List/Map still funnels through the same `update()` → `router.push()` path T-056's entry-id-tracking effect already watches (`view` remains in that effect's own deps, unmodified) — no snapshot-schema change was needed or made.
++
++**Verification:** 635/635 frontend tests passing (51 new for T-057 in `app/[locale]/search/searchControlsA11y.test.ts`, covering form semantics, clear-query, popover keyboard lifecycle, List/Map `aria-pressed`, touch-target class assertions, localization, analytics invariants, and T-054/T-055/T-056 non-regression). `npm run lint` and `npm run build` both clean, no new warnings. One pre-existing T-056 regression test (`restoration never calls .focus() on anything`) initially collided with the new Escape-focus-return code purely because of source-file ordering (both fell inside the same slice boundary) — resolved by relocating the new Escape effect later in the file (a pure reordering, zero behavior change), not by weakening the T-056 test.
++
++**Isolated production verification:** built and ran the actual `next build` standalone output on a throwaway port. All 4 locales × {desktop, 320px, 375px, 768px} passing every check: `role="search"` landmark resolvable exactly once; query input and submit button resolvable by computed accessible name; Enter submits exactly once (one `/api/salons` request); clear-query removes `q` from the URL while preserving other params, empties the input, keeps focus in the input, and disappears once empty; filter trigger's `aria-expanded` toggles correctly for both mouse and keyboard (Enter) activation, `aria-controls` resolves to a real rendered element; Escape closes the popover and returns focus to the trigger; outside-click closes without forcing focus; List/Map `aria-pressed` flips correctly, URL contract (`view=map`) holds, a redundant click on the already-active view causes no URL change, browser Back restores the previous view; all 5 measured touch targets are ≥44×44px; no horizontal overflow at 320/375px; zero console/page errors throughout. A dedicated T-056 integration scenario (load 48 cards → open a salon → Back → use the filter trigger) confirmed restoration still works unchanged and all controls remain fully operational post-restoration.
++
++**Safety checklist:** Backend changed: No. Database changed: No. Search API changed: No. Ranking changed: No. New filter added: No. Map-marker behaviour changed: No. Public URL contract changed: No. New GA4 event added: No. Existing GA4 event renamed: No. Raw query sent to analytics: No. Search input has accessible name: Yes. Search landmark present: Yes. Submit button has accessible name: Yes. Clear-query control present when needed: Yes. Filter expanded state exposed: Yes. Escape closes filter popover: Yes. Focus returns correctly after Escape: Yes. List/Map active state exposed: Yes. All primary controls at least 44×44: Yes. T-056 restoration preserved: Yes. Production touched before review: No. PM2 used: No. `crawler/celerybeat-schedule` touched: No. Dependabot changes mixed into branch: No.
++
++**Acceptance Criteria:**
++- [x] Search region discoverable via `role="search"`; input and submit button resolvable by computed accessible name in all 4 locales
++- [x] Enter and button click each submit exactly once; no duplicate navigation/fetch; unchanged query is a no-op
++- [x] Clear-query control appears only when a query is applied, removes only `q`+`page` (preserves other filters/view), keeps focus in the input
++- [x] Filter trigger exposes `aria-expanded`/`aria-controls` (no `aria-haspopup` — removed in review round, see above); popover exposes `role="group"` with a localized label
++- [x] Escape closes the popover, returns focus to the trigger, mutates nothing, fires no navigation/event
++- [x] Outside-click still closes the popover without forcing focus
++- [x] List/Map expose `aria-pressed`; redundant re-selection of the active view causes no navigation; Back still restores the correct view
++- [x] Search submit, clear-query, filter trigger, List, and Map all measure ≥44×44px; no overlap, no horizontal overflow at 320/375px
++- [x] Zero new GA4 events; `search_results_view`/`salon_open`/`area_select` behavior unchanged
++- [x] T-056 return-state restoration unaffected — regression-verified both in unit tests and an isolated Playwright integration scenario
++- [x] Isolated production verification — 4 locales × 4 breakpoints, all checks passing (see above)
++- [ ] Live production verification — pending deploy
++- [ ] Independent review — pending
++
++---
++
+ ### SQC-01A — Deferred candidates (unnumbered, not yet tickets)
+ 
+ Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+ 
+-- **Combined search-controls accessibility ticket (recommended next).** Merges three scored candidates from the original inventory: list/map switch semantics + touch targets, search input semantics, filter popover keyboard semantics. All three are small, isolated, UI-only changes to existing controls on `search/page.tsx` — no data/ranking/API impact, similar risk profile to T-055. Awaiting a ticket number and detailed spec before implementation starts.
++- ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
+ - **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
+ - **`search_results_view` re-fires on every Back-restoration (found during T-056 production verification, 2026-07-27).** Root cause: `page.tsx`'s pre-existing T-015 dedup ref (`lastTrackedSearchKey`) resets on every component remount, and Back has always remounted the page (true before T-056 too, when Back also always re-fetched from scratch) — so this isn't a T-056 regression, but it does mean every Back re-emits a `search_results_view` event for the *same* logical view the user already saw once. Not a UX defect (T-056's own restoration is otherwise correct and verified), but flagged explicitly because it can inflate `search_results_view` counts and distort result-count-bucket/CTR baselines — the same baseline SQC-01B's ranking work is waiting on. Worth resolving (e.g. persisting the dedup key alongside the return-state snapshot, or deriving it from `entryId` instead of a plain ref) before that baseline is treated as clean, but out of scope for a UI-focused SQC-01A ticket — likely belongs either as a small standalone analytics-hygiene ticket or as a prerequisite check item at the start of SQC-01B.
+ 
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 01aac0d..28bb603 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -1,5 +1,5 @@
+ 'use client';
+-import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
++import { useState, useEffect, useRef, useCallback, useMemo, useId, Suspense, type FormEvent } from 'react';
+ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+@@ -12,7 +12,7 @@ import ActiveFilterChips from '@/components/ActiveFilterChips';
+ import { deriveAsyncStatus } from '@/lib/asyncState';
+ import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
+ import { useFilterChipFocus } from '@/lib/useFilterChipFocus';
+-import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, type ActiveSearchFilter } from '@/lib/searchContext';
++import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, removeQueryFilter, type ActiveSearchFilter } from '@/lib/searchContext';
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';
+ import dynamic from 'next/dynamic';
+@@ -77,6 +77,8 @@ function SearchContent({ locale }: { locale: string }) {
+   const [mapError, setMapError] = useState(false);
+   const [filtersOpen, setFiltersOpen] = useState(false);
+   const filtersRef = useRef<HTMLDivElement>(null);
++  const filterTriggerRef = useRef<HTMLButtonElement>(null);
++  const filtersPopoverId = useId();
+ 
+   // Refs for use inside IntersectionObserver callback (avoids stale closures)
+   const pageRef = useRef(initialSnapshot?.currentPage ?? 1);
+@@ -372,6 +374,24 @@ function SearchContent({ locale }: { locale: string }) {
+     return () => observer.disconnect();
+   }, [loadMore]);
+ 
++  // T-057: Escape closes the filter popover and returns focus to its
++  // trigger — a separate listener from the outside-click handler above
++  // (different event type, independent user action), so the two paths
++  // cannot race or close the popover twice. Only this path moves focus;
++  // outside-click deliberately does not, since the user is already
++  // intentionally interacting with whatever they clicked.
++  useEffect(() => {
++    if (!filtersOpen) return;
++    const onKeyDown = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') {
++        setFiltersOpen(false);
++        filterTriggerRef.current?.focus();
++      }
++    };
++    document.addEventListener('keydown', onKeyDown);
++    return () => document.removeEventListener('keydown', onKeyDown);
++  }, [filtersOpen]);
++
+   const update = useCallback((key: string, value: string) => {
+     const p = new URLSearchParams(sp.toString());
+     if (value) p.set(key, value); else p.delete(key);
+@@ -398,6 +418,35 @@ function SearchContent({ locale }: { locale: string }) {
+   }, [sp, router, pathname]);
+ 
+   const doSearch = () => update('q', inputRef.current?.value || '');
++
++  // T-057: native <form> submission (Enter in the input, or clicking the
++  // type="submit" button) both funnel through this single handler — never
++  // two separate handlers racing each other, so exactly one navigation per
++  // submission. Trimmed to match the canonical query form already used by
++  // computeSearchKey (T-056) and deriveActiveFilters (T-054); submitting an
++  // unchanged (post-trim) query is a no-op, avoiding a redundant history
++  // entry for e.g. pressing Enter again on the same text.
++  const handleSearchSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
++    e.preventDefault();
++    const nextQ = (inputRef.current?.value ?? '').trim();
++    if (nextQ === q.trim()) return;
++    update('q', nextQ);
++  }, [q, update]);
++
++  // T-057: canonical clear-query — reuses T-054's removeQueryFilter (only
++  // deletes `q` and `page`, preserving area/category/min_rating/view), so
++  // the "query" active-filter chip and this button always agree on when a
++  // query is actually applied. The input stays mounted throughout (a
++  // searchParams-only navigation never unmounts this component), so
++  // refocusing it synchronously is safe — no effect-based focus recovery
++  // needed like T-054's chip removal, which had to wait for a DOM node to
++  // actually (dis)appear first.
++  const clearQuery = useCallback(() => {
++    if (inputRef.current) inputRef.current.value = '';
++    router.push(`${pathname}?${removeQueryFilter(sp)}`);
++    inputRef.current?.focus();
++  }, [sp, router, pathname]);
++  const hasQuery = q.trim().length > 0;
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);
+   const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);
+@@ -438,19 +487,38 @@ function SearchContent({ locale }: { locale: string }) {
+         <div className="max-w-6xl mx-auto flex flex-wrap items-center gap-2">
+           <Link href={prefix || '/'} className="text-xl font-bold text-pink-600 shrink-0 mr-1">Lookla</Link>
+ 
+-          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden flex-1 min-w-[160px] max-w-xs">
++          <form
++            role="search"
++            onSubmit={handleSearchSubmit}
++            className="flex items-center border border-gray-200 rounded-lg overflow-hidden flex-1 min-w-[160px] max-w-xs"
++          >
++            <label htmlFor="search-query-input" className="sr-only">{t('search_label')}</label>
+             <input
++              id="search-query-input"
+               ref={inputRef}
+               type="text"
+               defaultValue={q}
+               placeholder={t('placeholder')}
+-              onKeyDown={e => e.key === 'Enter' && doSearch()}
+-              className="px-3 py-2 text-sm focus:outline-none flex-1 min-w-0"
++              className="px-3 h-11 text-sm focus:outline-none flex-1 min-w-0"
+             />
+-            <button onClick={doSearch} className="px-3 py-2 bg-pink-600 text-white text-sm font-medium hover:bg-pink-700 shrink-0">
+-              🔍
++            {hasQuery && (
++              <button
++                type="button"
++                onClick={clearQuery}
++                aria-label={t('clear_search')}
++                className="w-11 h-11 flex items-center justify-center text-gray-400 hover:text-gray-600 shrink-0"
++              >
++                <span aria-hidden="true">✕</span>
++              </button>
++            )}
++            <button
++              type="submit"
++              aria-label={t('search_submit')}
++              className="w-11 h-11 flex items-center justify-center bg-pink-600 text-white hover:bg-pink-700 shrink-0"
++            >
++              <span aria-hidden="true">🔍</span>
+             </button>
+-          </div>
++          </form>
+ 
+           {/* Filter button */}
+           <div className="relative" ref={filtersRef}>
+@@ -458,10 +526,15 @@ function SearchContent({ locale }: { locale: string }) {
+               const activeCount = [area || city, category, minRating].filter(Boolean).length;
+               return (
+                 <button
++                  ref={filterTriggerRef}
++                  type="button"
+                   onClick={() => setFiltersOpen(o => !o)}
+-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${filtersOpen || activeCount > 0 ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
++                  aria-label={t('open_filters')}
++                  aria-expanded={filtersOpen}
++                  aria-controls={filtersPopoverId}
++                  className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-lg border text-sm font-medium transition-colors ${filtersOpen || activeCount > 0 ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                 >
+-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
++                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+                     <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 01.628.74v2.288a2.25 2.25 0 01-.659 1.59l-4.682 4.683a2.25 2.25 0 00-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 018 18.25v-5.757a2.25 2.25 0 00-.659-1.591L2.659 6.22A2.25 2.25 0 012 4.629V2.34a.75.75 0 01.628-.74z" clipRule="evenodd" />
+                   </svg>
+                   {activeCount > 0 && (
+@@ -474,7 +547,12 @@ function SearchContent({ locale }: { locale: string }) {
+             })()}
+ 
+             {filtersOpen && (
+-              <div className="absolute top-full right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-50 space-y-3">
++              <div
++                id={filtersPopoverId}
++                role="group"
++                aria-label={t('filters_region_label')}
++                className="absolute top-full right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-50 space-y-3"
++              >
+                 <div>
+                   <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_area')}</label>
+                   <select value={area} disabled={areasError} onChange={e => { selectArea(e.target.value); }}
+@@ -507,9 +585,9 @@ function SearchContent({ locale }: { locale: string }) {
+                   </select>
+                 </div>
+                 {(area || city || category || minRating) && (
+-                  <button onClick={clearFilters}
++                  <button type="button" onClick={clearFilters}
+                     className="w-full text-xs text-gray-400 hover:text-red-500 pt-1">
+-                    ✕ {t('clear_filters')}
++                    <span aria-hidden="true">✕</span> {t('clear_filters')}
+                   </button>
+                 )}
+               </div>
+@@ -517,12 +595,18 @@ function SearchContent({ locale }: { locale: string }) {
+           </div>
+ 
+           <div className="ml-auto flex items-center gap-1 shrink-0">
+-            <button onClick={() => update('view', 'list')}
+-              className={`px-3 py-2 rounded-lg text-sm font-medium ${view !== 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
++            <button
++              type="button"
++              onClick={() => view !== 'list' && update('view', 'list')}
++              aria-pressed={view !== 'map'}
++              className={`px-3 min-h-[44px] min-w-[44px] rounded-lg text-sm font-medium ${view !== 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+               {t('list')}
+             </button>
+-            <button onClick={() => update('view', 'map')}
+-              className={`px-3 py-2 rounded-lg text-sm font-medium ${view === 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
++            <button
++              type="button"
++              onClick={() => view !== 'map' && update('view', 'map')}
++              aria-pressed={view === 'map'}
++              className={`px-3 min-h-[44px] min-w-[44px] rounded-lg text-sm font-medium ${view === 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+               {t('map')}
+             </button>
+           </div>
+diff --git a/frontend/app/[locale]/search/searchControlsA11y.test.ts b/frontend/app/[locale]/search/searchControlsA11y.test.ts
+new file mode 100644
+index 0000000..fecc3b4
+--- /dev/null
++++ b/frontend/app/[locale]/search/searchControlsA11y.test.ts
+@@ -0,0 +1,306 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..', '..', '..');
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++function readMessages(locale: string) {
++  return JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++}
++
++const searchFormBlock = source.slice(source.indexOf('<form\n            role="search"'), source.indexOf('{/* Filter button */}'));
++const filterTriggerBlock = source.slice(source.indexOf('{/* Filter button */}'), source.indexOf('<div className="ml-auto'));
++const listMapBlock = source.slice(source.indexOf('<div className="ml-auto'), source.indexOf('</div>\n        </div>\n      </div>'));
++
++describe('T-057: search form semantics', () => {
++  test('the query input and submit button are wrapped in a role="search" <form>', () => {
++    assert.ok(searchFormBlock.includes('role="search"'));
++    assert.ok(searchFormBlock.includes('<form'));
++  });
++
++  test('the form is not nested inside another form anywhere in the file', () => {
++    const codeOnly = source.replace(/\/\/.*$/gm, '');
++    const formOpens = (codeOnly.match(/<form\b/g) || []).length;
++    assert.equal(formOpens, 1, 'exactly one <form> element should exist on this page');
++  });
++
++  test('submission is handled by a single onSubmit handler, not a separate onClick/onKeyDown pair', () => {
++    assert.ok(searchFormBlock.includes('onSubmit={handleSearchSubmit}'));
++    assert.ok(!searchFormBlock.includes('onKeyDown'), 'Enter-to-submit must go through native form submission, not a duplicate keydown handler');
++    assert.ok(!/button[^>]*onClick=\{doSearch\}/.test(searchFormBlock), 'the submit button must not also carry its own onClick — that would double-fire alongside native submit');
++  });
++
++  test('handleSearchSubmit calls preventDefault (no full-page browser form navigation)', () => {
++    const fn = source.slice(source.indexOf('const handleSearchSubmit ='), source.indexOf('const clearQuery ='));
++    assert.ok(fn.includes('e.preventDefault();'));
++  });
++
++  test('an unchanged (trimmed) query does not trigger a redundant navigation', () => {
++    const fn = source.slice(source.indexOf('const handleSearchSubmit ='), source.indexOf('const clearQuery ='));
++    assert.ok(/if \(nextQ === q\.trim\(\)\) return;/.test(fn));
++  });
++
++  test('the submitted value is trimmed, matching the canonical query form used by T-054/T-056', () => {
++    const fn = source.slice(source.indexOf('const handleSearchSubmit ='), source.indexOf('const clearQuery ='));
++    assert.ok(fn.includes('.trim()'));
++  });
++
++  test('the submit button is type="submit" and the input has a real associated <label>', () => {
++    assert.ok(searchFormBlock.includes('type="submit"'));
++    assert.ok(/<label htmlFor="search-query-input" className="sr-only">\{t\('search_label'\)\}<\/label>/.test(searchFormBlock));
++    assert.ok(searchFormBlock.includes('id="search-query-input"'));
++  });
++
++  test('placeholder is not the only accessible name source — a real label exists independent of placeholder', () => {
++    assert.ok(searchFormBlock.includes("placeholder={t('placeholder')}"));
++    assert.ok(searchFormBlock.includes("t('search_label')"), 'label text must come from a dedicated key, not reuse the placeholder key');
++  });
++
++  test('the search submit button has a localized accessible name and hides its decorative icon', () => {
++    const btn = searchFormBlock.slice(searchFormBlock.indexOf('type="submit"') - 200, searchFormBlock.indexOf('type="submit"') + 300);
++    assert.ok(btn.includes("aria-label={t('search_submit')}"));
++    assert.ok(/<span aria-hidden="true">🔍<\/span>/.test(btn));
++  });
++});
++
++describe('T-057: clear-query control', () => {
++  test('the clear button only renders when hasQuery is true', () => {
++    assert.ok(source.includes('const hasQuery = q.trim().length > 0;'));
++    assert.ok(searchFormBlock.includes('{hasQuery && ('));
++  });
++
++  test('clear button is a real type="button" (never submits the form)', () => {
++    const clearBtn = searchFormBlock.slice(searchFormBlock.indexOf('{hasQuery && ('), searchFormBlock.indexOf('type="submit"'));
++    assert.ok(clearBtn.includes('type="button"'));
++  });
++
++  test('clear button has a localized accessible name and hides its decorative glyph', () => {
++    const clearBtn = searchFormBlock.slice(searchFormBlock.indexOf('{hasQuery && ('), searchFormBlock.indexOf('type="submit"'));
++    assert.ok(clearBtn.includes("aria-label={t('clear_search')}"));
++    assert.ok(/<span aria-hidden="true">✕<\/span>/.test(clearBtn));
++  });
++
++  test('clearQuery reuses the canonical removeQueryFilter (preserves area/category/min_rating/view, resets page)', () => {
++    const fn = source.slice(source.indexOf('const clearQuery ='), source.indexOf('const hasQuery ='));
++    assert.ok(fn.includes('removeQueryFilter(sp)'));
++  });
++
++  test('clearQuery empties the input value directly and refocuses it — never falls to <body>', () => {
++    const fn = source.slice(source.indexOf('const clearQuery ='), source.indexOf('const hasQuery ='));
++    assert.ok(fn.includes("inputRef.current.value = '';"));
++    assert.ok(fn.includes('inputRef.current?.focus();'));
++  });
++
++  test('removeQueryFilter is imported from the same T-054 module ActiveFilterChips already uses for the query chip', () => {
++    assert.ok(source.includes("removeQueryFilter, type ActiveSearchFilter } from '@/lib/searchContext';"));
++  });
++
++  test('no new GA event is introduced by clearQuery, and no raw query value is read into it', () => {
++    const fn = source.slice(source.indexOf('const clearQuery ='), source.indexOf('const hasQuery ='));
++    assert.ok(!fn.includes('trackEvent'));
++  });
++});
++
++describe('T-057: filter popover semantics and keyboard lifecycle', () => {
++  test('trigger exposes aria-expanded bound to filtersOpen state', () => {
++    assert.ok(filterTriggerBlock.includes('aria-expanded={filtersOpen}'));
++  });
++
++  test('trigger does NOT expose aria-haspopup — per WAI-ARIA, "true" is defined as exactly equivalent to "menu", which would misrepresent this plain non-modal filter panel as a menu widget', () => {
++    assert.ok(!filterTriggerBlock.includes('aria-haspopup'), 'aria-haspopup must be absent entirely, not just non-"dialog"/"menu"/"listbox" — "true" itself IS "menu" per spec');
++  });
++
++  test('trigger aria-controls references the popover panel by a stable useId()-generated id, not a duplicable literal string', () => {
++    assert.ok(source.includes('const filtersPopoverId = useId();'));
++    assert.ok(filterTriggerBlock.includes('aria-controls={filtersPopoverId}'));
++    assert.ok(filterTriggerBlock.includes('id={filtersPopoverId}'));
++  });
++
++  test('trigger has a localized accessible name independent of the decorative SVG icon', () => {
++    assert.ok(filterTriggerBlock.includes("aria-label={t('open_filters')}"));
++    const svgBlock = filterTriggerBlock.slice(filterTriggerBlock.indexOf('<svg'), filterTriggerBlock.indexOf('</svg>'));
++    assert.ok(svgBlock.includes('aria-hidden="true"'));
++  });
++
++  test('the popover panel exposes role="group" with a localized region label, not a bare unlabeled div', () => {
++    const panel = filterTriggerBlock.slice(filterTriggerBlock.indexOf('{filtersOpen && ('), filterTriggerBlock.length);
++    assert.ok(panel.includes('role="group"'));
++    assert.ok(panel.includes("aria-label={t('filters_region_label')}"));
++  });
++
++  test('no focus trap / modal dialog role was added — the popover stays a non-modal disclosure, matching the real implementation', () => {
++    assert.ok(!source.includes('role="dialog"'));
++    assert.ok(!source.toLowerCase().includes('focustrap'));
++    assert.ok(!source.includes('aria-modal'));
++  });
++
++  test('Escape closes the popover via a dedicated effect, separate from the pre-existing outside-click effect', () => {
++    const escapeEffect = source.slice(source.indexOf('Escape closes the filter popover'), source.indexOf('const update = useCallback'));
++    assert.ok(escapeEffect.includes("e.key === 'Escape'"));
++    assert.ok(escapeEffect.includes('setFiltersOpen(false);'));
++    assert.ok(escapeEffect.includes("document.addEventListener('keydown', onKeyDown);"));
++  });
++
++  test('Escape returns focus to the trigger via filterTriggerRef', () => {
++    const escapeEffect = source.slice(source.indexOf('Escape closes the filter popover'), source.indexOf('const update = useCallback'));
++    assert.ok(escapeEffect.includes('filterTriggerRef.current?.focus();'));
++    assert.ok(filterTriggerBlock.includes('ref={filterTriggerRef}'));
++  });
++
++  test('Escape never mutates a filter value or calls router.push/update — closing is the only side effect', () => {
++    const escapeEffect = source.slice(source.indexOf('Escape closes the filter popover'), source.indexOf('const update = useCallback'));
++    assert.ok(!escapeEffect.includes('router.push'));
++    assert.ok(!escapeEffect.includes('update('));
++    assert.ok(!escapeEffect.includes('trackEvent'));
++  });
++
++  test('outside-click path does not forcibly move focus (only Escape does)', () => {
++    const outsideClickEffect = source.slice(source.indexOf("if (!filtersOpen) return;\n    const handler = (e: MouseEvent)"), source.indexOf('Escape closes the filter popover'));
++    assert.ok(!outsideClickEffect.includes('.focus()'));
++  });
++
++  test('Escape and outside-click are independent listeners on different event types, so they cannot double-close/race', () => {
++    assert.ok(source.includes("document.addEventListener('mousedown', handler);"));
++    assert.ok(source.includes("document.addEventListener('keydown', onKeyDown);"));
++  });
++
++  test('filter trigger and clear-filters button are explicit type="button" (never accidentally submit the search form)', () => {
++    assert.ok(filterTriggerBlock.includes('type="button"'));
++    assert.ok(filterTriggerBlock.includes('<button type="button" onClick={clearFilters}'));
++  });
++});
++
++describe('T-057: List/Map view-switch semantics', () => {
++  test('exactly one of the two buttons is aria-pressed=true, driven by the view param', () => {
++    assert.ok(listMapBlock.includes("aria-pressed={view !== 'map'}"));
++    assert.ok(listMapBlock.includes("aria-pressed={view === 'map'}"));
++  });
++
++  test('both controls are type="button" with localized text content (list/map translation keys)', () => {
++    const buttonCount = (listMapBlock.match(/type="button"/g) || []).length;
++    assert.equal(buttonCount, 2);
++    assert.ok(listMapBlock.includes("{t('list')}"));
++    assert.ok(listMapBlock.includes("{t('map')}"));
++  });
++
++  test('selecting the already-active view is a no-op — no redundant update()/navigation', () => {
++    assert.ok(listMapBlock.includes("onClick={() => view !== 'list' && update('view', 'list')}"));
++    assert.ok(listMapBlock.includes("onClick={() => view !== 'map' && update('view', 'map')}"));
++  });
++
++  test('no tab/tablist/tabpanel/aria-selected semantics were introduced (plain toggle-button pattern only, per the chosen design)', () => {
++    assert.ok(!listMapBlock.includes('role="tab"'));
++    assert.ok(!listMapBlock.includes('role="tablist"'));
++    assert.ok(!listMapBlock.includes('aria-selected'));
++  });
++});
++
++describe('T-057: touch-target sizing', () => {
++  test('search submit and clear-query buttons are fixed 44x44 (w-11 h-11)', () => {
++    const clearBtn = searchFormBlock.slice(searchFormBlock.indexOf('{hasQuery && ('), searchFormBlock.indexOf('type="submit"'));
++    assert.ok(clearBtn.includes('w-11 h-11'));
++    const submitBtn = searchFormBlock.slice(searchFormBlock.indexOf('type="submit"'), searchFormBlock.length);
++    assert.ok(submitBtn.includes('w-11 h-11'));
++  });
++
++  test('the query input itself is h-11 (44px), matching the buttons flanking it', () => {
++    assert.ok(searchFormBlock.includes('className="px-3 h-11 text-sm focus:outline-none flex-1 min-w-0"'));
++  });
++
++  test('filter trigger and List/Map controls declare min-h-[44px] min-w-[44px]', () => {
++    assert.ok(filterTriggerBlock.includes('min-h-[44px] min-w-[44px]'));
++    const minSizedInListMap = (listMapBlock.match(/min-h-\[44px\] min-w-\[44px\]/g) || []).length;
++    assert.equal(minSizedInListMap, 2);
++  });
++});
++
++describe('T-057: localization — all 4 locales define the new accessible-name keys', () => {
++  const requiredKeys = ['search_label', 'search_submit', 'clear_search', 'open_filters', 'filters_region_label'];
++
++  for (const locale of ['el', 'en', 'ru', 'uk']) {
++    test(`${locale}.json defines every new T-057 key with a non-empty string, distinct from the placeholder key`, () => {
++      const messages = readMessages(locale);
++      const search = messages.search;
++      for (const key of requiredKeys) {
++        assert.ok(typeof search[key] === 'string' && search[key].trim().length > 0, `${locale}.search.${key} must be a non-empty string`);
++      }
++      assert.notEqual(search.search_label, search.placeholder, 'the input label must not just reuse the placeholder text');
++    });
++  }
++
++  test('en.json does not leak into el/ru/uk as an accidental fallback for the new keys', () => {
++    const en = readMessages('en').search;
++    for (const locale of ['el', 'ru', 'uk']) {
++      const search = readMessages(locale).search;
++      for (const key of requiredKeys) {
++        assert.notEqual(search[key], en[key], `${locale}.search.${key} must not be an untranslated copy of the English string`);
++      }
++    }
++  });
++});
++
++describe('T-057: analytics invariants — no new events, no raw query leakage', () => {
++  test('only the 5 pre-existing T-015 event names appear anywhere in page.tsx', () => {
++    const calls = [...source.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]);
++    const allowed = new Set(['salon_open', 'contact_action', 'search_results_view', 'area_select', 'language_change']);
++    for (const name of calls) {
++      assert.ok(allowed.has(name), `unexpected trackEvent name: ${name}`);
++    }
++  });
++
++  test('no forbidden event names from the T-057 spec were introduced', () => {
++    for (const forbidden of ['search_cleared', 'filter_opened', 'view_switched', 'filter_closed']) {
++      assert.ok(!source.includes(`'${forbidden}'`));
++    }
++  });
++
++  test('handleSearchSubmit does not call trackEvent directly (search_results_view still gates only on load-completion state, unchanged)', () => {
++    const fn = source.slice(source.indexOf('const handleSearchSubmit ='), source.indexOf('const clearQuery ='));
++    assert.ok(!fn.includes('trackEvent'));
++  });
++
++  test('the filter-popover open/close toggle does not call trackEvent', () => {
++    const toggleLine = filterTriggerBlock.slice(0, 400);
++    assert.ok(toggleLine.includes('setFiltersOpen(o => !o)'));
++    assert.ok(!toggleLine.includes('trackEvent'));
++  });
++
++  test('the List/Map toggle handlers do not call trackEvent directly', () => {
++    assert.ok(!listMapBlock.includes('trackEvent'));
++  });
++});
++
++describe('T-057 regression: T-054/T-055/T-056 wiring untouched', () => {
++  test('ActiveFilterChips / clearAll / removeFilter / useFilterChipFocus wiring is unchanged', () => {
++    assert.ok(source.includes('const { containerRef: chipsContainerRef, clearAllRef, summaryRef, markRemoval } = useFilterChipFocus(activeFilters.length);'));
++    assert.ok(source.includes('<ActiveFilterChips'));
++  });
++
++  test('T-056 restore/save effects and searchReturnState imports are unchanged', () => {
++    assert.ok(source.includes("import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';"));
++    assert.ok(source.includes('const currentEntryIdRef = useRef<string | null>(mountEntryId);'));
++  });
++
++  test('the filter popover open/closed state is never written into a T-056 snapshot (SearchReturnSnapshot has no filtersOpen field)', () => {
++    const snapshotSave = source.slice(source.indexOf('saveSnapshot({'), source.indexOf('} catch {\n        // never break navigation'));
++    assert.ok(!snapshotSave.includes('filtersOpen'));
++  });
++
++  test('opening/closing the filter popover never touches currentEntryIdRef or calls ensureEntryId', () => {
++    const toggleAndEscape = filterTriggerBlock.slice(0, 400) + source.slice(source.indexOf('Escape closes the filter popover'), source.indexOf('const update = useCallback'));
++    assert.ok(!toggleAndEscape.includes('ensureEntryId'));
++    assert.ok(!toggleAndEscape.includes('currentEntryIdRef'));
++  });
++
++  test('SalonCard is rendered unchanged (no new props introduced by this ticket)', () => {
++    assert.ok(source.includes('<SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />'));
++  });
++
++  test('no map-marker file was touched by this ticket (MapView import is the pre-existing dynamic() one, unmodified)', () => {
++    assert.ok(source.includes("const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });"));
++  });
++});
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 241e791..15bb598 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -31,6 +31,11 @@
+     "all_cats": "Κατηγορία",
+     "no_results": "Δεν βρέθηκαν αποτελέσματα",
+     "placeholder": "Αναζήτηση...",
++    "search_label": "Αναζήτηση σαλονιών",
++    "search_submit": "Αναζήτηση",
++    "clear_search": "Καθαρισμός αναζήτησης",
++    "open_filters": "Άνοιγμα φίλτρων",
++    "filters_region_label": "Φίλτρα",
+     "results_heading": "Αποτελέσματα αναζήτησης",
+     "results_summary": "{count, plural, =0 {Δεν βρέθηκαν σαλόνια} one {Βρέθηκε # σαλόνι} other {Βρέθηκαν # σαλόνια}}",
+     "filter_city": "Πόλη",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index a7552f6..1657449 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -31,6 +31,11 @@
+     "all_cats": "Category",
+     "no_results": "No results found",
+     "placeholder": "Search...",
++    "search_label": "Search salons",
++    "search_submit": "Search",
++    "clear_search": "Clear search",
++    "open_filters": "Open filters",
++    "filters_region_label": "Filters",
+     "results_heading": "Search results",
+     "results_summary": "{count, plural, =0 {No salons found} one {# salon found} other {# salons found}}",
+     "filter_city": "City",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 8d876bd..5bff5b3 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -31,6 +31,11 @@
+     "all_cats": "Категория",
+     "no_results": "Ничего не найдено",
+     "placeholder": "Поиск...",
++    "search_label": "Поиск салонов",
++    "search_submit": "Поиск",
++    "clear_search": "Очистить поиск",
++    "open_filters": "Открыть фильтры",
++    "filters_region_label": "Фильтры",
+     "results_heading": "Результаты поиска",
+     "results_summary": "{count, plural, =0 {Салоны не найдены} one {# салон найден} few {# салона найдено} many {# салонов найдено} other {# салона найдено}}",
+     "filter_city": "Город",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 0048576..ec9de56 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -31,6 +31,11 @@
+     "all_cats": "Категорія",
+     "no_results": "Нічого не знайдено",
+     "placeholder": "Пошук...",
++    "search_label": "Пошук салонів",
++    "search_submit": "Пошук",
++    "clear_search": "Очистити пошук",
++    "open_filters": "Відкрити фільтри",
++    "filters_region_label": "Фільтри",
+     "results_heading": "Результати пошуку",
+     "results_summary": "{count, plural, =0 {Салонів не знайдено} one {# салон знайдено} few {# салони знайдено} many {# салонів знайдено} other {# салону знайдено}}",
+     "filter_city": "Місто",
+diff --git a/frontend/package.json b/frontend/package.json
+index 38a3503..1dda035 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",

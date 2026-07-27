@@ -1229,6 +1229,44 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-057 — Search Controls Accessibility & Mobile Operability (SQC-01A) ✅ Completed
+**Priority:** P0 (fifth ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-042 ✅ Unified async states, T-054 ✅ Search context and filter recovery, T-055 ✅ SalonCard accessibility, T-056 ✅ Search return-state restoration
+**Status:** Merged and deployed (PR #54, branch `feat/T-057-search-controls-a11y`). Production-verified 2026-07-27.
+
+**Goal:** fix known accessibility and mobile-operability defects in the primary search controls — query input, submit, clear-query, filter popover trigger/lifecycle, List/Map switch, touch-target sizing — without touching search behavior, ranking, the API contract, filters, or map markers.
+
+**Search form:** the query input and submit button are wrapped in a single `<form role="search">` with one submit handler — native Enter and the `type="submit"` button both funnel through it, so exactly one navigation fires per submission, never two. The submitted value is trimmed and compared against the current query; submitting an unchanged query is a no-op (no redundant history entry).
+
+**Accessible names:** the input has a real, visually-hidden `<label>` independent of the placeholder. The submit button's decorative icon is hidden from the accessibility tree; the button carries a localized `aria-label`.
+
+**Clear-query:** a new control renders only when a query is actually applied, reusing T-054's canonical `removeQueryFilter` (preserves all other filters and the view), clears the input, and keeps focus in place — never falling to `<body>`. No new analytics event; the raw query is never read into the handler.
+
+**Filter popover:** trigger exposes `aria-expanded` and `aria-controls` (a stable, collision-free id). **Review-round correction:** the initial implementation also added `aria-haspopup="true"`, intended as a generic "opens something" signal — independent review correctly identified that per the WAI-ARIA spec, `"true"` is *defined* as exactly equivalent to `"menu"`, which would misrepresent this plain non-modal filter panel (three `<select>`s and a clear button, no menu-item/arrow-key semantics) as a menu widget to screen readers. Fixed by removing `aria-haspopup` entirely — `aria-expanded` + `aria-controls` alone is the spec-accurate pattern here. The panel itself gets `role="group"` with a localized label. Escape closes the popover and returns focus to the trigger via a dedicated listener, independent of the pre-existing outside-click path — the two can't race. Escape never mutates a filter or fires a navigation/event; outside-click deliberately never forces focus.
+
+**List/Map:** kept as plain toggle buttons (not a tabs pattern, which the real implementation doesn't follow). Both now expose `aria-pressed`; re-selecting the already-active view is a no-op — no redundant navigation, history entry, or fetch.
+
+**Touch targets:** measured before (375px): Search 41×36, Filter 42×34, List 65×36, Map 75×36 — all short of 44px. After: all five primary controls (search submit, clear-query, filter trigger, List, Map) measure at least 44×44px. Purely additive sizing — no broader visual redesign.
+
+**Verification:** 635/635 frontend tests passing (51 new). `npm run lint` and `npm run build` clean. Isolated `next build` standalone verification across 4 locales × 4 breakpoints (desktop/320/375/768px) passing every check, plus a dedicated T-056 integration scenario (load 48 cards → open a salon → Back → use the filter trigger) confirming restoration and full control operability both still hold.
+
+**Live production verification (`https://lookla.gr`, 2026-07-27):** re-ran the full verification scenario directly against production — all checks held, including an explicit assertion that the filter trigger has **no `aria-haspopup` attribute at all** (the review-round fix). Analytics invariants re-verified live via `gtag()` call interception (raw network sniffing is unreliable for GA4's batched delivery — see T-056's note): zero forbidden event names, every fired product event is one of T-015's 5 approved names, no raw query text in any product-event payload. T-014's separate `page_view` infra event (which legitimately includes the full path+query string by design) was correctly excluded from that check.
+
+**Acceptance Criteria:**
+- [x] Search region discoverable via `role="search"`; input and submit button resolvable by computed accessible name in all 4 locales
+- [x] Enter and button click each submit exactly once; unchanged query is a no-op
+- [x] Clear-query appears only when a query is applied, removes only the query (preserves other filters/view), keeps focus in the input
+- [x] Filter trigger exposes `aria-expanded`/`aria-controls` (no `aria-haspopup` — removed in review round); popover exposes `role="group"` with a localized label
+- [x] Escape closes the popover, returns focus to the trigger, mutates nothing, fires no navigation/event
+- [x] List/Map expose `aria-pressed`; redundant re-selection causes no navigation; Back still restores the correct view
+- [x] All 5 primary controls measure ≥44×44px; no overlap, no horizontal overflow at 320/375px
+- [x] Zero new GA4 events; no raw query in analytics
+- [x] T-056 return-state restoration unaffected
+- [x] Isolated and live production verification — 4 locales × 4 breakpoints, all checks passing
+- [x] Independent review — approved (PR #54, after the `aria-haspopup` review round)
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
