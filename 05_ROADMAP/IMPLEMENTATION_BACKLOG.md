@@ -1306,7 +1306,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 ### T-058 — Prevent Duplicate Search Results Analytics on Back Restoration
 **Priority:** P0 (analytics data-quality cleanup, prerequisite for SQC-01B baseline collection) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-014 ✅ GA4 infrastructure, T-015 ✅ Product analytics events, T-054 ✅ Search results context, T-056 ✅ Search return-state restoration, T-057 ✅ Search controls accessibility
-**Status:** Implemented (branch `fix/T-058-search-results-view-dedup`), pending independent review.
+**Status:** ✅ Completed. Merged via PR #55, deployed to production (`beauty_web` rebuilt and restarted alone — no other service touched), live production verification passed.
 
 **Problem:** returning via browser Back from a salon detail page correctly restores the search results (T-056), but also re-emitted `search_results_view` for the exact same result state the user had already seen. Root cause: `page.tsx`'s T-015 dedup state (`lastTrackedSearchKey`) was a component-local `useRef`, reset to `null` on every remount — and Back has always remounted the search page (true before T-056 too, when Back also always re-fetched from page 1). Not a UX defect and not a T-056 regression, but it inflates `search_results_view` counts and distorts the Search→Salon CTR denominator SQC-01B's ranking work will depend on.
 
@@ -1349,8 +1349,10 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 - [x] Consent semantics (no consent/rejected/withdrawn/regrant) unchanged — no new replay logic
 - [x] T-056 restoration and T-057 controls both regression-verified, unit tests and isolated Playwright
 - [x] Isolated production verification — real GA4 build args, 4 locales + mobile, all scenarios passing (see above)
-- [ ] Live production verification — pending deploy
-- [ ] Independent review — pending
+- [x] Live production verification — passed on `https://lookla.gr`, see below
+- [x] Independent review — approved (PR #55)
+
+**Live production verification (`https://lookla.gr`, 2026-07-27):** ran the full scenario directly against production via `gtag()` interception (consent pre-granted). Exact captured sequence for the core reproduction: `search load → search_results_view ×1` → load 48 cards → open a salon → `salon_open ×1` (`{"salon_id":"15278","source":"search_list","locale":"en"}`) → Back → T-056 restoration confirmed (48/48 cards) → `search_results_view` after Back: **×0 additional** (still exactly 1 total) — the T-058 fix holds live. Legitimate-event checks: area change fires exactly 1 new `search_results_view` + exactly 1 `area_select`; query change fires exactly 1 new `search_results_view` with no raw query in any payload; list→map fires at most 1 new event per the existing contract. Hard reload fires exactly 1 fresh event. A simulated API 500 fires zero events; a successful Retry fires exactly 1. Consent: withdrawal mid-session stops a subsequent new material state from firing; regrant alone (no new state) does not replay the denied-period view; a genuinely new state after regrant is tracked correctly. Payload inspection on a real (zero-result) query confirmed the product-event payload contains only the 4 approved keys (`area`, `result_count_bucket`, `view`, `locale`), no raw query text, `result_count_bucket` is always one of the 5 approved bucket labels (never an exact count — including the `'0'` bucket for a genuinely empty result, correctly distinguished from "looks like a raw number" in the verification script itself), and no UUID-shaped value (history entry id) anywhere in the payload. Zero console/hydration errors throughout.
 
 ---
 
