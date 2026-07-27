@@ -1303,13 +1303,64 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 
 ---
 
+### T-058 — Prevent Duplicate Search Results Analytics on Back Restoration
+**Priority:** P0 (analytics data-quality cleanup, prerequisite for SQC-01B baseline collection) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-014 ✅ GA4 infrastructure, T-015 ✅ Product analytics events, T-054 ✅ Search results context, T-056 ✅ Search return-state restoration, T-057 ✅ Search controls accessibility
+**Status:** Implemented (branch `fix/T-058-search-results-view-dedup`), pending independent review.
+
+**Problem:** returning via browser Back from a salon detail page correctly restores the search results (T-056), but also re-emitted `search_results_view` for the exact same result state the user had already seen. Root cause: `page.tsx`'s T-015 dedup state (`lastTrackedSearchKey`) was a component-local `useRef`, reset to `null` on every remount — and Back has always remounted the search page (true before T-056 too, when Back also always re-fetched from page 1). Not a UX defect and not a T-056 regression, but it inflates `search_results_view` counts and distorts the Search→Salon CTR denominator SQC-01B's ranking work will depend on.
+
+**Event lifecycle inventory (Step 1):** `search_results_view` is owned by a single `useEffect` in `page.tsx`, gated on `[view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]`, firing only when `!loading && !searchError` (list) or `!mapLoading && !mapError` (map) — timing was already correct pre-T-058 (never fires while loading, never on error, never with a stale total, since `total`/`loading` are seeded together atomically by T-056's lazy initializers on a restoration). The only defect was WHERE the "already reported" memory lived.
+
+| Scenario | Component mount | Data source | Old dedup state | Event before T-058 | Event after T-058 |
+|---|---|---|---|---|---|
+| Fresh direct search | fresh | list fetch | ref (empty) | fires once | fires once |
+| Query change | same instance | list fetch | ref (same instance) | fires once | fires once |
+| Area change | same instance (new history entry) | list fetch | ref (same instance) | fires once | fires once |
+| List → Map | same instance (new history entry) | map fetch | ref (same instance) | fires once | fires once |
+| Salon open → Back | **remount** | T-056 restored snapshot | ref reset → **fires again (bug)** | fires again (bug) | **suppressed** |
+| Back to a different search state | remount | T-056 restored snapshot or fresh fetch | ref reset | fires (correct, different key) | fires (correct — different entry, no prior record) |
+| Forward to salon → Back again | remount | T-056 restored snapshot (still valid) | ref reset → fires again | fires again (bug) | **suppressed** (same entry, same key already recorded) |
+| Hard reload | fresh JS realm | fresh fetch | ref (empty), fresh realm | fires once | fires once (dedup store also realm-scoped, empty) |
+| API error → Retry success | same instance | list fetch | ref (same instance) | fires once (only on success) | fires once (unchanged) |
+
+**Canonical event identity (Step 2):** unchanged — reused `buildSearchResultsViewKey(area, bucket, view, locale)` and `bucketResultCount(total)` from `lib/analytics.ts` verbatim, no new key format invented. Never includes raw query, exact count, scroll position, page number, salon IDs, or the history-entry id.
+
+**Dedup ownership (Step 3):** moved the "already reported" memory to a new, deliberately separate module, `frontend/lib/searchResultsViewDedup.ts` — a small in-memory `Map<entryId, materialKey>` (same realm-scoped invalidation rationale as T-056's snapshot cache: wiped on hard reload/new tab, never sessionStorage/localStorage/cookies). `hasReportedSearchResultsView(entryId, key)` / `markSearchResultsViewReported(entryId, key)`, bounded at 500 entries (oldest evicted first) so a very long single-tab session can't grow it unboundedly. The tracking effect now does a **two-layer check**: the original `lastTrackedSearchKey` ref first (cheap same-mount short-circuit, unchanged), then the entryId-scoped store (the actual T-058 fix — survives a T-056 restoration remount, which resets the ref but never touches the store). `entryId` comes from the same `currentEntryIdRef` T-056 already maintains — no new identity concept, no second UUID scheme.
+
+**Separation from T-056 (Step 4):** deliberately a **separate small metadata map**, not a new field on `SearchReturnSnapshot` — confirmed by a regression test that `searchReturnState.ts` contains no reference to `lastTrackedSearchKey`/`searchResultsView`/`reportedKeys`. This means an invalid/expired/rejected T-056 snapshot has zero effect on the dedup store's correctness, and vice versa — a materially-identical state can be correctly deduped for analytics purposes even in a hypothetical future where UI restoration itself is skipped for some other reason.
+
+**History-entry semantic rule (Step 6):** **one `search_results_view` per materially distinct successful result state per browser history entry** — confirmed as the correct interpretation (no scope deviation needed). `Search A → Salon → Back to Search A` suppresses correctly (same entryId, same key, already recorded). `Search A → Search B` fires once for B (new history entry via `router.push`, fresh entryId, no prior record). `Search A → Search B → Back to Search A` correctly restores A's own event history (browser-native `history.state` is per-entry, so A's original entryId — and its dedup record — come back intact on Back, not sharing state with B).
+
+**Consent (Step 9):** untouched — `trackEvent()`'s own consent gate (`lib/analytics.ts`) is unchanged and re-checks live consent on every call regardless of dedup state; dedup happens entirely before `trackEvent()` is ever invoked, so a denied/withdrawn/rejected consent state still drops the call exactly as before, and no "replay" logic of any kind was added.
+
+**Verification:** 668/668 frontend tests passing (33 new for T-058: 10 direct unit tests for `hasReportedSearchResultsView`/`markSearchResultsViewReported` in `lib/searchResultsViewDedup.test.ts`, 23 source-wiring regression tests in `app/[locale]/search/searchResultsViewDedupWiring.test.ts` covering event identity, dedup ownership, privacy, timing, and T-054/T-055/T-056/T-057 non-regression). Three pre-existing tests needed their fixed-length source-slice windows widened (1200→2200 chars) after the new explanatory comment lengthened the tracking effect's surrounding text — a pure test-fixture adjustment, not a behavior change. `npm run lint` and `npm run build` both clean.
+
+**Isolated production verification:** built and ran the actual `next build` standalone output **with real `NEXT_PUBLIC_GA4_ID`/`NEXT_PUBLIC_ANALYTICS_CONSENT_ENABLED` build args** (matching the Docker image's real values) — unlike T-056/T-057, which had to defer all GA4-specific verification to production because the default local build has no measurement ID baked in, this let the isolated pass genuinely exercise live `gtag()` call interception. All scenarios passing: fresh search emits exactly 1 `search_results_view` (4 locales + 375px mobile); Back restoration after loading 48 cards and opening a salon emits **zero** duplicate events (still exactly 1 total) while T-056 restoration itself still works correctly; a real area change (via the filter popover UI) and a real query change (via the search input) each emit exactly 1 new event, with no raw query text in any payload; list→map emits exactly 1 new event per the existing T-015 contract, and re-clicking the already-active view emits none; hard reload emits exactly 1 fresh event (not cumulative with the pre-reload count); a simulated API failure emits zero events, and a successful Retry emits exactly 1; no consent and rejected consent both correctly prevent `gtag` from ever initializing; and a mid-session consent withdrawal correctly prevents a subsequent new material state from firing (existing T-014/T-015 semantics, unmodified).
+
+**Safety checklist:** Backend changed: No. Database changed: No. Search API changed: No. Ranking changed: No. Default ordering changed: No. Public URL contract changed: No. New GA4 event added: No. Existing GA4 event renamed: No. Event parameters changed: No. Raw query sent to analytics: No. Exact total sent to analytics: No. History entry ID sent to analytics: No. Back restoration duplicates results event: No. Fresh hard reload emits results event: Yes. New material search state emits event: Yes. T-056 restoration preserved: Yes. T-057 controls preserved: Yes. Production touched before review: No. PM2 used: No. `crawler/celerybeat-schedule` touched: No. Dependabot changes mixed into branch: No.
+
+**Acceptance Criteria:**
+- [x] Back restoration to the same history entry and material state emits no duplicate `search_results_view`
+- [x] A genuinely new material state (query/area/rating/clear-all/list-map/hard-reload/direct-nav/Retry-success) still emits exactly one event
+- [x] History-entry id never reaches the GA4 payload — used only as a local dedup Map key
+- [x] No new/renamed GA4 events, no changed event parameters, no raw query or exact count in any payload
+- [x] Dedup state is a separate small in-memory store, not a change to the T-056 snapshot schema
+- [x] Consent semantics (no consent/rejected/withdrawn/regrant) unchanged — no new replay logic
+- [x] T-056 restoration and T-057 controls both regression-verified, unit tests and isolated Playwright
+- [x] Isolated production verification — real GA4 build args, 4 locales + mobile, all scenarios passing (see above)
+- [ ] Live production verification — pending deploy
+- [ ] Independent review — pending
+
+---
+
 ### SQC-01A — Deferred candidates (unnumbered, not yet tickets)
 
 Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
 
 - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
 - **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
-- **`search_results_view` re-fires on every Back-restoration (found during T-056 production verification, 2026-07-27).** Root cause: `page.tsx`'s pre-existing T-015 dedup ref (`lastTrackedSearchKey`) resets on every component remount, and Back has always remounted the page (true before T-056 too, when Back also always re-fetched from scratch) — so this isn't a T-056 regression, but it does mean every Back re-emits a `search_results_view` event for the *same* logical view the user already saw once. Not a UX defect (T-056's own restoration is otherwise correct and verified), but flagged explicitly because it can inflate `search_results_view` counts and distort result-count-bucket/CTR baselines — the same baseline SQC-01B's ranking work is waiting on. Worth resolving (e.g. persisting the dedup key alongside the return-state snapshot, or deriving it from `entryId` instead of a plain ref) before that baseline is treated as clean, but out of scope for a UI-focused SQC-01A ticket — likely belongs either as a small standalone analytics-hygiene ticket or as a prerequisite check item at the start of SQC-01B.
+- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27. Map accessibility above remains the next candidate (unofficial working number T-059, not yet reserved).
 
 ---
 
