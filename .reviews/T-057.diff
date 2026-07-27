@@ -1,5 +1,5 @@
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index b7b2563..50b4e3c 100644
+index b7b2563..ae79e21 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 @@ -1251,11 +1251,61 @@ Two findings during this pass, both investigated to a root cause and confirmed *
@@ -21,7 +21,7 @@ index b7b2563..50b4e3c 100644
 +
 +**Clear-query (Step 5):** a new `type="button"` clear control (new `search.clear_search` key) renders only when `q.trim()` is non-empty — driven by the same URL-derived `q` the existing "query" active-filter chip already uses, so the two never disagree. Reuses T-054's `removeQueryFilter()` verbatim (deletes only `q` and `page`, preserving `area`/`category`/`min_rating`/`view`). Clears the input's value directly and refocuses it synchronously — safe because a searchParams-only navigation never unmounts this component (confirmed by T-056's own restore-or-fetch design), so there's no need for the effect-based focus-recovery pattern T-054's chip removal required. No new GA event; raw query is never read into the handler at all.
 +
-+**Filter popover (Steps 6–7):** trigger now exposes `aria-expanded={filtersOpen}`, `aria-haspopup="true"`, and `aria-controls` pointing at a `useId()`-generated id (React 18, SSR-safe, collision-free across instances) — deliberately **not** `aria-haspopup="dialog"`, since the popover has no focus trap and isn't converted to real dialog semantics (explicitly out of scope), and not `"menu"`/`"listbox"`, since the content is a plain group of form controls, not an actual menu/listbox widget. The popover panel itself gets `role="group"` and a new `search.filters_region_label` key. Escape closes the popover and returns focus to the trigger via a **dedicated** `keydown` listener, deliberately separate from the pre-existing outside-click `mousedown` listener — different event types can't race each other. Escape never mutates a filter value, never calls `router.push`/`update()`, never fires an event. Outside-click deliberately does **not** force focus anywhere (the user is already interacting with whatever they clicked) — only the Escape path moves focus.
++**Filter popover (Steps 6–7):** trigger now exposes `aria-expanded={filtersOpen}` and `aria-controls` pointing at a `useId()`-generated id (React 18, SSR-safe, collision-free across instances). **Review-round correction:** the first implementation also added `aria-haspopup="true"`, reasoned (incorrectly) as a generic "opens a popup" signal distinct from `"dialog"`/`"menu"`/`"listbox"`. Independent review correctly identified that per the WAI-ARIA spec, `aria-haspopup="true"` is *defined* as exactly equivalent to `aria-haspopup="menu"` — there is no generic/neutral value in this attribute's vocabulary. Since the filter panel is a plain group of form controls (a `<select>`×3 and a clear button, no menuitems, no roving-tabindex/arrow-key navigation), claiming `"true"`/`"menu"` would misrepresent it to screen readers as a menu widget. Fixed by removing `aria-haspopup` entirely — `aria-expanded` + `aria-controls` alone is the correct, spec-accurate pattern for a non-modal disclosure/panel toggle that isn't a true popup-widget button. The popover panel itself gets `role="group"` and a new `search.filters_region_label` key. Escape closes the popover and returns focus to the trigger via a **dedicated** `keydown` listener, deliberately separate from the pre-existing outside-click `mousedown` listener — different event types can't race each other. Escape never mutates a filter value, never calls `router.push`/`update()`, never fires an event. Outside-click deliberately does **not** force focus anywhere (the user is already interacting with whatever they clicked) — only the Escape path moves focus.
 +
 +**List/Map (Step 8):** kept as plain toggle buttons (not converted to a tabs pattern, which would need `role="tablist"`/`role="tab"`/`aria-selected`/arrow-key handling — none of which the real implementation has). Both buttons now carry `aria-pressed` bound to `view`. Selecting the already-active view is now a guarded no-op (`view !== 'list' && update(...)`) — no redundant `router.push`, no redundant history entry, no redundant fetch.
 +
@@ -43,7 +43,7 @@ index b7b2563..50b4e3c 100644
 +- [x] Search region discoverable via `role="search"`; input and submit button resolvable by computed accessible name in all 4 locales
 +- [x] Enter and button click each submit exactly once; no duplicate navigation/fetch; unchanged query is a no-op
 +- [x] Clear-query control appears only when a query is applied, removes only `q`+`page` (preserves other filters/view), keeps focus in the input
-+- [x] Filter trigger exposes `aria-expanded`/`aria-haspopup`/`aria-controls`; popover exposes `role="group"` with a localized label
++- [x] Filter trigger exposes `aria-expanded`/`aria-controls` (no `aria-haspopup` — removed in review round, see above); popover exposes `role="group"` with a localized label
 +- [x] Escape closes the popover, returns focus to the trigger, mutates nothing, fires no navigation/event
 +- [x] Outside-click still closes the popover without forcing focus
 +- [x] List/Map expose `aria-pressed`; redundant re-selection of the active view causes no navigation; Back still restores the correct view
@@ -66,7 +66,7 @@ index b7b2563..50b4e3c 100644
  - **`search_results_view` re-fires on every Back-restoration (found during T-056 production verification, 2026-07-27).** Root cause: `page.tsx`'s pre-existing T-015 dedup ref (`lastTrackedSearchKey`) resets on every component remount, and Back has always remounted the page (true before T-056 too, when Back also always re-fetched from scratch) — so this isn't a T-056 regression, but it does mean every Back re-emits a `search_results_view` event for the *same* logical view the user already saw once. Not a UX defect (T-056's own restoration is otherwise correct and verified), but flagged explicitly because it can inflate `search_results_view` counts and distort result-count-bucket/CTR baselines — the same baseline SQC-01B's ranking work is waiting on. Worth resolving (e.g. persisting the dedup key alongside the return-state snapshot, or deriving it from `entryId` instead of a plain ref) before that baseline is treated as clean, but out of scope for a UI-focused SQC-01A ticket — likely belongs either as a small standalone analytics-hygiene ticket or as a prerequisite check item at the start of SQC-01B.
  
 diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
-index 01aac0d..d8aab4b 100644
+index 01aac0d..28bb603 100644
 --- a/frontend/app/[locale]/search/page.tsx
 +++ b/frontend/app/[locale]/search/page.tsx
 @@ -1,5 +1,5 @@
@@ -200,7 +200,7 @@ index 01aac0d..d8aab4b 100644
  
            {/* Filter button */}
            <div className="relative" ref={filtersRef}>
-@@ -458,10 +526,16 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -458,10 +526,15 @@ function SearchContent({ locale }: { locale: string }) {
                const activeCount = [area || city, category, minRating].filter(Boolean).length;
                return (
                  <button
@@ -210,7 +210,6 @@ index 01aac0d..d8aab4b 100644
 -                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${filtersOpen || activeCount > 0 ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
 +                  aria-label={t('open_filters')}
 +                  aria-expanded={filtersOpen}
-+                  aria-haspopup="true"
 +                  aria-controls={filtersPopoverId}
 +                  className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-lg border text-sm font-medium transition-colors ${filtersOpen || activeCount > 0 ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
                  >
@@ -219,7 +218,7 @@ index 01aac0d..d8aab4b 100644
                      <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 01.628.74v2.288a2.25 2.25 0 01-.659 1.59l-4.682 4.683a2.25 2.25 0 00-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 018 18.25v-5.757a2.25 2.25 0 00-.659-1.591L2.659 6.22A2.25 2.25 0 012 4.629V2.34a.75.75 0 01.628-.74z" clipRule="evenodd" />
                    </svg>
                    {activeCount > 0 && (
-@@ -474,7 +548,12 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -474,7 +547,12 @@ function SearchContent({ locale }: { locale: string }) {
              })()}
  
              {filtersOpen && (
@@ -233,7 +232,7 @@ index 01aac0d..d8aab4b 100644
                  <div>
                    <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_area')}</label>
                    <select value={area} disabled={areasError} onChange={e => { selectArea(e.target.value); }}
-@@ -507,9 +586,9 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -507,9 +585,9 @@ function SearchContent({ locale }: { locale: string }) {
                    </select>
                  </div>
                  {(area || city || category || minRating) && (
@@ -245,7 +244,7 @@ index 01aac0d..d8aab4b 100644
                    </button>
                  )}
                </div>
-@@ -517,12 +596,18 @@ function SearchContent({ locale }: { locale: string }) {
+@@ -517,12 +595,18 @@ function SearchContent({ locale }: { locale: string }) {
            </div>
  
            <div className="ml-auto flex items-center gap-1 shrink-0">
@@ -270,10 +269,10 @@ index 01aac0d..d8aab4b 100644
            </div>
 diff --git a/frontend/app/[locale]/search/searchControlsA11y.test.ts b/frontend/app/[locale]/search/searchControlsA11y.test.ts
 new file mode 100644
-index 0000000..700aacf
+index 0000000..fecc3b4
 --- /dev/null
 +++ b/frontend/app/[locale]/search/searchControlsA11y.test.ts
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,306 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
@@ -386,11 +385,8 @@ index 0000000..700aacf
 +    assert.ok(filterTriggerBlock.includes('aria-expanded={filtersOpen}'));
 +  });
 +
-+  test('trigger exposes aria-haspopup="true" — not falsely claiming dialog/menu/listbox semantics it does not implement', () => {
-+    assert.ok(filterTriggerBlock.includes('aria-haspopup="true"'));
-+    assert.ok(!filterTriggerBlock.includes('aria-haspopup="dialog"'));
-+    assert.ok(!filterTriggerBlock.includes('aria-haspopup="menu"'));
-+    assert.ok(!filterTriggerBlock.includes('aria-haspopup="listbox"'));
++  test('trigger does NOT expose aria-haspopup — per WAI-ARIA, "true" is defined as exactly equivalent to "menu", which would misrepresent this plain non-modal filter panel as a menu widget', () => {
++    assert.ok(!filterTriggerBlock.includes('aria-haspopup'), 'aria-haspopup must be absent entirely, not just non-"dialog"/"menu"/"listbox" — "true" itself IS "menu" per spec');
 +  });
 +
 +  test('trigger aria-controls references the popover panel by a stable useId()-generated id, not a duplicable literal string', () => {
