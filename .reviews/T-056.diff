@@ -1,0 +1,1085 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index b7ca47a..831c3ee 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1196,6 +1196,55 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
+ 
+ ---
+ 
++### T-056 — Search Return-State Restoration (SQC-01A)
++**Priority:** P0 (fourth ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-015 ✅ Product analytics, T-042 ✅ Unified async states, T-054 ✅ Search context and filter recovery, T-055 ✅ SalonCard hierarchy and click targets
++**Status:** Implemented (branch `feat/T-056-search-return-state`), pending independent review.
++
++**Problem, measured in production before implementation:** infinite scroll loads additional pages of search results; opening a salon card and pressing browser Back re-mounts the search page from scratch — page 1 only, scroll reset to top. Measured example: 48 loaded cards + `scrollY≈4088` before navigating away → 24 cards + `scrollY≈133` after Back. This penalizes exactly the users who explored deepest and were closest to converting (Search → Salon → back to browsing).
++
++**Goal:** when returning via browser Back from a salon detail page, restore the same already-loaded cards, pagination state, canonical total, active filters/view (already free via existing URL persistence), and approximately the same scroll position — without touching backend, database, ranking, the search API contract, analytics taxonomy, or SalonCard.
++
++**Storage mechanism — deliberately NOT sessionStorage:** the public Cookie Policy (`app/[locale]/cookies/content.ts`, all 4 locales, section 1) states "Lookla does not use any other form of browser storage (localStorage, sessionStorage)" — a factual claim already published and previously verified against the running site. Using sessionStorage for this ticket would have made that claim false without a docs update, which is out of this ticket's scope. Instead: an in-memory (module-scope `Map`) cache in `frontend/lib/searchReturnState.ts`, keyed by a per-history-entry id merged into `history.state` under a namespaced `__lookla` field (never replaces `history.state` wholesale — Next.js's own router state is preserved via spread). This satisfies every invalidation rule for free: a hard reload or a new tab starts a fresh JS realm with an empty cache (confirmed empirically: `window`-level state was directly verified to persist across a real search→detail→back round trip within the same tab, but not across a reload).
++
++**History-entry identity:** `ensureEntryId()` reads `history.state.__lookla.entryId`; if present, reuses it (idempotent); if absent, generates one (`crypto.randomUUID()`, with a fallback) and merges it in via `history.replaceState`. A dedicated effect (`page.tsx`) keeps a `currentEntryIdRef` in sync with the CURRENT entry, keyed on `[view, area, city, q, category, minRating, locale]` — deliberately including `view`, even though it doesn't affect the search key, because every `update()` call (including a bare list/map toggle) uses `router.push`, which always creates a genuinely new history entry; a save made after such a toggle must be attributed to that new entry, not a stale one from before it (found via direct reproduction — see Map boundary below).
++
++**Snapshot contract:** `SearchReturnSnapshot { version: 1; createdAt; entryId; searchKey; locale; view; salons; currentPage; hasMore; total; scrollY }`. `searchKey` is derived from `{area, city, q (trimmed), category, minRating}` — the same fields `buildParams()` sends to `/api/salons`, minus pagination; excludes `view` (list/map share the same underlying list identity) and any tracking parameter. `isValidSnapshot()` enforces: exact version match, `createdAt` within a 30-minute TTL and not in the future, locale in the 4 supported values, `view` is `'list'|'map'`, `salons` is an array of ≤500 well-shaped items (id: number, name: string), `currentPage ≥ 1`, `hasMore` boolean, `total`/`scrollY` finite non-negative numbers. Any failure discards the snapshot silently — never a UI error, never a thrown exception (`saveSnapshot`/`getValidSnapshot` are both wrapped, matching the existing codebase's defensive style).
++
++**Save timing:** a single `useEffect(() => { return () => {...} }, [])` in `page.tsx` — the unmount cleanup fires identically whether the user left by mouse click, keyboard Enter, or any other navigation away, since both go through SalonCard's one existing `<Link>` (zero SalonCard changes, no second click handler). Reads the latest state via a ref (`latestForSaveRef`, kept current by a no-deps effect that runs after every render — an effect cleanup's closure would otherwise see stale values from mount time). scrollY comes from a separately-tracked `scrollYRef`, not a live `window.scrollY` read at cleanup time — **found necessary via direct instrumentation**: Next.js fires its own "scroll to top on navigation" as a real native `scroll` event (scrollY=0) on the OLD page as a navigation begins, strictly before the component unmounts. A passive `scroll` listener alone still gets clobbered by that later event; the actual fix is a document-level, capture-phase `click` listener that (a) freezes `scrollYRef` at the true pre-navigation position the instant a click on a salon-card link is detected (capture phase fires before Next's own Link handler even starts), and (b) sets a `frozen` flag that stops the passive listener from writing anything further, so Next's later scroll-to-top event can no longer overwrite the frozen value before save time.
++
++**Restore timing — zero-flash:** `salons`/`total`/`loading`/`pageRef`/`hasMoreRef`/pending-scroll are all seeded via lazy `useState`/`useRef` initializers from a `useMemo(() => {...}, [])`-computed `initialSnapshot`, evaluated once for this component instance's very first render. This is hydration-safe by construction, not by luck: a matching snapshot can only exist in the in-memory cache after at least one prior save within the same JS realm, which by definition happens strictly after the one-time SSR/hydration pass on first page load (the cache starts empty every time a JS realm is created) — so the very first hydration-matching render can never see a snapshot, and there is nothing to mismatch against server-rendered HTML. A `skippedInitialRestoreRef` guard prevents the follow-up "restore-or-fetch" effect from redundantly re-applying what the lazy initializers already did on that same first run; from the second run onward (a genuinely new identity reached without an unmount — e.g. a same-instance back/forward hop between two distinct filter states) it makes its own restore-or-fetch decision. Scroll restoration fires at most once (`pendingScrollRestoreRef` nulled before the `scrollTo` call, guarding against a re-render during the async `requestAnimationFrame` callback), deferred one frame so the restored cards have already painted (correct document height), using `behavior: 'auto'` — never animated.
++
++**Invalidation:** a fresh visit, hard reload, new tab, filter change (area/city/q/category/min_rating), or locale change all naturally compute either no cached snapshot (empty cache) or a non-matching `searchKey`/`locale`, falling through to the exact same `loadSalons()` fresh-fetch path that existed before this ticket — no new code branch for "invalidate," it falls out of the existing identity-matching logic.
++
++**Pagination continuation:** `pageRef.current`/`hasMoreRef.current` are restored directly from the snapshot, so `loadMore()`'s existing `pageRef.current + 1` computation naturally continues from the correct page — no changes to `loadMore()` itself, no backend pagination semantics touched.
++
++**Map boundary (Step 8):** `loadMapSalons`/`MapView` are completely untouched — map has no pagination concept to lose in the first place (single unfiltered fetch), and `view=map` already survives Back/Forward via the existing URL mechanism with zero new code. One genuine bug found and fixed during implementation: switching to `view=map` (a same-route `router.push`, no unmount) created a real new history entry that never got its own tracked id, so a save made after departing from map view was attributed to a stale entry the user could never actually return to — fixed by the dedicated `currentEntryIdRef`-tracking effect described above. Separately, and **not fixable within this ticket's scope**: `components/MapView.tsx`'s marker-popup "view salon" link is a plain `<a href>`, not a Next.js `<Link>` (pre-existing, predates T-056 entirely — confirmed via `grep`, no `next/link` import in that file at all). Clicking it causes a full hard browser navigation, which destroys the JS realm — and with it, any in-memory snapshot — before the save-on-unmount cleanup can survive it; confirmed via direct instrumentation (a page-global set on the search page was already gone by the time the destination page loaded, unlike every other navigation path tested, which reliably preserved it). No client-side approach (including sessionStorage) can restore state across a hard navigation by design. The correct, verified behavior for this one path is a safe fallback to the same fresh page-1 load a first-time visitor gets — confirmed via Playwright (24 cards, zero console errors) — not silent corruption or a crash. Fixing MapView's link type is out of scope here and belongs to the already-deferred, separate map-accessibility candidate.
++
++**Analytics invariants:** zero new `trackEvent` call sites; the only 5 pre-existing T-015 event names appear anywhere in `page.tsx`; `salon_open` is fired exclusively by SalonCard's own `handleOpen` (this file never calls it directly for the list view); no internal identifier (`entryId`/`searchKey`/`snapshot`/`scrollY`) ever appears inside a `trackEvent(...)` call; `search_results_view` continues to gate on the exact same `loading`/`searchError`/`total`/`mapLoading`/`mapError` state variables as before — restoration reuses those variables directly, so it naturally participates in the pre-existing "fires once per materially distinct state" contract with no new code, and (per the ticket's own explicit allowance) may legitimately fire once more on a genuine return-navigation, exactly as it already did before this ticket for any state change.
++
++**Accessibility:** no new `aria-live` regions (all 3 pre-existing `polite` regions and 2 pre-existing `assertive` regions are unchanged in count); restoration never calls `.focus()` on anything.
++
++**Verification:** 581/581 frontend tests passing (77 new for T-056 — direct execution against real `history`-object mocks for `ensureEntryId`/`getValidSnapshot`/`saveSnapshot`/`computeSearchKey`/`isValidSnapshot` in `lib/searchReturnState.test.ts`, plus source-wiring regression tests in `app/[locale]/search/searchReturnRestoration.test.ts` covering save timing, scroll tracking, restoration sequence, invalidation, the map boundary, analytics invariants, accessibility, and the documented MapView limitation). `npm run lint` and `npm run build` both clean, no new warnings.
++
++**Isolated production verification:** built and ran the actual `next build` standalone production output on a throwaway port, proxying to the real backend API. Root-caused two real bugs during this pass, both fixed and re-verified (not merely asserted from code review): (1) the Next.js scroll-to-top-on-navigation race described above, fixed via the capture-phase click freeze; (2) the `view=map`-toggle stale-entry-id bug described above, fixed via the dedicated tracking effect. Final clean run: all 8 primary scenarios (mouse click, keyboard Enter, 320px, 375px, and all 4 locales) passing every check — 48/48 cards restored with identical order, scroll restored to an exact pixel match (0px diff, measured against the same click-time baseline the product code itself uses), zero duplicate `page=1` fetches, zero console/page errors, correct next-page continuation, zero duplicate cards. The `view=map` boundary scenario confirmed both the URL-preservation fix and the safe MapView-hard-navigation fallback. One transient `/api/salons/map` 500 (host memory pressure under the unfiltered 2000-marker query, matching the standing, previously-documented host-resource-constraint pattern from T-014/T-051) was observed and is unrelated to this ticket's code — retried cleanly.
++
++**Hard-reload invariant — explicit review round:** independent review correctly identified that the deliverables hadn't explicitly proven "hard reload must not restore a stale snapshot" as its own scenario, distinct from a fresh visit. Reproduced exactly as requested against the isolated standalone build: load 48 cards → open a salon → Back (confirms 48 restored, `history.state.entryId` recorded) → `page.reload()` → confirms exactly 24 cards (fresh page 1, not the stale 48), confirms a real `/api/salons?...page=1` request actually fired, confirms `history.state.entryId` is **unchanged** across the reload (the reviewer's premise about `history.state` surviving a reload is correct) yet restoration still correctly did not happen — because the in-memory `Map` the snapshot itself lives in does not survive the reload's fresh JS realm, unlike `history.state` (a separate, browser-native mechanism) or `sessionStorage` (deliberately not used — see Storage mechanism above). Matching identity alone was never what protected against reload; the storage mechanism is the actual load-bearing guarantee, now stated explicitly rather than left implicit. Additionally confirmed: the snapshot is retained (not deleted) after a successful restore — `Back → Forward → Back` restores correctly both times; visiting a second, different salon from an already-restored list still restores correctly on a subsequent Back. Added structural regression tests (`lib/searchReturnState.test.ts`) asserting no `sessionStorage`/`localStorage` reference exists anywhere in the actual code (only in the explanatory comment) and that the cache is a plain module-scope `Map` — guarding this exact property against a future silent regression. (A unit-test-level simulation of "a fresh JS realm" via a cache-busted dynamic `import()` was attempted first but abandoned: Node/`tsx`'s module loader resolved the cache-busted specifier back to the same underlying module instance, so it could not faithfully reproduce real reload isolation — the actual browser reproduction above is the authoritative proof, not a unit test standing in for it.) This ticket does not use `performance.getEntriesByType('navigation')` or any navigation-type detection at all — the design doesn't need to distinguish Back from reload by navigation type, since it relies purely on the realm-scoped lifetime of the in-memory cache, which is unaffected by that question either way.
++
++**Acceptance Criteria:**
++- [x] Back restores loaded results (card count, order) and pagination/`hasMore` state
++- [x] Back restores approximately the same scroll position (verified to an exact match against the true click-time baseline)
++- [x] Fresh visits, hard reloads, new tabs, filter changes, and locale changes all still start from page 1 — no stale-state leakage
++- [x] Pagination continues from the correct next page after a restoration, with no duplicate or missing cards
++- [x] `view=map` preserved through the existing URL mechanism; no new map-state cache; map's own pagination-free fetch untouched
++- [x] No backend/database/ranking/API/URL-contract/GA4-taxonomy changes; SalonCard untouched
++- [x] No sessionStorage/localStorage — in-memory only, consistent with the published Cookie Policy
++- [x] Isolated production verification — 8/8 primary scenarios passing every check, plus the documented map-boundary safe fallback (see above)
++- [ ] Live production verification — pending deploy
++- [ ] Independent review — pending
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index a261125..01aac0d 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -1,5 +1,5 @@
+ 'use client';
+-import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
++import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+@@ -14,6 +14,7 @@ import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
+ import { useFilterChipFocus } from '@/lib/useFilterChipFocus';
+ import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, type ActiveSearchFilter } from '@/lib/searchContext';
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
++import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';
+ import dynamic from 'next/dynamic';
+ 
+ const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+@@ -35,10 +36,38 @@ function SearchContent({ locale }: { locale: string }) {
+   const view = sp.get('view') || 'list';
+   const minRating = sp.get('min_rating') || '';
+ 
+-  const [salons, setSalons] = useState<SalonListItem[]>([]);
++  // T-056: a valid return snapshot for THIS exact history entry, computed
++  // once for this component instance's whole lifetime (empty deps — a
++  // genuinely new identity, e.g. a filter change or a same-instance
++  // back/forward hop, is handled by the restore-or-fetch effect below, not
++  // by recomputing this). Only non-null when the in-memory cache already
++  // holds a matching snapshot from an earlier visit within this same tab —
++  // which by definition can only happen strictly after the one-time
++  // hydration pass on first page load, since the cache starts empty every
++  // time the JS realm is created. So this can never disagree with the
++  // server-rendered HTML at hydration time — there is nothing to mismatch.
++  const { entryId: mountEntryId, snapshot: initialSnapshot } = useMemo<{ entryId: string | null; snapshot: SearchReturnSnapshot | null }>(() => {
++    if (typeof window === 'undefined') return { entryId: null, snapshot: null };
++    const id = ensureEntryId();
++    const snap = getValidSnapshot(id, computeSearchKey({ area, city, q, category, minRating }), locale as Locale);
++    return { entryId: id, snapshot: snap };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++  // T-056: the entry id this component instance is CURRENTLY attached to —
++  // captured during render, not re-read from window.history.state at save
++  // time. By the time an unmount cleanup runs (navigation away), the
++  // browser has typically already advanced history.state to the
++  // destination entry, so a live re-read there would silently see the
++  // WRONG (or no) entry id and skip the save entirely. Updated (not just
++  // read) by the restore-or-fetch effect below whenever a same-instance
++  // identity change (e.g. a filter change, without an unmount) moves this
++  // component onto a genuinely different entry.
++  const currentEntryIdRef = useRef<string | null>(mountEntryId);
++
++  const [salons, setSalons] = useState<SalonListItem[]>(() => initialSnapshot?.salons ?? []);
+   const [mapSalons, setMapSalons] = useState<SalonMapItem[]>([]);
+-  const [total, setTotal] = useState(0);
+-  const [loading, setLoading] = useState(true);
++  const [total, setTotal] = useState(() => initialSnapshot?.total ?? 0);
++  const [loading, setLoading] = useState(() => !initialSnapshot);
+   const [searchError, setSearchError] = useState(false);
+   const [loadingMore, setLoadingMore] = useState(false);
+   const [categories, setCategories] = useState<Category[]>([]);
+@@ -50,16 +79,118 @@ function SearchContent({ locale }: { locale: string }) {
+   const filtersRef = useRef<HTMLDivElement>(null);
+ 
+   // Refs for use inside IntersectionObserver callback (avoids stale closures)
+-  const pageRef = useRef(1);
+-  const hasMoreRef = useRef(false);
++  const pageRef = useRef(initialSnapshot?.currentPage ?? 1);
++  const hasMoreRef = useRef(initialSnapshot?.hasMore ?? false);
+   const busyRef = useRef(false);
+ 
++  // T-056: this component's very first restore-or-fetch effect run must not
++  // redo what the lazy useState initializers above already did — only from
++  // the second run onward (a genuinely new identity within the same mounted
++  // instance) does the effect make its own restore-or-fetch decision.
++  const skippedInitialRestoreRef = useRef(false);
++  // Set only when a snapshot's scroll position is still waiting to be
++  // applied — consumed exactly once by the scroll-restoration effect below.
++  const pendingScrollRestoreRef = useRef<number | null>(initialSnapshot ? initialSnapshot.scrollY : null);
++  // Continuously-updated (throttled) current scroll position, read only at
++  // save time — see the save-on-unmount effect below.
++  const scrollYRef = useRef(0);
++  // Mirrors the latest values this effect's own unmount cleanup needs to
++  // save — a plain effect with no deps array (see below) keeps it current
++  // after every render, so the cleanup (which runs once, on unmount, with
++  // whatever closure it had at mount time) can still read fresh values.
++  const latestForSaveRef = useRef({ salons, total, view, area, city, q, category, minRating });
++
+   // T-015: last normalized state we've already sent search_results_view for
+   // — a ref (not time-based debounce), compared exactly, so a materially
+   // identical rerender never fires again but a genuinely different state
+   // (including one reached via browser back/forward) always does.
+   const lastTrackedSearchKey = useRef<string | null>(null);
+ 
++  useEffect(() => {
++    latestForSaveRef.current = { salons, total, view, area, city, q, category, minRating };
++  });
++
++  // T-056: throttled (rAF-coalesced) scroll tracking — cheap, no re-renders,
++  // always reasonably fresh by the time a navigation-away needs to save it.
++  //
++  // A document-level, capture-phase click listener additionally freezes
++  // scrollYRef the instant a click lands on a salon-card link (detected via
++  // its rendered href pattern — a[href*="/salons/"] — from the page level,
++  // not by touching SalonCard itself). This is load-bearing, not defensive
++  // dressing: direct instrumentation showed Next.js fires its own "scroll
++  // to top on navigation" as a real native scroll event (scrollY=0) on the
++  // OLD page as the navigation begins, strictly before this component
++  // unmounts. The capture phase means this listener sees the click before
++  // Next's own Link handler (bubble phase) starts anything, so it always
++  // records the true pre-navigation position first — but a capture alone
++  // isn't enough, because the passive scroll listener below stays attached
++  // and would still pick up Next's later scroll-to-top event and clobber
++  // the frozen value before the save-on-unmount cleanup ever reads it. So
++  // the click also stops the passive listener from writing anything further
++  // — once a card navigation is detected, nothing overwrites the frozen
++  // value again until this component actually unmounts.
++  useEffect(() => {
++    let ticking = false;
++    let frozen = false;
++    scrollYRef.current = window.scrollY;
++    const onScroll = () => {
++      if (frozen || ticking) return;
++      ticking = true;
++      requestAnimationFrame(() => { scrollYRef.current = window.scrollY; ticking = false; });
++    };
++    const onClickCapture = (e: MouseEvent) => {
++      scrollYRef.current = window.scrollY;
++      if ((e.target as HTMLElement | null)?.closest?.('a[href*="/salons/"]')) frozen = true;
++    };
++    window.addEventListener('scroll', onScroll, { passive: true });
++    document.addEventListener('click', onClickCapture, true);
++    return () => {
++      window.removeEventListener('scroll', onScroll);
++      document.removeEventListener('click', onClickCapture, true);
++    };
++  }, []);
++
++  // T-056: centralized save-on-departure — this is the ONLY place a
++  // snapshot is ever written, regardless of whether the user left by mouse
++  // click, keyboard Enter, or any other navigation away from /search; both
++  // go through the exact same SalonCard <Link>, so both trigger the exact
++  // same unmount. No SalonCard changes, no second click handler.
++  useEffect(() => {
++    return () => {
++      try {
++        const entryId = currentEntryIdRef.current;
++        if (!entryId) return;
++        const s = latestForSaveRef.current;
++        saveSnapshot({
++          version: SNAPSHOT_VERSION,
++          createdAt: Date.now(),
++          entryId,
++          searchKey: computeSearchKey({ area: s.area, city: s.city, q: s.q, category: s.category, minRating: s.minRating }),
++          locale: locale as Locale,
++          view: s.view === 'map' ? 'map' : 'list',
++          salons: s.salons,
++          currentPage: pageRef.current,
++          hasMore: hasMoreRef.current,
++          total: s.total,
++          scrollY: scrollYRef.current,
++        });
++      } catch {
++        // never break navigation over a failed save
++      }
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++
++  // T-056: restores scroll exactly once per restoration, after the restored
++  // cards have actually painted (so document height is already correct —
++  // no animated scroll, no repeated restoration on later rerenders/loads).
++  useEffect(() => {
++    if (pendingScrollRestoreRef.current === null) return;
++    const y = pendingScrollRestoreRef.current;
++    pendingScrollRestoreRef.current = null;
++    requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'auto' }));
++  }, [salons]);
++
+   useEffect(() => {
+     fetch(`/api/categories?lang=${locale}`).then(r => r.json()).then(setCategories).catch(() => {});
+     fetch(`/api/areas`)
+@@ -131,7 +262,57 @@ function SearchContent({ locale }: { locale: string }) {
+       .finally(() => setLoading(false));
+   }, [buildParams]);
+ 
+-  useEffect(() => { loadSalons(); }, [loadSalons]);
++  // T-056: on this component instance's very first run, the lazy useState
++  // initializers above already applied initialSnapshot (or there was none —
++  // either way, nothing left to do here besides the normal fresh fetch).
++  // From the second run onward — a genuinely new identity reached without
++  // an unmount (e.g. a same-instance back/forward hop between two distinct
++  // filter states) — this makes its own restore-or-fetch decision fresh.
++  useEffect(() => {
++    if (!skippedInitialRestoreRef.current) {
++      skippedInitialRestoreRef.current = true;
++      if (initialSnapshot) return;
++    } else {
++      const entryId = ensureEntryId();
++      currentEntryIdRef.current = entryId;
++      const searchKey = computeSearchKey({ area, city, q, category, minRating });
++      const snapshot = getValidSnapshot(entryId, searchKey, locale as Locale);
++      if (snapshot) {
++        setSalons(snapshot.salons);
++        setTotal(snapshot.total);
++        setLoading(false);
++        setSearchError(false);
++        pageRef.current = snapshot.currentPage;
++        hasMoreRef.current = snapshot.hasMore;
++        busyRef.current = false;
++        pendingScrollRestoreRef.current = snapshot.scrollY;
++        return;
++      }
++    }
++    loadSalons();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [loadSalons, area, city, q, category, minRating, locale]);
++
++  // T-056: keeps currentEntryIdRef pointed at whatever history entry is
++  // actually current, independent of the restore-or-fetch decision above.
++  // Deliberately a separate effect with `view` in its own deps: every
++  // update() call (including the plain list/map toggle) uses router.push,
++  // which always creates a genuinely new history entry — even though `view`
++  // doesn't affect searchKey/restoration eligibility, a save that happens
++  // while on that new entry must be attributed to ITS OWN id, not a stale
++  // one left over from before the toggle. Found via direct reproduction:
++  // switching to view=map (a same-instance, non-unmounting param change)
++  // left currentEntryIdRef pointing at the previous (list) entry, so a
++  // save made after departing from map view got attributed to an entry the
++  // user could never actually return to via Back — Back landed on the
++  // view=map entry specifically, which had never been assigned its own id
++  // and so never matched anything on lookup. This effect intentionally
++  // does NOT touch loading/salons/fetch state — assigning an id is a
++  // bookkeeping side effect only, never a fetch trigger.
++  useEffect(() => {
++    currentEntryIdRef.current = ensureEntryId();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [view, area, city, q, category, minRating, locale]);
+ 
+   // Map fetch
+   const loadMapSalons = useCallback(() => {
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index e58a6d8..205b469 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -19,7 +19,7 @@ describe('T-042: search results distinguish loading/empty/error/success via Asyn
+   });
+ 
+   test('a non-ok HTTP response from /api/salons is treated as an error, not silently parsed as valid data', () => {
+-    const fn = source.slice(source.indexOf('const loadSalons ='), source.indexOf('useEffect(() => { loadSalons(); }'));
++    const fn = source.slice(source.indexOf('const loadSalons ='), source.indexOf('// Map fetch'));
+     assert.ok(/if \(!r\.ok\) throw new Error/.test(fn));
+     assert.ok(fn.includes('setSearchError(true)'));
+   });
+diff --git a/frontend/app/[locale]/search/searchReturnRestoration.test.ts b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+new file mode 100644
+index 0000000..1e7812e
+--- /dev/null
++++ b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+@@ -0,0 +1,276 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++function slice(startMarker: string, endMarker: string): string {
++  const start = source.indexOf(startMarker);
++  const end = source.indexOf(endMarker, start);
++  if (start === -1 || end === -1) throw new Error(`marker not found: "${startMarker}" or "${endMarker}"`);
++  return source.slice(start, end);
++}
++
++describe('T-056: save timing — centralized, no SalonCard changes', () => {
++  test('exactly one <Link ...> opening tag on the page (SalonCard itself is untouched by this ticket)', () => {
++    assert.equal((source.match(/\n\s*<Link\b/g) || []).length, 1);
++  });
++
++  test('the save-on-departure effect lives in an unmount cleanup with empty deps — runs once per mount, on unmount, regardless of navigation destination', () => {
++    const block = slice('T-056: centralized save-on-departure', 'T-056: restores scroll exactly once');
++    assert.ok(/useEffect\(\(\) => \{\s*return \(\) => \{/.test(block), 'must be a cleanup-only effect');
++    assert.ok(block.includes('}, []);'), 'must have an empty dependency array — mount/unmount only');
++  });
++
++  test('save reads entryId from a ref captured at render time, not a live window.history.state read — by the time the unmount cleanup runs (navigation already underway), the browser has typically already advanced history.state to the destination entry, so a live re-read there would silently see the wrong entry and skip the save', () => {
++    const block = slice('T-056: centralized save-on-departure', 'T-056: restores scroll exactly once');
++    assert.ok(block.includes('currentEntryIdRef.current'));
++    assert.ok(!block.includes('ensureEntryId()'), 'saving must never mint a new entry id — that belongs to the restore-or-fetch path');
++  });
++
++  test('currentEntryIdRef is captured once at mount (from the same ensureEntryId() call that seeded initialSnapshot) and updated by the restore-or-fetch effect on every genuinely new identity', () => {
++    assert.ok(source.includes('const currentEntryIdRef = useRef<string | null>(mountEntryId);'));
++    assert.ok(source.includes('currentEntryIdRef.current = entryId;'));
++  });
++
++  test('a missing entryId at save time is a safe no-op (no throw, no save attempt)', () => {
++    const block = slice('T-056: centralized save-on-departure', 'T-056: restores scroll exactly once');
++    assert.ok(block.includes('if (!entryId) return;'));
++  });
++
++  test('the save is wrapped in try/catch — a storage failure must never break navigation', () => {
++    const block = slice('T-056: centralized save-on-departure', 'T-056: restores scroll exactly once');
++    assert.ok(/try \{[\s\S]*saveSnapshot\(/.test(block));
++    assert.ok(/\} catch \{/.test(block));
++  });
++
++  test('no second click handler was added to SalonCard\'s rendering — the mapping from salons to cards is untouched', () => {
++    assert.ok(source.includes("{salons.map(salon => <SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source=\"search_list\" />)}"));
++  });
++});
++
++describe('T-056: scroll tracking — throttled, no re-renders', () => {
++  test('scroll position is tracked via a ref (scrollYRef), not React state — updating it never triggers a re-render', () => {
++    assert.ok(source.includes('const scrollYRef = useRef(0);'));
++  });
++
++  test('the scroll listener is coalesced via requestAnimationFrame (not one write per raw scroll event)', () => {
++    const block = slice('T-056: throttled (rAF-coalesced) scroll tracking', 'T-056: centralized save-on-departure');
++    assert.ok(block.includes('requestAnimationFrame'));
++    assert.ok(block.includes("{ passive: true }"), 'scroll listener should be passive — must not block scrolling itself');
++  });
++
++  test('the scroll listener is attached once (empty deps) and cleaned up on unmount', () => {
++    const block = slice('T-056: throttled (rAF-coalesced) scroll tracking', 'T-056: centralized save-on-departure');
++    assert.ok(block.includes("window.addEventListener('scroll', onScroll"));
++    assert.ok(block.includes("window.removeEventListener('scroll', onScroll)"));
++    assert.ok(/\n\s*\}, \[\]\);\n/.test(block), 'the effect closes with an empty dependency array');
++  });
++
++  test('a capture-phase document click listener also freezes scrollYRef — found necessary because Next.js fires its own scroll-to-top event on the OLD page as navigation begins, strictly before this component unmounts, which would otherwise clobber the real pre-navigation position via the passive scroll listener alone', () => {
++    const block = slice('T-056: throttled (rAF-coalesced) scroll tracking', 'T-056: centralized save-on-departure');
++    assert.ok(block.includes("document.addEventListener('click', onClickCapture, true)"), 'must use capture phase (true) — fires before Link\'s own bubble-phase click handler starts any navigation');
++    assert.ok(block.includes("document.removeEventListener('click', onClickCapture, true)"));
++    assert.ok(block.includes("closest?.('a[href*=\"/salons/\"]')"));
++  });
++
++  test('once a card-link click is detected, the passive scroll listener stops writing (frozen flag) — a capture alone is not enough, since Next\'s own later scroll-to-top event would still reach the still-attached passive listener and overwrite the frozen value before save time', () => {
++    const block = slice('T-056: throttled (rAF-coalesced) scroll tracking', 'T-056: centralized save-on-departure');
++    assert.ok(block.includes('if (frozen || ticking) return;'));
++    assert.ok(block.includes('frozen = true;'));
++  });
++
++  test('the click-capture listener is page-level (document), not attached to SalonCard — no second click handler on the card, no interference with its single <Link> or with salon_open', () => {
++    const block = slice('useEffect(() => {\n    let ticking = false;', 'T-056: centralized save-on-departure');
++    assert.ok(!block.includes('SalonCard'), 'the actual code (not the surrounding doc comment) must not reference SalonCard');
++  });
++});
++
++describe('T-056: restoration sequence — no flash, restore once, resume pagination from the right page', () => {
++  test('salons/total/loading/pageRef/hasMoreRef all have a lazy initializer sourced from initialSnapshot — the very first render already has correct data, no 24-then-48 flash', () => {
++    assert.ok(source.includes('useState<SalonListItem[]>(() => initialSnapshot?.salons ?? [])'));
++    assert.ok(source.includes('useState(() => initialSnapshot?.total ?? 0)'));
++    assert.ok(source.includes('useState(() => !initialSnapshot)'));
++    assert.ok(source.includes('useRef(initialSnapshot?.currentPage ?? 1)'));
++    assert.ok(source.includes('useRef(initialSnapshot?.hasMore ?? false)'));
++  });
++
++  test('initialSnapshot is computed with an empty dependency array — frozen for this component instance\'s lifetime, never recomputed on a later identity change', () => {
++    const block = slice('const { entryId: mountEntryId, snapshot: initialSnapshot } = useMemo', 'const currentEntryIdRef');
++    assert.ok(/\n\s*\}, \[\]\);\n/.test(block));
++  });
++
++  test('the restore-or-fetch effect skips its own first run when the lazy initializers already handled it (no redundant double-restore on mount)', () => {
++    const block = slice('useEffect(() => {\n    if (!skippedInitialRestoreRef.current)', 'loadSalons();');
++    assert.ok(block.includes('skippedInitialRestoreRef.current = true;'));
++    assert.ok(block.includes('if (initialSnapshot) return;'));
++  });
++
++  test('restoration hydrates salons/total/loading/error/pageRef/hasMoreRef/busyRef in one synchronous block — no interleaved fetch', () => {
++    const block = slice('const snapshot = getValidSnapshot(entryId, searchKey, locale as Locale);', 'loadSalons();');
++    for (const call of ['setSalons(snapshot.salons)', 'setTotal(snapshot.total)', 'setLoading(false)', 'setSearchError(false)', 'pageRef.current = snapshot.currentPage;', 'hasMoreRef.current = snapshot.hasMore;', 'busyRef.current = false;']) {
++      assert.ok(block.includes(call), `missing: ${call}`);
++    }
++  });
++
++  test('a valid restoration returns early — the normal loadSalons() fresh-fetch never runs on the same effect pass', () => {
++    const block = slice('const snapshot = getValidSnapshot(entryId, searchKey, locale as Locale);', 'loadSalons();');
++    assert.ok(/if \(snapshot\) \{[\s\S]*return;\s*\}\s*\}\s*loadSalons\(\);/.test(source.slice(source.indexOf('const snapshot = getValidSnapshot'))));
++  });
++
++  test('scroll restoration fires at most once per restoration: the pending ref is nulled out synchronously inside the same effect that consumes it', () => {
++    const block = slice('T-056: restores scroll exactly once', 'useEffect(() => {\n    fetch(`/api/categories');
++    const nullIdx = block.indexOf('pendingScrollRestoreRef.current = null;');
++    const scrollToIdx = block.indexOf('window.scrollTo');
++    assert.ok(nullIdx > -1 && scrollToIdx > -1 && nullIdx < scrollToIdx, 'must null the ref before calling scrollTo, so a re-render during the async rAF callback cannot re-trigger it');
++  });
++
++  test('scroll restoration uses behavior: "auto" — never an animated/smooth scroll', () => {
++    assert.ok(source.includes("window.scrollTo({ top: y, behavior: 'auto' })"));
++  });
++
++  test('scroll restoration is deferred one frame via requestAnimationFrame, after the restored cards have already been committed to the DOM', () => {
++    const block = slice('T-056: restores scroll exactly once', 'useEffect(() => {\n    fetch(`/api/categories');
++    assert.ok(/requestAnimationFrame\(\(\) => window\.scrollTo/.test(block));
++  });
++
++  test('next pagination request continues from the restored page — loadMore always fetches pageRef.current + 1, and pageRef.current is exactly what restoration set it to', () => {
++    assert.ok(source.includes('const nextPage = pageRef.current + 1;'));
++  });
++
++  test('restoration does not touch mapSalons/mapLoading/mapError — map always refetches independently (Step 8 boundary)', () => {
++    const block = slice('const snapshot = getValidSnapshot(entryId, searchKey, locale as Locale);', 'loadSalons();');
++    assert.ok(!block.includes('setMapSalons'));
++    assert.ok(!block.includes('setMapLoading'));
++  });
++});
++
++describe('T-056: invalidation — fresh loads stay fresh', () => {
++  test('a fresh visit/hard reload/new tab (no matching cached snapshot) falls through to the exact same loadSalons() as before this ticket', () => {
++    const block = slice('useEffect(() => {\n    if (!skippedInitialRestoreRef.current)', '}, [loadSalons, area, city, q, category, minRating, locale]);');
++    assert.ok(/\n\s*loadSalons\(\);\n/.test(block), 'must fall through to loadSalons() as the last statement before the effect closes');
++  });
++
++  test('the restore-or-fetch effect re-derives entryId/searchKey/snapshot on every identity change — a filter change (new area/city/q/category/minRating) naturally computes a different searchKey and finds no match', () => {
++    assert.ok(source.includes('}, [loadSalons, area, city, q, category, minRating, locale]);'));
++  });
++
++  test('locale is part of both the effect\'s dependency array and the snapshot match check — a locale change invalidates restoration', () => {
++    const block = slice('const snapshot = getValidSnapshot(entryId, searchKey, locale as Locale);', 'loadSalons();');
++    assert.ok(block.includes('getValidSnapshot(entryId, searchKey, locale as Locale)'));
++  });
++
++  test('getValidSnapshot itself enforces version/TTL/salon-shape/locale/searchKey — invalid or expired snapshots are discarded with no UI error (verified behaviorally in lib/searchReturnState.test.ts)', () => {
++    assert.ok(source.includes("import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION"));
++  });
++
++  test('currentEntryIdRef is kept in sync via a dedicated effect keyed on [view, area, city, q, category, minRating, locale] — every router.push (including a bare list/map toggle) creates a genuinely new history entry, and a save made after such a toggle must be attributed to that new entry, not a stale one left over from before it', () => {
++    assert.ok(source.includes('useEffect(() => {\n    currentEntryIdRef.current = ensureEntryId();'));
++    assert.ok(source.includes('}, [view, area, city, q, category, minRating, locale]);'));
++  });
++
++  test('the entry-tracking effect never touches fetch/loading/salons state — assigning an id is bookkeeping only, must not itself trigger a refetch of already-loaded cards on a bare view toggle', () => {
++    const block = slice('currentEntryIdRef.current = ensureEntryId();', '}, [view, area, city, q, category, minRating, locale]);');
++    for (const banned of ['setSalons', 'setLoading', 'setTotal', 'loadSalons()']) {
++      assert.ok(!block.includes(banned), `entry-tracking effect must not call ${banned}`);
++    }
++  });
++});
++
++describe('T-056: map boundary — no viewport/zoom/marker persistence, no second cache', () => {
++  test('loadMapSalons is completely unmodified by this ticket — same signature, same unconditional refetch on every identity/view change', () => {
++    assert.ok(source.includes("const loadMapSalons = useCallback(() => {\n    if (view !== 'map') return;"));
++    assert.ok(source.includes('useEffect(() => { loadMapSalons(); }, [loadMapSalons]);'));
++  });
++
++  test('no new state/ref for map center, zoom, selected marker, or popup was introduced in page.tsx', () => {
++    for (const banned of ['mapCenter', 'mapZoom', 'selectedMarker', 'mapPopup', 'mapViewport']) {
++      assert.ok(!source.includes(banned), `must not introduce ${banned}`);
++    }
++  });
++
++  test('MapView is rendered with the exact same two props as before (salons, locale) — no new persistence-related props', () => {
++    const occurrences = source.match(/<MapView salons=\{mapSalons\} locale=\{locale\} \/>/g) || [];
++    assert.equal(occurrences.length, 2); // AsyncSection's empty + success children, T-042's existing pattern
++  });
++
++  test('documented, known limitation: MapView.tsx is untouched by this ticket, and its marker-popup "view salon" link is a plain <a href>, not a Next.js <Link> — clicking it causes a full hard browser navigation, which destroys the JS realm (and any in-memory snapshot) before the save-on-unmount cleanup\'s effect can survive it. This is pre-existing MapView behavior, not a T-056 regression: return-state restoration was never possible through that path before this ticket either. Confirmed via direct instrumentation: a page-global set on the search page was already gone by the time the destination page loaded. Fixing this would mean converting that link to <Link>, which is out of scope here (Step 8) and belongs to the deferred map-accessibility candidate.', () => {
++    const mapViewSource = fs.readFileSync(path.join(here, '..', '..', '..', 'components', 'MapView.tsx'), 'utf-8');
++    assert.ok(/<a\s+href=\{`\$\{prefix\}\/salons\//.test(mapViewSource), 'MapView\'s popup link is still a plain <a>, matching the documented limitation — if this ever changes to <Link>, the limitation (and this test) should be revisited');
++    assert.ok(!mapViewSource.includes("from 'next/link'"), 'MapView does not import next/link at all — confirms the popup link cannot be Link-based today');
++  });
++});
++
++describe('T-056: analytics invariants — no new events, no double-counting, no leaked identifiers', () => {
++  test('trackEvent is still called with only the 5 pre-existing T-015 event names anywhere in this file', () => {
++    const calls = [...source.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]);
++    const approved = new Set(['salon_open', 'contact_action', 'search_results_view', 'area_select', 'language_change']);
++    assert.ok(calls.length > 0);
++    for (const name of calls) assert.ok(approved.has(name), `unexpected/new event name: ${name}`);
++  });
++
++  test('salon_open is still fired exclusively from SalonCard\'s own handleOpen (via the single onClick={handleOpen} on its <Link>) — this file never calls trackEvent(\'salon_open\', ...) itself for the list view', () => {
++    assert.ok(!/trackEvent\('salon_open'/.test(source), 'search/page.tsx must not directly fire salon_open — that stays solely inside SalonCard');
++  });
++
++  test('the entryId/searchKey/snapshot machinery never appears inside any trackEvent(...) call — no internal identifier reaches analytics', () => {
++    const calls = [...source.matchAll(/trackEvent\([^)]*\)/gs)].map(m => m[0]);
++    for (const call of calls) {
++      assert.ok(!/entryId|searchKey|snapshot|scrollY/i.test(call), `trackEvent call leaks internal restoration state: ${call}`);
++    }
++  });
++
++  test('search_results_view still gates on the same loading/error/total/mapLoading/mapError booleans as before — restoration reuses those exact state variables, so it naturally participates in the existing "fires once per distinct state" contract without new code', () => {
++    const block = slice('T-015: search_results_view', 'IntersectionObserver — fires loadMore');
++    assert.ok(block.includes('if (loading || searchError) return;'));
++    assert.ok(block.includes('if (key === lastTrackedSearchKey.current) return;'));
++  });
++
++  test('area_select call site is byte-identical to pre-T-056', () => {
++    assert.ok(source.includes("trackEvent('area_select', { area: slug, source: 'search_filter', locale: locale as Locale });"));
++  });
++});
++
++describe('T-056: accessibility — visually quiet restoration, no forced focus, no new live regions', () => {
++  test('no new aria-live region was added for restoration — all pre-existing polite regions (results summary, filtered-empty state, neutral empty state) are untouched, and the count did not grow', () => {
++    const occurrences = source.match(/aria-live="polite"/g) || [];
++    assert.equal(occurrences.length, 3); // T-042/T-054 pre-existing — results summary, filtered-empty message, neutral no-results message
++  });
++
++  test('no assertive live region was added for restoration (only the pre-existing error regions use assertive)', () => {
++    const occurrences = source.match(/aria-live="assertive"/g) || [];
++    assert.equal(occurrences.length, 2); // T-042's list + map error regions — both pre-existing
++  });
++
++  test('restoration never calls .focus() on anything — no forced focus into a result card or elsewhere', () => {
++    const block = slice('const { entryId: mountEntryId, snapshot: initialSnapshot } = useMemo', 'IntersectionObserver — fires loadMore');
++    assert.ok(!block.includes('.focus()'));
++  });
++
++  test('T-055 SalonCard rendering call site is untouched by this ticket (same props, same source line)', () => {
++    assert.ok(source.includes('<SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />'));
++  });
++
++  test('T-042/T-054 AsyncSection status wiring for both list and map is untouched', () => {
++    assert.ok(source.includes('const listStatus = deriveAsyncStatus(loading, searchError, salons.length === 0);'));
++    assert.ok(source.includes('const mapStatus = deriveAsyncStatus(mapLoading, mapError, mapSalons.length === 0);'));
++  });
++});
++
++describe('T-056 regression: no backend/API/ranking/URL-contract changes', () => {
++  test('buildParams (the /api/salons query contract) is byte-identical to pre-T-056', () => {
++    assert.ok(source.includes("const buildParams = useCallback((page: number) => {\n    const params = new URLSearchParams({ limit: String(LIMIT), page: String(page) });"));
++  });
++
++  test('no new URL search param is introduced — history-entry identity lives only in history.state, never in the query string', () => {
++    assert.ok(!/params\.set\('(?:entryId|snapshot|returnState)'/.test(source));
++    assert.ok(!/searchParams\.set\('(?:entryId|snapshot|returnState)'/.test(source));
++  });
++
++  test('LIMIT (page size) is unchanged', () => {
++    assert.ok(source.includes('const LIMIT = 24;'));
++  });
++});
+diff --git a/frontend/lib/searchReturnState.test.ts b/frontend/lib/searchReturnState.test.ts
+new file mode 100644
+index 0000000..a08acab
+--- /dev/null
++++ b/frontend/lib/searchReturnState.test.ts
+@@ -0,0 +1,302 @@
++import { test, describe, beforeEach } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import {
++  ensureEntryId,
++  readCurrentEntryId,
++  computeSearchKey,
++  isValidSnapshot,
++  saveSnapshot,
++  getValidSnapshot,
++  SNAPSHOT_VERSION,
++  __clearSnapshotCacheForTests,
++  type SearchReturnSnapshot,
++} from './searchReturnState';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'searchReturnState.ts'), 'utf-8');
++
++// Minimal fake History — real enough to exercise the actual merge/idempotency
++// logic, without needing jsdom (this repo's test runner is plain node --test).
++function fakeHistory(initialState: unknown = null): History {
++  let state = initialState;
++  return {
++    get state() { return state; },
++    replaceState(newState: unknown) { state = newState; },
++  } as unknown as History;
++}
++
++function validSnapshot(overrides: Partial<SearchReturnSnapshot> = {}): SearchReturnSnapshot {
++  return {
++    version: SNAPSHOT_VERSION,
++    createdAt: Date.now(),
++    entryId: 'entry-1',
++    searchKey: 'piraeus',
++    locale: 'en',
++    view: 'list',
++    salons: [{ id: 1, name: 'Test Salon', rating_count: 0, is_verified: false }],
++    currentPage: 2,
++    hasMore: true,
++    total: 90,
++    scrollY: 1200,
++    ...overrides,
++  } as SearchReturnSnapshot;
++}
++
++describe('T-056: ensureEntryId — per-history-entry identity', () => {
++  test('assigns a fresh id on an entry with no prior Lookla state', () => {
++    const h = fakeHistory(null);
++    const id = ensureEntryId(h);
++    assert.ok(id && id.length > 0);
++  });
++
++  test('reuses the same id on repeated calls for the same entry (idempotent)', () => {
++    const h = fakeHistory(null);
++    const first = ensureEntryId(h);
++    const second = ensureEntryId(h);
++    assert.equal(first, second);
++  });
++
++  test('merges into existing history.state — does not replace it wholesale', () => {
++    const h = fakeHistory({ nextInternalState: 'preserve-me', anotherKey: 42 });
++    ensureEntryId(h);
++    const state = h.state as Record<string, unknown>;
++    assert.equal(state.nextInternalState, 'preserve-me');
++    assert.equal(state.anotherKey, 42);
++    assert.ok(state.__lookla);
++  });
++
++  test('two independent fakeHistory instances (simulating two distinct entries) get different ids', () => {
++    const a = ensureEntryId(fakeHistory(null));
++    const b = ensureEntryId(fakeHistory(null));
++    assert.notEqual(a, b);
++  });
++
++  test('readCurrentEntryId reads without assigning — returns null when none exists', () => {
++    const h = fakeHistory(null);
++    assert.equal(readCurrentEntryId(h), null);
++    assert.equal(h.state, null); // unchanged — read-only
++  });
++
++  test('readCurrentEntryId returns the id previously assigned by ensureEntryId', () => {
++    const h = fakeHistory(null);
++    const id = ensureEntryId(h);
++    assert.equal(readCurrentEntryId(h), id);
++  });
++
++  test('a history object whose replaceState throws falls back safely to null, never throws', () => {
++    const h = { state: null, replaceState() { throw new Error('blocked'); } } as unknown as History;
++    assert.doesNotThrow(() => ensureEntryId(h));
++    assert.equal(ensureEntryId(h), null);
++  });
++});
++
++describe('T-056: computeSearchKey — canonical search-state identity', () => {
++  test('identical filters produce the identical key', () => {
++    const a = computeSearchKey({ area: 'piraeus', city: '', q: 'hair', category: '', minRating: '' });
++    const b = computeSearchKey({ area: 'piraeus', city: '', q: 'hair', category: '', minRating: '' });
++    assert.equal(a, b);
++  });
++
++  test('a different area produces a different key', () => {
++    const a = computeSearchKey({ area: 'piraeus', city: '', q: '', category: '', minRating: '' });
++    const b = computeSearchKey({ area: 'athens-center', city: '', q: '', category: '', minRating: '' });
++    assert.notEqual(a, b);
++  });
++
++  test('a different query produces a different key', () => {
++    const a = computeSearchKey({ area: '', city: '', q: 'hair', category: '', minRating: '' });
++    const b = computeSearchKey({ area: '', city: '', q: 'nails', category: '', minRating: '' });
++    assert.notEqual(a, b);
++  });
++
++  test('a different min_rating produces a different key', () => {
++    const a = computeSearchKey({ area: '', city: '', q: '', category: '', minRating: '4' });
++    const b = computeSearchKey({ area: '', city: '', q: '', category: '', minRating: '4.5' });
++    assert.notEqual(a, b);
++  });
++
++  test('leading/trailing whitespace in the query does not change the key (cosmetic URL padding is not a real identity change)', () => {
++    const a = computeSearchKey({ area: '', city: '', q: 'piraeus', category: '', minRating: '' });
++    const b = computeSearchKey({ area: '', city: '', q: '   piraeus   ', category: '', minRating: '' });
++    assert.equal(a, b);
++  });
++});
++
++describe('T-056: isValidSnapshot — runtime validation', () => {
++  beforeEach(() => __clearSnapshotCacheForTests());
++
++  test('a well-formed snapshot passes', () => {
++    assert.equal(isValidSnapshot(validSnapshot()), true);
++  });
++
++  test('wrong version is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ version: 2 as 1 })), false);
++  });
++
++  test('missing version is rejected', () => {
++    const s = validSnapshot() as any;
++    delete s.version;
++    assert.equal(isValidSnapshot(s), false);
++  });
++
++  test('expired snapshot (createdAt older than the TTL) is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ createdAt: Date.now() - 60 * 60 * 1000 })), false);
++  });
++
++  test('a createdAt in the future is rejected (clock-tamper defense)', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ createdAt: Date.now() + 60 * 60 * 1000 })), false);
++  });
++
++  test('unsupported locale is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ locale: 'fr' as any })), false);
++  });
++
++  test('invalid view value is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ view: 'grid' as any })), false);
++  });
++
++  test('non-finite scrollY is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ scrollY: NaN })), false);
++    assert.equal(isValidSnapshot(validSnapshot({ scrollY: Infinity })), false);
++  });
++
++  test('negative scrollY is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ scrollY: -5 })), false);
++  });
++
++  test('non-finite total is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ total: NaN })), false);
++  });
++
++  test('currentPage below 1 is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ currentPage: 0 })), false);
++  });
++
++  test('hasMore as a non-boolean is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ hasMore: 'yes' as any })), false);
++  });
++
++  test('salons array over the size guard is rejected', () => {
++    const tooMany = Array.from({ length: 501 }, (_, i) => ({ id: i, name: 'x', rating_count: 0, is_verified: false }));
++    assert.equal(isValidSnapshot(validSnapshot({ salons: tooMany as any })), false);
++  });
++
++  test('malformed salon entries (missing id/name) are rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ salons: [{ foo: 'bar' } as any] })), false);
++  });
++
++  test('salons not an array is rejected', () => {
++    assert.equal(isValidSnapshot(validSnapshot({ salons: 'not-an-array' as any })), false);
++  });
++
++  test('null/undefined/primitive input is rejected without throwing', () => {
++    assert.equal(isValidSnapshot(null), false);
++    assert.equal(isValidSnapshot(undefined), false);
++    assert.equal(isValidSnapshot('a string'), false);
++    assert.equal(isValidSnapshot(42), false);
++  });
++});
++
++describe('T-056: saveSnapshot / getValidSnapshot — the actual restore-or-fetch contract', () => {
++  beforeEach(() => __clearSnapshotCacheForTests());
++
++  test('a saved valid snapshot is retrievable by matching entryId/searchKey/locale', () => {
++    const snap = validSnapshot();
++    saveSnapshot(snap);
++    const got = getValidSnapshot(snap.entryId, snap.searchKey, snap.locale);
++    assert.deepEqual(got, snap);
++  });
++
++  test('a missing entryId (never saved) returns null, not an error', () => {
++    assert.equal(getValidSnapshot('never-saved', 'x', 'en'), null);
++  });
++
++  test('a null entryId returns null (the "no entry identity yet" fallback)', () => {
++    assert.equal(getValidSnapshot(null, 'x', 'en'), null);
++  });
++
++  test('an entryId match with a different searchKey is rejected — two distinct searches must never cross-contaminate', () => {
++    const snap = validSnapshot({ entryId: 'e2', searchKey: 'search-A' });
++    saveSnapshot(snap);
++    assert.equal(getValidSnapshot('e2', 'search-B', 'en'), null);
++  });
++
++  test('an entryId+searchKey match with a different locale is rejected', () => {
++    const snap = validSnapshot({ entryId: 'e3', searchKey: 'k' });
++    saveSnapshot(snap);
++    assert.equal(getValidSnapshot('e3', 'k', 'ru'), null);
++  });
++
++  test('saving an invalid snapshot is a silent no-op — a subsequent lookup still returns null', () => {
++    saveSnapshot({ ...validSnapshot(), version: 99 as 1 });
++    assert.equal(getValidSnapshot('entry-1', 'piraeus', 'en'), null);
++  });
++
++  test('saveSnapshot never throws even given garbage input', () => {
++    assert.doesNotThrow(() => saveSnapshot(null as any));
++    assert.doesNotThrow(() => saveSnapshot(undefined as any));
++    assert.doesNotThrow(() => saveSnapshot({} as any));
++  });
++
++  test('two distinct entries (Search A, Search B) each restore their own state independently — Back from B restores A, not B', () => {
++    const snapA = validSnapshot({ entryId: 'entry-A', searchKey: 'search-A', total: 48 });
++    const snapB = validSnapshot({ entryId: 'entry-B', searchKey: 'search-B', total: 24 });
++    saveSnapshot(snapA);
++    saveSnapshot(snapB);
++    const restoredA = getValidSnapshot('entry-A', 'search-A', 'en');
++    assert.equal(restoredA?.total, 48);
++    const restoredB = getValidSnapshot('entry-B', 'search-B', 'en');
++    assert.equal(restoredB?.total, 24);
++  });
++
++  test('a snapshot that expires between save and lookup is rejected and removed from the cache', () => {
++    const snap = validSnapshot({ entryId: 'e-old', createdAt: Date.now() - 60 * 60 * 1000 });
++    saveSnapshot(snap); // save itself rejects an already-expired snapshot — nothing to find
++    assert.equal(getValidSnapshot('e-old', snap.searchKey, snap.locale), null);
++  });
++
++  test('re-saving under the same entryId overwrites the previous snapshot for that entry (latest wins)', () => {
++    saveSnapshot(validSnapshot({ entryId: 'e-overwrite', total: 24, currentPage: 1 }));
++    saveSnapshot(validSnapshot({ entryId: 'e-overwrite', total: 48, currentPage: 2 }));
++    const got = getValidSnapshot('e-overwrite', 'piraeus', 'en');
++    assert.equal(got?.total, 48);
++    assert.equal(got?.currentPage, 2);
++  });
++});
++
++describe('T-056: hard-reload invariant — the storage mechanism itself, not just id matching, is what makes reload safe', () => {
++  test('no sessionStorage/localStorage API is referenced anywhere in the actual code (only in the explanatory comment) — a regression here would silently make the reload-safety argument false', () => {
++    const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++    assert.ok(!/\bsessionStorage\b/.test(codeOnly), 'sessionStorage must not be used in code — see the Cookie Policy constraint documented at the top of this file');
++    assert.ok(!/\blocalStorage\b/.test(codeOnly), 'localStorage must not be used in code');
++  });
++
++  test('the snapshot cache is declared as a plain module-scope Map, not wrapped around any Storage API', () => {
++    assert.ok(source.includes('const snapshotCache = new Map<string, SearchReturnSnapshot>();'));
++  });
++
++  test('history.state.entryId genuinely persists on its own — matching identity alone is NOT what protects against reload (this is why the storage-mechanism choice above is the actual load-bearing guarantee, not the id-matching logic)', () => {
++    const entryId = 'reload-premise-entry';
++    const h = fakeHistory({ __lookla: { entryId } });
++    assert.equal(readCurrentEntryId(h), entryId, 'confirms history.state really does carry an id forward independent of any JS module — this is real, unavoidable browser behavior, not something this module controls or could suppress even if it wanted to');
++  });
++
++  // The actual reload reproduction (module-cache-busted dynamic import) turned out not to
++  // achieve true module isolation under this test runner's loader — Node/tsx resolved the
++  // cache-busted specifier back to the same underlying module instance, so a unit test cannot
++  // faithfully simulate "a fresh JS realm" the way a real page reload provides one. The
++  // authoritative proof is therefore an actual browser reproduction, not a unit test:
++  // isolated Playwright run against the real standalone build — load 48 cards, Back (confirms
++  // 48 restored), page.reload(), confirms exactly 24 cards (fresh page 1), confirms a real
++  // /api/salons?page=1 request fires, confirms history.state.entryId is UNCHANGED across the
++  // reload (proving the above premise held) yet restoration still correctly did not happen —
++  // because the in-memory Map from the pre-reload JS realm is simply gone. Also confirmed:
++  // Back -> Forward -> Back restores correctly both times (snapshot is retained, not deleted
++  // on first use), and visiting a second, different salon from an already-restored list still
++  // restores correctly afterward. All of this only follows from the storage-mechanism tests
++  // immediately above (no sessionStorage/localStorage, plain in-memory Map) — restated here so
++  // the dependency is explicit rather than assumed.
++});
+diff --git a/frontend/lib/searchReturnState.ts b/frontend/lib/searchReturnState.ts
+new file mode 100644
+index 0000000..b02d8ce
+--- /dev/null
++++ b/frontend/lib/searchReturnState.ts
+@@ -0,0 +1,162 @@
++import type { SalonListItem } from './api';
++import type { Locale } from '@/i18n/request';
++
++/**
++ * T-056: restores already-loaded search results and scroll position when a
++ * user returns via browser Back from a salon detail page.
++ *
++ * Deliberately in-memory (a module-scope Map), never sessionStorage or
++ * localStorage: the public Cookie Policy (app/[locale]/cookies/content.ts,
++ * all 4 locales, section 1) states "Lookla does not use any other form of
++ * browser storage (localStorage, sessionStorage)" — a factual claim already
++ * published and verified against the running site. An in-memory cache also
++ * satisfies every invalidation rule this ticket needs for free: it survives
++ * genuine SPA navigation within the same tab (Next.js <Link> transitions
++ * never reload the JS realm — verified directly against production), but a
++ * hard reload or a new tab starts a fresh JS realm with an empty cache,
++ * which is exactly the "always fresh" behavior those two cases require.
++ */
++
++export const SNAPSHOT_VERSION = 1;
++const SNAPSHOT_TTL_MS = 30 * 60 * 1000;
++const MAX_SALONS = 500;
++const HISTORY_STATE_KEY = '__lookla';
++
++export interface SearchReturnSnapshot {
++  version: 1;
++  createdAt: number;
++  entryId: string;
++  searchKey: string;
++  locale: Locale;
++  view: 'list' | 'map';
++  salons: SalonListItem[];
++  currentPage: number;
++  hasMore: boolean;
++  total: number;
++  scrollY: number;
++}
++
++const snapshotCache = new Map<string, SearchReturnSnapshot>();
++
++function readEntryId(historyState: unknown): string | undefined {
++  if (!historyState || typeof historyState !== 'object') return undefined;
++  const namespaced = (historyState as Record<string, unknown>)[HISTORY_STATE_KEY];
++  if (!namespaced || typeof namespaced !== 'object') return undefined;
++  const id = (namespaced as Record<string, unknown>).entryId;
++  return typeof id === 'string' && id ? id : undefined;
++}
++
++/**
++ * Assigns (once) or reuses a per-history-entry identifier, merged into the
++ * existing history.state object under a namespaced key. Never replaces
++ * history.state wholesale — Next.js's own router state (and anything else
++ * already there) is preserved via spread. Idempotent: calling this again on
++ * an entry that already has an id returns the same id.
++ */
++export function ensureEntryId(historyObj: History = window.history): string | null {
++  try {
++    const existing = readEntryId(historyObj.state);
++    if (existing) return existing;
++    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
++      ? crypto.randomUUID()
++      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
++    const prevState = historyObj.state && typeof historyObj.state === 'object' ? historyObj.state : {};
++    historyObj.replaceState(
++      { ...prevState, [HISTORY_STATE_KEY]: { ...(prevState as Record<string, unknown>)[HISTORY_STATE_KEY] as object, entryId: id } },
++      '',
++    );
++    return id;
++  } catch {
++    return null; // history API unavailable/blocked — safe fallback is "no restoration", never a crash
++  }
++}
++
++/** Reads the current entry's id without assigning one — used by the restore path, which must never create an id for an entry that never had one. */
++export function readCurrentEntryId(historyObj: History = window.history): string | null {
++  try {
++    return readEntryId(historyObj.state) ?? null;
++  } catch {
++    return null;
++  }
++}
++
++export interface SearchKeyParams {
++  area: string;
++  city: string;
++  q: string;
++  category: string;
++  minRating: string;
++}
++
++/**
++ * Every parameter that changes result identity — the same fields
++ * buildParams() in search/page.tsx sends to /api/salons, minus limit/page
++ * (pagination, not identity). Excludes view (list/map share the same
++ * underlying list identity) and any tracking parameter. Query is trimmed
++ * for key-comparison purposes only — the URL's own (harmless, cosmetic)
++ * whitespace handling is unrelated and untouched by this.
++ */
++export function computeSearchKey(params: SearchKeyParams): string {
++  return [params.area, params.city, params.q.trim(), params.category, params.minRating].join('');
++}
++
++function isFiniteNumber(v: unknown): v is number {
++  return typeof v === 'number' && Number.isFinite(v);
++}
++
++function isValidSalonList(v: unknown): v is SalonListItem[] {
++  if (!Array.isArray(v) || v.length > MAX_SALONS) return false;
++  return v.every(s => s && typeof s === 'object' && typeof (s as Record<string, unknown>).id === 'number' && typeof (s as Record<string, unknown>).name === 'string');
++}
++
++const VALID_LOCALES = ['el', 'en', 'ru', 'uk'];
++
++/** Runtime validation — any structural problem discards the snapshot silently; never throws into the UI. */
++export function isValidSnapshot(v: unknown): v is SearchReturnSnapshot {
++  if (!v || typeof v !== 'object') return false;
++  const s = v as Record<string, unknown>;
++  if (s.version !== SNAPSHOT_VERSION) return false;
++  if (!isFiniteNumber(s.createdAt) || Date.now() - (s.createdAt as number) > SNAPSHOT_TTL_MS || (s.createdAt as number) > Date.now()) return false;
++  if (typeof s.entryId !== 'string' || !s.entryId) return false;
++  if (typeof s.searchKey !== 'string') return false;
++  if (!VALID_LOCALES.includes(s.locale as string)) return false;
++  if (s.view !== 'list' && s.view !== 'map') return false;
++  if (!isValidSalonList(s.salons)) return false;
++  if (!isFiniteNumber(s.currentPage) || (s.currentPage as number) < 1) return false;
++  if (typeof s.hasMore !== 'boolean') return false;
++  if (!isFiniteNumber(s.total) || (s.total as number) < 0) return false;
++  if (!isFiniteNumber(s.scrollY) || (s.scrollY as number) < 0) return false;
++  return true;
++}
++
++/** Never throws — a failed save must never break navigation. */
++export function saveSnapshot(snapshot: SearchReturnSnapshot): void {
++  try {
++    if (!isValidSnapshot(snapshot)) return;
++    snapshotCache.set(snapshot.entryId, snapshot);
++  } catch {
++    // swallow — saving a snapshot must never break the navigation it's attached to
++  }
++}
++
++/** Returns a validated, identity-matching snapshot, or null. Every mismatch is a safe fallback to a fresh page-1 load — never a UI error. */
++export function getValidSnapshot(entryId: string | null, searchKey: string, locale: Locale): SearchReturnSnapshot | null {
++  if (!entryId) return null;
++  try {
++    const snap = snapshotCache.get(entryId);
++    if (!snap) return null;
++    if (!isValidSnapshot(snap)) {
++      snapshotCache.delete(entryId);
++      return null;
++    }
++    if (snap.entryId !== entryId || snap.searchKey !== searchKey || snap.locale !== locale) return null;
++    return snap;
++  } catch {
++    return null;
++  }
++}
++
++/** Test-only: clears the module-scope cache between test cases. Not used by app code. */
++export function __clearSnapshotCacheForTests(): void {
++  snapshotCache.clear();
++}
+diff --git a/frontend/package.json b/frontend/package.json
+index a747e74..38a3503 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",

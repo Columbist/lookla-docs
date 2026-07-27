@@ -1196,6 +1196,39 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+### T-056 — Search Return-State Restoration (SQC-01A) ✅ Completed
+**Priority:** P0 (fourth ticket of the SQC-01A UX-foundation phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-015 ✅ Product analytics, T-042 ✅ Unified async states, T-054 ✅ Search context and filter recovery, T-055 ✅ SalonCard hierarchy and click targets
+**Status:** Merged and deployed (PR #53, branch `feat/T-056-search-return-state`). Production-verified 2026-07-27.
+
+**Problem, measured in production before implementation:** infinite scroll loads additional pages of search results; opening a salon card and pressing browser Back re-mounted the search page from scratch — page 1 only, scroll reset to top. Measured example: 48 loaded cards + `scrollY≈4088` before navigating away → 24 cards + `scrollY≈133` after Back. This penalized exactly the users who explored deepest and were closest to converting.
+
+**Goal:** when returning via browser Back from a salon detail page, restore the same already-loaded cards, pagination state, canonical total, active filters/view, and approximately the same scroll position — without touching backend, database, ranking, the search API contract, analytics taxonomy, or `SalonCard`.
+
+**Storage mechanism — deliberately not sessionStorage:** the public Cookie Policy states Lookla uses no browser storage other than cookies. Using sessionStorage here would have made that claim false. Instead, an in-memory (module-scope `Map`) cache in `frontend/lib/searchReturnState.ts`, keyed by a per-history-entry id merged into `history.state` under a namespaced field (never replaces `history.state` wholesale). This gives every invalidation rule for free: a hard reload or a new tab starts a fresh JS realm with an empty cache, while genuine same-tab SPA navigation (Next.js `<Link>`) preserves it.
+
+**Design:** `ensureEntryId()` reads or generates a `history.state`-scoped id per history entry (kept in sync even for a same-route `view=list`↔`view=map` toggle, which still creates a new history entry via `router.push`). Snapshot save happens on unmount (covers every way of leaving — mouse, keyboard — since both go through the same `<Link>`), reading a live-updated ref so the effect cleanup never sees stale values. Scroll position is frozen via a capture-phase `click` listener the instant a salon-card link is clicked — necessary because Next.js's own scroll-to-top-on-navigation fires a real `scroll` event on the *old* page just before unmount, which would otherwise clobber a naively-read `window.scrollY`. Restoration is seeded via lazy `useState`/`useMemo` initializers evaluated on first render, which is hydration-safe by construction (a matching snapshot can only exist after a prior save in the same JS realm, which is always after the one-time hydration pass). A genuine bug was found and fixed during implementation: the map-view toggle's new history entry wasn't getting its own tracked id, so a save after leaving map view was attributed to a stale, unreachable entry — fixed with a dedicated tracking effect.
+
+**Map boundary:** `MapView.tsx`'s marker-popup link is a plain `<a href>`, not a Next.js `<Link>` (pre-existing, predates this ticket). Clicking it causes a full hard navigation that destroys the snapshot before it can be used — no client-side approach can survive that. The verified, correct behavior is a safe fallback to the same fresh page-1 load a first-time visitor gets, not corruption or a crash. Fixing MapView's link type is out of scope here.
+
+**Verification:** 584/584 frontend tests passing. `npm run lint` and `npm run build` clean. Isolated `next build` standalone verification: 8/8 primary scenarios (mouse, keyboard, 2 mobile widths, all 4 locales) passing every check — exact-pixel scroll restoration, zero duplicate fetches, zero console errors, correct next-page continuation. A dedicated hard-reload reproduction (added after an independent-review round) confirmed the invariant explicitly: `history.state`'s entry id genuinely does survive a `page.reload()` (as the review correctly assumed), yet restoration still correctly does not happen, because the in-memory cache — not `history.state` — is what's realm-scoped and wiped by the reload.
+
+**Live production verification (`https://lookla.gr`, 2026-07-27):** ran the measured Back-restoration scenario directly against production, 5/5 runs: 48/48 cards restored in identical order; scroll restored to an exact 0px diff against the true click-time baseline; zero duplicate `page=1` requests; exactly one `salon_open` event fired on open with the correct T-015 contract; Back fired zero synthetic `salon_open` events and no event fired more than once; further load-more correctly requested the next page; a hard reload after a successful restoration correctly showed a fresh page 1 with a real `page=1` request — confirming the hard-reload invariant holds live, not just in the isolated build. Two findings investigated to a root cause and confirmed not regressions: (1) `search_results_view`/`page_view` legitimately re-fire on every Back, tracing to a pre-existing T-015 dedup ref that resets on any component remount — Back has always caused a remount, even before this ticket; (2) an intermittent Next.js Link-prefetch-fallback console warning tied to restoring 48 cards in a single render burst on this memory-constrained host — Next's own self-documented graceful-degradation path (navigation always still succeeded), not a hydration error and not touching any file this ticket changed.
+
+**Acceptance Criteria:**
+- [x] Back restores loaded results (card count, order) and pagination/`hasMore` state
+- [x] Back restores approximately the same scroll position (exact match against the true click-time baseline)
+- [x] Fresh visits, hard reloads, new tabs, filter changes, and locale changes all still start from page 1
+- [x] Pagination continues from the correct next page after a restoration, no duplicate or missing cards
+- [x] `view=map` preserved through the existing URL mechanism; map's own fetch untouched
+- [x] No backend/database/ranking/API/URL-contract/GA4-taxonomy changes; `SalonCard` untouched
+- [x] No sessionStorage/localStorage — in-memory only, consistent with the published Cookie Policy
+- [x] Isolated production verification — 8/8 scenarios passing, plus the documented map-boundary fallback
+- [x] Live production verification — 5/5 runs against `https://lookla.gr`, hard-reload invariant confirmed live
+- [x] Independent review — approved (PR #53, after a hard-reload-invariant review round)
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
