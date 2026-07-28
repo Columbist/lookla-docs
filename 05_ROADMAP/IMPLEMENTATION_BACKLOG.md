@@ -1295,6 +1295,44 @@ production-grade deploy. Before `DEPLOY_SSH_KEY` is actually added:
 
 ---
 
+## Visual Baseline v1 (new phase, 2026-07-28)
+
+An inventory-only Visual Baseline Audit (no code changed) found that the current production UI visually communicates "unfinished" through specific, evidenced mechanisms: zero photography anywhere on the homepage, one saturated colour (`pink-600`) simultaneously carrying brand/every action/focus/active state, seven visually identical white boxes stacked on the salon detail page, three unrelated icon systems in simultaneous use, and no consolidated spacing/radius/shadow system. Two i18n bugs were also found live and are tracked for their respective future page-level tickets, not fixed standalone.
+
+**Why this phase exists before SQC-01B:** every conversion number the product produces today is filtered through a UI that visually undermines trust — establishing a ranking baseline against that UI would measure the visual system, not search relevance.
+
+**Approved direction:** Direction B — Clean Marketplace, chosen for resilience to incomplete listing data, lowest implementation risk against the completed accessibility/analytics foundation, and safest long-term fit for a future owner dashboard and booking flow.
+
+**Sequence (foundational-first, 7 tickets):** tokens/typography/icons → header/footer + global shell → homepage → search shell → SalonCard → salon detail → shared consistency pass + production baseline verification. The official Beta Visual Baseline date begins only after the final ticket deploys.
+
+### T-059 — Visual Foundations: Tokens, Typography & Icon System ✅ Completed
+**Priority:** P0 (first ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-042 ✅, T-054 ✅, T-055 ✅, T-056 ✅, T-057 ✅, T-058 ✅
+**Status:** Merged and deployed (PR #56, branch `feat/T-059-visual-foundations`). Production-verified 2026-07-28.
+
+**Scope:** semantic colour/shape/depth tokens as CSS custom properties aliased through Tailwind, a self-hosted Inter typeface with verified Greek/Latin/Cyrillic/Ukrainian coverage, one icon system (`lucide-react`), and a shared Button/Icon primitive pair. No page-level redesign.
+
+**Direction B's palette is transcribed from the approved audit, not reinterpreted.** Two draft values failed WCAG contrast validation and were strengthened, never softened: `--text-muted` (3.01:1 → 4.80:1) and `--focus` (2.53:1 → 4.84:1 vs. surface). A real, reusable contrast function (`lib/colorContrast.ts`) live-validates every token pair against `globals.css` as an automated regression test, not just a documentation table.
+
+**Font coverage was verified two ways**, not assumed: Google Fonts' own metadata confirms Inter's Greek/Cyrillic subsets, and every actual non-ASCII character across all 4 locale files was checked codepoint-by-codepoint — the only 9 uncovered characters are arrows/emoji/symbols, none of them alphabetic.
+
+**Proving surface:** a new internal, unlinked, `noindex` route (`/design-system-preview`) demonstrates the full system using real localized product strings. Applying new tokens directly to any real shipped page was deliberately avoided — the new brand colour differs from the still-present `pink-600` elsewhere, and mixing both on one real page would create a visibly broken hybrid. The only real-page changes: a global font swap (uniform sitewide) and the header's mobile-menu icon (glyph-source swap only, no colour/size/behaviour change).
+
+**Live production verification (2026-07-28):** confirmed against `https://lookla.gr` across all 4 locales × 5 breakpoints — self-hosted font (zero external font requests, CLS 0.0028), `noindex` correct, focus-visible produces a real outline, no horizontal overflow, no diacritic-clipping signal at any width. GA4/consent/T-058 dedup confirmed unaffected live. One finding recorded (not fixed here): the header's mobile-menu button measures 40×40px, short of 44×44 — verified byte-identical to the pre-T-059 markup, so not a regression; flagged as input for the next ticket.
+
+**Acceptance Criteria:**
+- [x] Semantic colour tokens implemented, aliased through Tailwind, no raw hex/palette duplication
+- [x] Typography foundation implemented with verified 4-locale glyph coverage
+- [x] One icon system established, decorative-by-default, no accessible-name invention
+- [x] Contrast validated for every required pair via an automated test against live token values
+- [x] Controlled proving surface demonstrates the system without a hybrid look on any real page
+- [x] No page-level redesign; all protected contracts (search, SalonCard, salon detail, analytics, consent, accessibility) verified unaffected
+- [x] Performance impact measured and bounded (self-hosted, no runtime CDN request, CLS well under threshold)
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — approved (PR #56)
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review

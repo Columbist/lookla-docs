@@ -1,0 +1,1264 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 1bd1685..8b3a212 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1361,8 +1361,49 @@ Two findings during this pass, both investigated to a root cause and confirmed *
+ Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+ 
+ - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
+-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
+-- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27. Map accessibility above remains the next candidate (unofficial working number T-059, not yet reserved).
++- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-060** (shifted from the earlier T-059 placeholder once T-059 was assigned to Visual Foundations below) — still not formally reserved.
++- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
++
++---
++
++## Visual Baseline v1 (new phase, 2026-07-28)
++
++The current production UI was audited (inventory-only Visual Baseline Audit, 2026-07-27/28 — no code changed) and found to visually communicate "unfinished" through specific, evidenced mechanisms: zero photography anywhere on the homepage, one saturated colour (`pink-600`) simultaneously carrying brand/every action/focus/active state, seven visually identical white boxes stacked on the salon detail page, three unrelated icon systems in simultaneous use (platform emoji, hand-authored SVG, Unicode symbols), and no consolidated spacing/radius/shadow system. Two genuine i18n bugs were also found live in production and are tracked for their respective future page-level tickets (not fixed standalone): a hardcoded Greek `Όλες οι αξιολογήσεις` placeholder in the rating filter regardless of locale, and a hardcoded Greek `+N φωτογραφίες` gallery overlay on the salon detail page regardless of locale.
++
++**Why this phase exists before SQC-01B:** every conversion number the product produces today (`search_results_view → salon_open → contact_action`) is filtered through a UI that visually undermines trust through concrete, specific mechanisms — establishing SQC-01B's ranking baseline against that UI would measure the visual system, not the search relevance it's meant to measure.
++
++**Approved direction:** Direction B — Clean Marketplace (of three audited directions — A/Editorial Beauty, B, C/Friendly Local Discovery). Chosen for its resilience to incomplete data (most listings currently lack a price or verification), lowest implementation risk against the completed T-042–T-058 functional/accessibility contracts, and safest long-term fit for a future owner dashboard and booking flow.
++
++**Sequence (foundational-first, 7 tickets, none redesigning the whole site at once):** (1) visual tokens/typography/icon foundation, (2) header/footer + global shell, (3) homepage, (4) search shell + controls, (5) SalonCard, (6) salon detail, (7) shared async/legal/cookie alignment + final production-baseline verification. The official **Beta Visual Baseline** date (the point after which conversion analytics is treated as measuring the real product, not a visually unfinished one) begins only after ticket 7 deploys — not after ticket 1.
++
++**Protected throughout every ticket in this phase:** backend, database, API contracts, search ranking/default ordering, URL/query-parameter state, consent logic, GA4 event taxonomy and parameters, and every accessibility/analytics contract established by T-055–T-058 (accessible names, `aria-expanded`/`aria-pressed`, keyboard lifecycles, 44px touch targets, T-056 restoration, T-058 dedup).
++
++**Ranking/default ordering** remains unnumbered and deferred, now additionally gated on the Beta Visual Baseline date, not just on GA4 traffic accumulation — starting that baseline clock before the visual refresh completes would mix pre- and post-refresh behaviour in the same cohort.
++
++### T-059 — Visual Foundations: Tokens, Typography & Icon System
++**Priority:** P0 (first ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-042 ✅, T-054 ✅, T-055 ✅, T-056 ✅, T-057 ✅, T-058 ✅ (functional/accessibility/analytics foundation); Visual Baseline Audit (2026-07-27/28, inventory-only) for the approved Direction B token proposal
++**Status:** Implemented (branch `feat/T-059-visual-foundations`), pending independent review.
++
++**Scope:** semantic colour/shape/depth tokens, a self-hosted Inter typeface with verified 4-locale glyph coverage, one icon system (`lucide-react`), a shared `Button`/`Icon` primitive pair, and a shared focus-ring class — established as CSS custom properties (`app/globals.css`) aliased into Tailwind (`tailwind.config.ts`), with zero duplication across CSS/Tailwind/TypeScript. No page-level redesign. Full specification, token table, contrast matrix, and migration ownership map: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
++
++**Direction B token palette — transcribed from the approved audit artifact, not reinterpreted.** Two audit-proposed values failed WCAG contrast validation and were strengthened (never softened): `--text-muted` (`#9C938C` → `#7C7069`, 3.01:1 → 4.80:1) and `--focus` (`#D98CAE` → `#B84B7C`, 2.53:1 → 4.84:1 vs. surface). Several categories the audit left undefined were added to complete the semantic set the ticket required (`--danger`/`--danger-soft`, `--brand-active`/`--brand-soft`, `--accent-strong`, `--text-inverse`, `--surface-subtle`, `--border-strong`) — all documented with their derivation in the spec doc.
++
++**Proving surface:** a new internal, unlinked, `noindex` route (`/design-system-preview`) demonstrates every token, all 10 typography roles, both button variants, the icon system, and status pills using real localized product strings (never lorem) across all 4 locales. Applying the new tokens directly to any real shipped page (e.g. Header) was deliberately avoided — the new `--brand` colour differs from the still-present `pink-600`, and mixing both on one real page would create exactly the "visibly broken hybrid" the ticket warned against. The only real-page changes: the global font swap (uniform sitewide, confirmed via computed-style check on production homepage/search) and Header's mobile-menu icon (glyph-source swap only — same size, same colour, same accessible name, no token/colour change).
++
++**Verification:** 96 new tests (775/775 total, including all pre-existing T-042–T-058 suites unchanged since no shared source file was touched). Includes a real, reusable WCAG contrast function (`lib/colorContrast.ts`) that live-extracts token hex values from `globals.css` and asserts every required pair — not just a documentation table, a regression test that fails if a future token edit weakens contrast. `npm run lint` and `npm run build` clean. Isolated Playwright verification: 4 locales × {320, 375, 768, 1024, 1440}px on the preview route (font applied, no overflow, 20+ swatches rendered, 44px button height, disabled state, keyboard-Tab reachability, no long-running animations, zero console errors) plus Header-icon-migration checks in 2 locales; a direct screenshot comparison of the real homepage/search pages post-build showed the font change applied cleanly with zero other visual difference.
++
++**Acceptance Criteria:**
++- [x] Semantic colour tokens implemented, aliased through Tailwind, no raw hex/Tailwind-palette duplication
++- [x] Typography foundation implemented (Inter, 4 weights, `display: swap`, verified 4-locale glyph coverage)
++- [x] One icon system established (`lucide-react`), decorative-by-default contract, no accessible-name invention
++- [x] Contrast validated for every required pair, enforced by an automated test against the live token values
++- [x] Controlled proving surface demonstrates the system without creating a hybrid look on any real page
++- [x] No page-level redesign; homepage/search/SalonCard/salon-detail/header/footer/cookie-UI structurally untouched
++- [x] All protected contracts (search, SalonCard, salon detail, analytics, consent, accessibility) verified unaffected
++- [x] Performance impact measured and bounded (7 woff2 files, ~218KB total build output, self-hosted, no new blocking runtime request)
++- [ ] Live production verification — pending deploy
++- [ ] Independent review — pending
+ 
+ ---
+ 
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+new file mode 100644
+index 0000000..a725969
+--- /dev/null
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -0,0 +1,180 @@
++# Visual Baseline v1 — foundation specification
++
++**Status:** foundation laid by T-059 (tokens, typography, icon system). Not yet the complete Visual Baseline — page-level surfaces are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
++
++**Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
++
++## Source of truth
++
++This document — not the audit artifact — is the living spec from this point forward. The audit's draft token proposal was the starting reference; every value below is either copied verbatim from that proposal or explicitly marked as extended/adjusted, with the reason stated inline.
++
++## Token table
++
++| Token | Value | Source | Role |
++|---|---|---|---|
++| `--bg` | `#FAF8F6` | Audit, verbatim | Page background |
++| `--surface` | `#FFFFFF` | Audit, verbatim | Elevated surface / cards |
++| `--surface-subtle` | `#F1ECE7` | New — audit didn't define a 3rd surface step | Subtle section backgrounds between bg and surface |
++| `--surface-elevated` | `#FFFFFF` | New (= surface) | Elevation communicated via `--shadow-elevated`, not colour |
++| `--text` | `#1E1A19` | Audit, verbatim | Primary text |
++| `--text-secondary` | `#6B625C` | Audit, verbatim | Secondary text |
++| `--text-muted` | `#7C7069` | **Adjusted** — audit's draft `#9C938C` was 3.01:1 on white (fails AA); darkened to 4.80:1 | Muted / caption text |
++| `--text-inverse` | `#FFFFFF` | New — needed for text on `--brand` fills | Text on brand-filled buttons |
++| `--brand` | `#A62E5C` | Audit's `--action`, renamed to the ticket's requested category | Primary brand/action colour |
++| `--brand-hover` | `#8A2549` | Audit's `--action-hover`, verbatim | Primary hover |
++| `--brand-active` | `#711D3C` | New — pressed-state step, same hue family | Primary active/pressed |
++| `--brand-soft` | `#F3E4EA` | New | Light tint for selected/active backgrounds |
++| `--accent` | `#C9A24B` | Audit, verbatim | Sparingly used second accent — **decorative-only**, see contrast note below |
++| `--accent-strong` | `#8A6A2C` | New — darkened, text/icon-safe variant of `--accent` | Verified-badge text, any content-bearing gold use |
++| `--accent-soft` | `#F7EFDC` | New | Light tint for accent chip backgrounds |
++| `--border` | `#E7E1DB` | Audit, verbatim | Card / input borders |
++| `--border-strong` | `#D3C9C0` | New | Stronger separators / hover borders |
++| `--focus` | `#B84B7C` | **Adjusted** — audit's draft `#D98CAE` was 2.53:1/2.38:1 (fails the 3:1 non-text requirement); darkened to 4.84:1/4.57:1 | Focus ring |
++| `--success` | `#3E7A52` | Audit, verbatim | Open-status colour (large fills) |
++| `--success-text` | `#2F6140` | New — darkened for AA text-on-`success-soft` | Open-status pill text |
++| `--success-soft` | `#E7F0E9` | New | Open-status pill background |
++| `--warning` | `#B0742A` | Audit, verbatim ("reserved, not currently needed") | Reserved |
++| `--warning-soft` | `#F5E9D8` | New | Reserved |
++| `--danger` | `#A83232` | New — the audit deliberately did not define an error red | Error text |
++| `--danger-soft` | `#F5E1DF` | New | Error background |
++| `--closed` | `#57504B` | Audit, verbatim ("closed isn't an error") | Closed-status colour |
++| `--closed-soft` | `#EDE9E5` | New | Closed-status pill background |
++| `--radius-sm` | `6px` | Audit, verbatim | Inputs, badges |
++| `--radius-md` | `10px` | Audit, verbatim | Cards, buttons |
++| `--radius-pill` | `999px` | Audit, verbatim | Status pills, chips |
++| `--shadow-resting` | `0 1px 2px rgba(30,26,25,.05), 0 2px 8px rgba(30,26,25,.04)` | Audit, verbatim | Card resting elevation |
++| `--shadow-elevated` | `0 4px 16px rgba(30,26,25,.10)` | Audit, verbatim | Popovers/menus only |
++
++Implemented as CSS custom properties in `frontend/app/globals.css`, aliased into `frontend/tailwind.config.ts`'s `theme.extend.colors/borderRadius/boxShadow` — a single source of truth, no value duplicated independently in CSS vs. Tailwind vs. TypeScript (per the ticket's explicit anti-pattern warning). No TypeScript token constants exist; nothing today needs runtime JS access to a token value.
++
++## Token architecture decision
++
++**Layering:** semantic CSS custom properties (`:root` in `globals.css`) → Tailwind theme aliases (`tailwind.config.ts`) → component classes consume the Tailwind aliases (`bg-brand`, `text-text-secondary`, etc.), never the raw CSS var or a literal hex. Explicitly rejected: a theme-switching framework, runtime theme provider, or dark mode (single theme, matching the ticket's "premature dark mode" prohibition and the audit's own scope).
++
++## Contrast validation
++
++All required pairs meet WCAG AA (4.5:1 normal text, 3:1 non-text/focus). Full computed table lives in `frontend/lib/visualBaselineTokens.test.ts`, which extracts the hex values live from `globals.css` (never a second hardcoded copy) and asserts each ratio via `frontend/lib/colorContrast.ts` — a real, reusable WCAG contrast function, not just a report table. If a future edit weakens any token's contrast, this test fails.
++
++One deliberate exception: `--accent` (`#C9A24B`) alone is 2.40:1 on white and is documented as **decorative-only** — no token or component may use it for text or a meaningful icon; `--accent-strong` (5.03:1) is the variant for anything read as content. `frontend/lib/visualBaselineTokens.test.ts` asserts this constraint explicitly.
++
++## Typography and font-loading contract
++
++- **Family:** Inter, self-hosted via `next/font/google` in `frontend/app/[locale]/layout.tsx` — no runtime request to fonts.googleapis.com.
++- **Subsets loaded:** `latin`, `latin-ext`, `greek`, `cyrillic`. Verified two ways: (1) Google Fonts' own metadata confirms Inter has full `greek`/`greek-ext`/`cyrillic`/`cyrillic-ext` coverage; (2) every actual non-ASCII character present across all four `messages/*.json` files was checked codepoint-by-codepoint against Inter's coverage ranges — the only 9 characters not covered are arrows/emoji/symbols (←→⏳☰⚠✅✓💡🗺), none of them Greek, Latin, or Cyrillic letters, and all of them candidates for the icon-system migration this ticket already starts. `greek-ext`/`cyrillic-ext`/`vietnamese` subsets are intentionally excluded — nothing in the product's real content needs them, and including them would download unused glyph ranges.
++- **Weights loaded:** 400, 500, 600, 700 — exactly the four the type scale uses, requested as static weight files (not the full variable axis).
++- **`display: 'swap'`** — avoids invisible-text layout shift.
++- **Fallback:** the pre-existing `ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", ...` stack remains in `globals.css`'s `body` rule after `var(--font-inter)`, so a blocked font request still renders legible text immediately.
++- **Applied globally** (`html`/`body`) — the one genuinely visible, uniform, sitewide change this ticket makes, confirmed via computed-style check on real production pages (homepage, search) post-build, not just the preview route.
++
++### Typography scale
++
++| Class | Size | Weight | Line-height | Role |
++|---|---|---|---|---|
++| `.text-display` | 36px | 700 | 1.2 | Largest display text |
++| `.text-page-title` | 28px | 700 | 1.2 | Page-level heading |
++| `.text-section-title` | 22px | 600 | 1.2 | Section heading |
++| `.text-card-title` | 16px | 600 | 1.4 | Card/component title |
++| `.text-body` | 16px | 400 | 1.4 | Body copy |
++| `.text-body-sm` | 14px | 400 | 1.4 | Secondary body copy |
++| `.text-label` | 13px | 500 | 1.4 | Form/UI labels |
++| `.text-button` | 14px | 500 | 1.4 | Button labels |
++| `.text-meta` / `.text-caption` | 12px | 400 | 1.4 | Metadata, captions |
++
++Plain utility classes, not element selectors — no `<h1>`/`<h2>` global restyle, so document heading semantics are untouched wherever these classes are eventually applied.
++
++## Shape and depth
++
++Two radii + one pill (`--radius-sm` 6px, `--radius-md` 10px, `--radius-pill` 999px) and two shadow levels (`--shadow-resting`, `--shadow-elevated`) — matching Step 7's explicit cap. No component in production consumes these yet outside the internal preview route.
++
++## Spacing guidance (documented, not enforced by new utilities)
++
++Tailwind's existing 4px-based scale is kept as-is — no new spacing scale, no new container utilities added under T-059 (that's page-level work). Recommended standard values for later tickets to converge on: card padding 16px, section padding 24px (mobile) / 32px (desktop), a "content" container (~720px, salon detail/legal pages) and a "grid" container (~1200px, search/homepage) replacing today's three-way `max-w-3xl`/`4xl`/`6xl` split.
++
++## Icon system
++
++**Library:** `lucide-react` (^1.27.0). Zero runtime dependencies (only a `react` peer dependency), MIT-licensed, tree-shakeable (each icon is its own ES export), actively maintained, no runtime network calls. No existing icon dependency was already installed, so this is a new addition — justified because the product previously had three unrelated icon "families" simultaneously (platform emoji, two hand-authored inline SVGs, Unicode text symbols) and zero shared contract, per the audit's §10 finding.
++
++**Contract (`frontend/components/ui/Icon.tsx`):**
++- Sizes: 16 / 20 / 24px only.
++- Stroke width: fixed at 1.75, not caller-configurable.
++- `decorative` prop defaults to `true` → renders `aria-hidden="true"`; never invents an `aria-label` or relies on `title`.
++- Not focusable (`focusable="false"`).
++- Accessible names stay owned entirely by the surrounding control (button `aria-label`, real `<label>`, visible text) — matching every existing icon-adjacent control in the codebase, none of which was found to depend on an icon's own markup for its accessible name.
++
++### Icon migration performed under T-059
++
++| Current icon source | Location | Replacement | Status |
++|---|---|---|---|
++| Hand-authored inline `<svg>` (hamburger/close paths) | `components/Header.tsx` mobile menu toggle | `lucide-react`'s `Menu`/`X` via `Icon` | **Migrated** — same size (24px→24px), same colour (`text-gray-700`, unchanged), same accessible name (`aria-label="Menu"`, unchanged). Glyph-source swap only, no visual/behavioural change. |
++
++### Icon migration deferred to later tickets
++
++| Current icon source | Location | Replacement candidate | Future ticket |
++|---|---|---|---|
++| `🔍` in the search submit button | `app/[locale]/search/page.tsx` | `lucide-react`'s `Search` | Search shell visual refresh |
++| Inline SVG funnel path, filter trigger | `app/[locale]/search/page.tsx` | `lucide-react`'s `SlidersHorizontal` | Search shell visual refresh |
++| `☰`/`🗺` baked directly into the `search.list`/`search.map` **translated strings** (`messages/*.json`) | `app/[locale]/search/page.tsx` | Separate the emoji out of the localized string into a real `Icon`; requires a content edit across all 4 locale files | Search shell visual refresh — **not attempted under T-059** because it requires editing page-specific JSX and translated content, which the ticket's non-goals explicitly exclude ("do not begin page-level redesigns") |
++| 10 category emoji (💇💅✨🪒👁️💄💆✂️🎨🧖) | `components/CategoryGrid.tsx` | `lucide-react` equivalents, or a lightweight custom icon per category | Homepage visual refresh — explicitly excluded by the ticket's non-goals ("do not replace all emoji categories") |
++| `📞💬🌐` contact-channel icons | `components/ContactButtons.tsx` | `Phone`/`MessageCircle`/`Globe` | Salon detail visual refresh |
++| `📷👥💬📲🎵▶️` social-platform icons | `app/[locale]/salons/[slug]/SalonDetailClient.tsx` | Brand-appropriate icon set | Salon detail visual refresh |
++| `💈` image-fallback glyph (5+ locations) | `SalonCard.tsx`, `SalonDetailClient.tsx` | A designed placeholder tile (not an icon swap — a real fallback-image redesign) | SalonCard / Salon detail visual refresh |
++| `📍⚠️🌐` misc (map pin, report, translated-badge) | Various | `MapPin`/`TriangleAlert`/`Globe` | Their respective page tickets |
++| `←` back arrow | `SalonDetailClient.tsx` header | `ArrowLeft` | Salon detail visual refresh |
++| `★ ✩ ☆` rating stars (3 inconsistent renderings — see audit §2) | `SalonCard.tsx`, `SalonDetailClient.tsx` (×2 sites) | A single shared `RatingStars` primitive, `Star`/`StarHalf` icons | SalonCard / Salon detail visual refresh (also fixes the inconsistency, not just the icon source) |
++| `♂ ♀` gender-audience symbols | `SalonCard.tsx` | Kept as Unicode text symbols or dropped — not an icon-system concern | SalonCard visual refresh (product decision, not purely visual) |
++
++**Leaflet markers are explicitly untouched** — no marker icon, popup, or map-shell change of any kind under T-059, matching the non-goal and the audit's own separate map-accessibility candidate.
++
++## Interaction states
++
++- **Hover/active:** defined per-component (Button's `hover:bg-brand-hover`/`active:bg-brand-active`); not swept sitewide.
++- **Focus-visible:** `.focus-ring-token:focus-visible` in `globals.css` (2px solid `var(--focus)`, 2px offset) — defined and available via the `focus-ring-token` class, consumed today only by `Button`. Existing `focus:ring-pink-200` usages sitewide are **untouched** — swept only as each surface's own visual ticket lands (see migration map below), so nothing regresses today.
++- **Disabled:** `disabled:opacity-50 disabled:pointer-events-none` on `Button` — stays legible (50% opacity, not hidden), non-interactive.
++- **Reduced motion:** no entrance/large animations were added anywhere in this ticket (verified — the preview route has zero `animation-duration` > 1s on any element); the one `transition-colors` on `Button` is a short, non-intrusive hover/active transition consistent with `prefers-reduced-motion` best practice (colour transitions are conventionally exempted from reduced-motion concerns, unlike transform/opacity entrance animations).
++
++## Shared primitive strategy
++
++| Primitive | Decision |
++|---|---|
++| `Button` (primary/secondary) | **New**, minimal — created under T-059, consumed only by the internal preview route today |
++| `Icon` | **New**, minimal — created under T-059, consumed by the preview route + Header's menu toggle |
++| Input, Select | Not created under T-059 — no real page needs one yet; deferred to Search shell ticket |
++| Chip | Already exists (`ActiveFilterChips.tsx`, T-054) — reusable as-is, not touched |
++| Badge | Not created — status-pill pattern demonstrated on the preview route only; a real `Badge` primitive is deferred to whichever page-level ticket first needs to consolidate the 3 existing independent pill treatments (open/closed, verified, translated) |
++| Card / Section container | Not created — deferred to Salon detail visual refresh, which is where the 7-duplicated-box finding actually needs solving |
++| Container/max-width | Not created — deferred, see Spacing guidance above |
++
++Deliberately not generalized further — no abstract component library, no premature primitives for content shapes (services/reviews/hours) that differ enough to resist a single rigid component, per the ticket's own explicit caution.
++
++## Controlled proving surface
++
++**Route:** `frontend/app/[locale]/design-system-preview/page.tsx` — server component, `robots: { index: false, follow: false }`, not linked from any navigation, not referenced by any other page or component. Renders every token, all 10 typography roles, both Button variants (+ disabled + a simulated focus-visible state), the Icon system at all 3 sizes, all 4 status-pill colours, and the shape/depth examples — using real localized strings pulled from the `home`/`search` next-intl namespaces (never lorem ipsum), so contrast and glyph rendering can be verified against actual product content in all 4 locales.
++
++**Why a dedicated route instead of applying primitives directly to a real page:** the new `--brand` (`#A62E5C`) is deliberately different from the current `pink-600` (`#DB2777`) still present everywhere else in production. Any real page mixing both — e.g. a new-style `Button` sitting next to the still-pink-600 logo in `Header` — would be exactly the "visibly broken hybrid" the ticket warns against. The ticket's own Step 13 explicitly provides this fallback for exactly this situation; it was used deliberately, not as a shortcut.
++
++**Real-page changes made instead:** only the two genuinely safe, uniform, non-patchwork changes — global font-family (visible everywhere at once, never inconsistent with itself) and the Header menu-icon glyph swap (no colour/token change, same size, same colour class, purely a cleaner glyph source).
++
++## Migration ownership map — who converts each remaining surface
++
++| Surface | Owner ticket | Notes |
++|---|---|---|
++| Header (full: logo colour, nav links, desktop CTA colours) | Header/footer global-shell ticket | T-059 only touched the menu icon glyph |
++| Footer | Header/footer global-shell ticket | Untouched by T-059 |
++| Homepage (hero, category/area tiles, "how it works") | Homepage visual refresh | Untouched by T-059; includes the "Book" step copy fix flagged by the audit |
++| Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | Search shell visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder (known bug, bundled here per the user's own direction) |
++| SalonCard | SalonCard visual refresh | Untouched by T-059 |
++| Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
++| Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
++
++## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
++
++- 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
++- 4 border-radius patterns in simultaneous use (`rounded`, `rounded-lg`, `rounded-xl`, `rounded-2xl`) plus `rounded-full` — not consolidated.
++- 5 shadow patterns (`shadow-sm` ×13, `shadow` ×2, `shadow-md` ×1, `shadow-lg` ×3, `shadow-xl` ×1) — not consolidated.
++- 32 `focus:ring-2` / 36 `focus:ring-pink-*` occurrences — not migrated to `.focus-ring-token`.
++- 3 unique literal hex colours outside the token system (`#2563eb`, `#3b82f6`, `#db2777`) — not removed.
++- ~118 raw emoji/symbol-range character occurrences across 21 files — only the Header's 2 removed; see the icon migration table above for full disposition.
++
++## Protected contracts — explicitly verified unaffected
++
++Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any file this ticket changed. Confirmed by: (1) the full pre-existing T-042/T-054/T-055/T-056/T-057/T-058 test suites passing unchanged (775/775 total after T-059's own 96 new tests), since none of their source files were modified; (2) isolated Playwright verification against real production pages (homepage, search) showing zero console/hydration errors and no visual regression beyond the intended font change.
+diff --git a/frontend/app/[locale]/design-system-preview/designSystemPreview.test.ts b/frontend/app/[locale]/design-system-preview/designSystemPreview.test.ts
+new file mode 100644
+index 0000000..4394df5
+--- /dev/null
++++ b/frontend/app/[locale]/design-system-preview/designSystemPreview.test.ts
+@@ -0,0 +1,51 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++describe('T-059: design-system-preview — internal, unlinked, non-indexed proving route', () => {
++  test('is excluded from search indexing', () => {
++    assert.ok(source.includes('robots: { index: false, follow: false }'));
++  });
++
++  test('renders real localized strings via next-intl, never lorem/placeholder text', () => {
++    assert.ok(source.includes("getTranslations({ locale, namespace: 'home' })"));
++    assert.ok(source.includes("getTranslations({ locale, namespace: 'search' })"));
++    assert.ok(!/lorem ipsum/i.test(source));
++  });
++
++  test('proves every typography role defined in globals.css', () => {
++    for (const role of ['text-display', 'text-page-title', 'text-section-title', 'text-card-title', 'text-body', 'text-body-sm', 'text-label', 'text-meta']) {
++      assert.ok(source.includes(`className="${role}`) || source.includes(`className={\`${role}`), `expected ${role} to be demonstrated`);
++    }
++  });
++
++  test('proves both Button variants and a disabled state', () => {
++    assert.ok(source.includes('variant="primary"'));
++    assert.ok(source.includes('variant="secondary"'));
++    assert.ok(source.includes('disabled'));
++  });
++
++  test('proves the Icon system at all 3 defined sizes', () => {
++    assert.ok(source.includes('size={24}'));
++    assert.ok(source.includes('size={20}'));
++    assert.ok(source.includes('size={16}'));
++  });
++
++  test('proves all 4 status pill colours (success/closed/accent-strong/danger)', () => {
++    assert.ok(source.includes('--success-soft'));
++    assert.ok(source.includes('--closed-soft'));
++    assert.ok(source.includes('--accent-soft'));
++    assert.ok(source.includes('--danger-soft'));
++  });
++
++  test('does not import or render any real page component (SalonCard, SearchBar, Header, Footer) — this route proves tokens in isolation, it does not preview a redesigned real page', () => {
++    assert.ok(!source.includes("from '@/components/SalonCard'"));
++    assert.ok(!source.includes("from '@/components/SearchBar'"));
++    assert.ok(!source.includes("from '@/components/Header'"));
++  });
++});
+diff --git a/frontend/app/[locale]/design-system-preview/page.tsx b/frontend/app/[locale]/design-system-preview/page.tsx
+new file mode 100644
+index 0000000..6987bb8
+--- /dev/null
++++ b/frontend/app/[locale]/design-system-preview/page.tsx
+@@ -0,0 +1,156 @@
++import { getTranslations, setRequestLocale } from 'next-intl/server';
++import { Search, SlidersHorizontal, Heart, MapPin, Star, CircleCheck } from 'lucide-react';
++import Button from '@/components/ui/Button';
++import Icon from '@/components/ui/Icon';
++
++/**
++ * T-059 — internal, unlinked proving surface for the Visual Baseline v1
++ * foundation (tokens, typography, icon system, interaction states). Not
++ * part of the public site: no nav links to this route, excluded from the
++ * sitemap, `noindex`. Exists because applying these tokens directly to
++ * Header/Footer/any real page would create exactly the "visibly broken
++ * hybrid" the ticket warns against — the new --brand colour is
++ * deliberately different from today's pink-600, so any real page mixing
++ * both at once would look like two different products spliced together.
++ * This route is where the foundation is verified (Playwright, screenshot
++ * matrix) before any page-level ticket consumes it for real.
++ *
++ * Deleted or converted into a real style-guide page once Visual Baseline
++ * v1's later tickets have consumed these tokens on every real surface —
++ * tracked in docs/06_ENGINEERING/VISUAL_BASELINE_V1.md.
++ */
++export const metadata = { robots: { index: false, follow: false } };
++
++const TOKENS: { name: string; cssVar: string; textOn?: 'text-inverse' | 'text' }[] = [
++  { name: 'bg', cssVar: '--bg' },
++  { name: 'surface', cssVar: '--surface' },
++  { name: 'surface-subtle', cssVar: '--surface-subtle' },
++  { name: 'text', cssVar: '--text' },
++  { name: 'text-secondary', cssVar: '--text-secondary' },
++  { name: 'text-muted', cssVar: '--text-muted' },
++  { name: 'brand', cssVar: '--brand', textOn: 'text-inverse' },
++  { name: 'brand-hover', cssVar: '--brand-hover', textOn: 'text-inverse' },
++  { name: 'brand-active', cssVar: '--brand-active', textOn: 'text-inverse' },
++  { name: 'brand-soft', cssVar: '--brand-soft' },
++  { name: 'accent', cssVar: '--accent' },
++  { name: 'accent-strong', cssVar: '--accent-strong', textOn: 'text-inverse' },
++  { name: 'accent-soft', cssVar: '--accent-soft' },
++  { name: 'border', cssVar: '--border' },
++  { name: 'border-strong', cssVar: '--border-strong' },
++  { name: 'focus', cssVar: '--focus', textOn: 'text-inverse' },
++  { name: 'success', cssVar: '--success', textOn: 'text-inverse' },
++  { name: 'success-soft', cssVar: '--success-soft' },
++  { name: 'warning', cssVar: '--warning', textOn: 'text-inverse' },
++  { name: 'warning-soft', cssVar: '--warning-soft' },
++  { name: 'danger', cssVar: '--danger', textOn: 'text-inverse' },
++  { name: 'danger-soft', cssVar: '--danger-soft' },
++  { name: 'closed', cssVar: '--closed', textOn: 'text-inverse' },
++  { name: 'closed-soft', cssVar: '--closed-soft' },
++];
++
++export default async function DesignSystemPreview({ params }: { params: { locale: string } }) {
++  const locale = (params as any).locale ?? 'el';
++  setRequestLocale(locale);
++  const home = await getTranslations({ locale, namespace: 'home' });
++  const search = await getTranslations({ locale, namespace: 'search' });
++
++  return (
++    <div className="min-h-screen bg-bg text-text px-6 py-10">
++      <div className="max-w-5xl mx-auto space-y-14">
++        <header>
++          <p className="text-label text-text-muted mb-1">T-059 · internal verification route · not linked from navigation</p>
++          <h1 className="text-display">Visual Baseline v1 — foundation preview</h1>
++          <p className="text-body text-text-secondary mt-2 max-w-[65ch]">
++            Every token, type role, icon, and interaction state this ticket introduces, rendered together with real
++            localized product strings ({locale}) so contrast and glyph coverage can be verified against actual content,
++            not placeholder text.
++          </p>
++        </header>
++
++        <section aria-labelledby="colours-h">
++          <h2 id="colours-h" className="text-section-title mb-4">Colour tokens</h2>
++          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
++            {TOKENS.map(tok => (
++              <div key={tok.name} className="rounded-md border border-border overflow-hidden">
++                <div
++                  className={`h-16 flex items-end p-2 text-caption ${tok.textOn === 'text-inverse' ? 'text-text-inverse' : 'text-text'}`}
++                  style={{ background: `var(${tok.cssVar})` }}
++                >
++                  {tok.name}
++                </div>
++                <div className="px-2 py-1.5 text-caption text-text-muted font-mono">{tok.cssVar}</div>
++              </div>
++            ))}
++          </div>
++        </section>
++
++        <section aria-labelledby="type-h">
++          <h2 id="type-h" className="text-section-title mb-4">Typography scale (real {locale} strings)</h2>
++          <div className="space-y-3 bg-surface border border-border rounded-md p-6">
++            <p className="text-display">{home('hero_title')}</p>
++            <p className="text-page-title">{search('results_heading')}</p>
++            <p className="text-section-title">{home('popular_services')}</p>
++            <p className="text-card-title">{home('popular_areas')}</p>
++            <p className="text-body">{home('hero_subtitle')}</p>
++            <p className="text-body-sm text-text-secondary">{search('placeholder')}</p>
++            <p className="text-label text-text-muted">{search('filter_area')}</p>
++            <p className="text-meta text-text-muted">{search('results_summary', { count: 42 })}</p>
++          </div>
++        </section>
++
++        <section aria-labelledby="buttons-h">
++          <h2 id="buttons-h" className="text-section-title mb-4">Buttons &amp; interaction states</h2>
++          <div className="flex flex-wrap items-center gap-4 bg-surface border border-border rounded-md p-6">
++            <Button variant="primary">{search('search_submit')}</Button>
++            <Button variant="secondary">{search('open_filters')}</Button>
++            <Button variant="primary" disabled>Disabled</Button>
++            <Button variant="primary" className="ring-2 ring-focus ring-offset-2">Focus-visible (simulated)</Button>
++          </div>
++        </section>
++
++        <section aria-labelledby="icons-h">
++          <h2 id="icons-h" className="text-section-title mb-4">Icon system — lucide-react, 1.75px stroke</h2>
++          <div className="flex flex-wrap items-center gap-8 bg-surface border border-border rounded-md p-6">
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={Search} size={24} /> 24px
++            </div>
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={SlidersHorizontal} size={20} /> 20px
++            </div>
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={MapPin} size={20} /> 20px
++            </div>
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={Heart} size={16} /> 16px
++            </div>
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={Star} size={16} /> 16px
++            </div>
++            <div className="flex flex-col items-center gap-2 text-caption text-text-muted">
++              <Icon icon={CircleCheck} size={20} /> 20px
++            </div>
++          </div>
++        </section>
++
++        <section aria-labelledby="status-h">
++          <h2 id="status-h" className="text-section-title mb-4">Status pills</h2>
++          <div className="flex flex-wrap gap-3 bg-surface border border-border rounded-md p-6">
++            <span className="text-label rounded-pill px-3 py-1" style={{ background: 'var(--success-soft)', color: 'var(--success-text)' }}>Open</span>
++            <span className="text-label rounded-pill px-3 py-1" style={{ background: 'var(--closed-soft)', color: 'var(--closed)' }}>Closed</span>
++            <span className="text-label rounded-pill px-3 py-1" style={{ background: 'var(--accent-soft)', color: 'var(--accent-strong)' }}>Verified</span>
++            <span className="text-label rounded-pill px-3 py-1" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>Error</span>
++          </div>
++        </section>
++
++        <section aria-labelledby="depth-h">
++          <h2 id="depth-h" className="text-section-title mb-4">Shape &amp; depth</h2>
++          <div className="flex flex-wrap gap-6 bg-surface-subtle border border-border rounded-md p-6">
++            <div className="w-40 h-24 bg-surface rounded-sm shadow-resting border border-border flex items-center justify-center text-caption text-text-muted">radius-sm + resting</div>
++            <div className="w-40 h-24 bg-surface rounded-md shadow-resting border border-border flex items-center justify-center text-caption text-text-muted">radius-md + resting</div>
++            <div className="w-40 h-24 bg-surface rounded-md shadow-elevated flex items-center justify-center text-caption text-text-muted">radius-md + elevated</div>
++          </div>
++        </section>
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/app/[locale]/layout.tsx b/frontend/app/[locale]/layout.tsx
+index 5342363..0a06fed 100644
+--- a/frontend/app/[locale]/layout.tsx
++++ b/frontend/app/[locale]/layout.tsx
+@@ -1,4 +1,5 @@
+ import { Suspense } from 'react';
++import { Inter } from 'next/font/google';
+ import { NextIntlClientProvider } from 'next-intl';
+ import { getMessages, getLocale } from 'next-intl/server';
+ import { notFound } from 'next/navigation';
+@@ -8,6 +9,29 @@ import CookieConsent from '@/components/CookieConsent';
+ import GoogleAnalytics from '@/components/GoogleAnalytics';
+ import '../globals.css';
+ 
++/**
++ * T-059 — Visual Baseline v1 typeface. Self-hosted at build time (no
++ * runtime request to fonts.googleapis.com — next/font downloads and
++ * serves the files from Lookla's own origin). Subsets cover every
++ * non-ASCII character actually present in messages/*.json across all 4
++ * locales (verified — see docs/06_ENGINEERING/VISUAL_BASELINE_V1.md);
++ * latin-ext/greek-ext/cyrillic-ext are intentionally excluded to avoid
++ * downloading glyph ranges the product never renders. Only the 4 static
++ * weights the type scale actually uses (Step 5: 400/500/600/700) are
++ * requested — not the full variable axis — to keep the font payload
++ * bounded. `display: 'swap'` avoids invisible-text layout shift; the
++ * `--font-inter` variable feeds both globals.css's `body` rule and
++ * tailwind.config.ts's `fontFamily.sans`, with the pre-existing
++ * system-ui stack still present as the fallback if the font is ever
++ * blocked.
++ */
++const inter = Inter({
++  subsets: ['latin', 'latin-ext', 'greek', 'cyrillic'],
++  weight: ['400', '500', '600', '700'],
++  display: 'swap',
++  variable: '--font-inter',
++});
++
+ export const metadata: Metadata = {
+   title: { default: 'Lookla — Κομμωτήρια & Σαλόνια Ελλάδα', template: '%s | Lookla' },
+   description: 'Βρείτε κομμωτήρια, σαλόνια νυχιών, ιδιωτικούς επαγγελματίες σε όλη την Ελλάδα.',
+@@ -27,7 +51,7 @@ export default async function LocaleLayout({
+   const messages = await getMessages();
+ 
+   return (
+-    <html lang={locale}>
++    <html lang={locale} className={inter.variable}>
+       <body>
+         <NextIntlClientProvider messages={messages}>
+           {children}
+diff --git a/frontend/app/globals.css b/frontend/app/globals.css
+index a4b421b..fcac40d 100644
+--- a/frontend/app/globals.css
++++ b/frontend/app/globals.css
+@@ -6,3 +6,140 @@
+ 
+ * { box-sizing: border-box; }
+ .leaflet-container { z-index: 0; }
++
++/*
++ * T-059 — Visual Baseline v1 foundation tokens (Direction B, Clean
++ * Marketplace). Values are copied verbatim from the approved Visual
++ * Baseline Audit's token proposal, extended only where the audit left a
++ * semantic category undefined (documented per-token below) and adjusted
++ * only where WCAG contrast validation (see docs/06_ENGINEERING/
++ * VISUAL_BASELINE_V1.md) required a stronger value — never a softer one.
++ *
++ * Single theme only (no dark mode) — matches the ticket's explicit
++ * "premature dark mode" prohibition and the audit's own scope.
++ *
++ * These tokens are not yet consumed by any real page under T-059 except
++ * the global body background/text/font (see layout.tsx and the base
++ * styles below) — page-level consumption is later, independently
++ * reviewable tickets (see the migration map in VISUAL_BASELINE_V1.md).
++ */
++:root {
++  /* Surfaces — audit verbatim */
++  --bg: #faf8f6;
++  --surface: #ffffff;
++  --surface-subtle: #f1ece7; /* not in the audit; a third warm-neutral step for subtle section backgrounds, between --bg and --surface */
++  --surface-elevated: #ffffff; /* audit communicates elevation via --shadow-elevated, not a distinct surface colour */
++
++  /* Text — audit verbatim, --text-muted darkened from the audit's draft
++     #9C938C (3.01:1 on white, fails WCAG AA) to #7C7069 (4.80:1) */
++  --text: #1e1a19;
++  --text-secondary: #6b625c;
++  --text-muted: #7c7069;
++  --text-inverse: #ffffff; /* not in the audit; needed for text on --brand fills */
++
++  /* Brand / action — the audit's --action / --action-hover, renamed to
++     the ticket's requested `brand` category. This is the single colour
++     meant to replace pink-600's overloaded role (brand + every action +
++     focus + active all at once) with one deliberately bounded action
++     colour. */
++  --brand: #a62e5c;
++  --brand-hover: #8a2549;
++  --brand-active: #711d3c; /* not in the audit; darker pressed-state step, same hue family */
++  --brand-soft: #f3e4ea; /* not in the audit; light tint for selected/active backgrounds (chips, active nav) */
++
++  /* Accent — the audit's --accent (muted gold), plus a darkened
++     text/icon-safe variant. --accent alone is 2.40:1 on white and must
++     never carry text or a meaningful (non-decorative) icon; --accent-strong
++     (5.03:1) is the variant for anything read as content, e.g. a verified
++     badge label. */
++  --accent: #c9a24b;
++  --accent-strong: #8a6a2c;
++  --accent-soft: #f7efdc; /* not in the audit; light tint for accent-coloured chip backgrounds */
++
++  /* Border */
++  --border: #e7e1db; /* audit verbatim */
++  --border-strong: #d3c9c0; /* not in the audit; deeper step for stronger separators/hover borders */
++
++  /* Focus — darkened from the audit's draft #D98CAE (2.53:1 vs surface,
++     2.38:1 vs bg — fails the 3:1 non-text/focus-indicator requirement) to
++     #B84B7C (4.84:1 / 4.57:1). Deliberately distinct from both --brand and
++     --danger so focus is never confused with either. */
++  --focus: #b84b7c;
++
++  /* Status — success/open reused from the audit verbatim; warning kept as
++     reserved per the audit ("not currently needed"); danger is new (the
++     audit intentionally did not define an error red, since it correctly
++     treats "closed" as a neutral status rather than an error — see
++     --closed below); closed is the audit's own token, verbatim. */
++  --success: #3e7a52;
++  --success-text: #2f6140; /* darkened for AA text-on-success-soft (audit's --success alone is 4.39:1, borderline) */
++  --success-soft: #e7f0e9;
++  --warning: #b0742a;
++  --warning-soft: #f5e9d8;
++  --danger: #a83232;
++  --danger-soft: #f5e1df;
++  --closed: #57504b;
++  --closed-soft: #ede9e5;
++
++  /* Shape */
++  --radius-sm: 6px;    /* inputs, badges */
++  --radius-md: 10px;   /* cards, buttons */
++  --radius-pill: 999px; /* status pills, chips */
++
++  /* Depth — two levels only, per the audit and Step 7's explicit cap */
++  --shadow-resting: 0 1px 2px rgba(30, 26, 25, 0.05), 0 2px 8px rgba(30, 26, 25, 0.04);
++  --shadow-elevated: 0 4px 16px rgba(30, 26, 25, 0.10);
++}
++
++/*
++ * Typography scale — semantic roles per T-059 Step 5/6. Sizes follow the
++ * audit's proposed 12/13/14/16/18/22/28/36 scale. Line-heights: 1.4 for
++ * body sizes, 1.2 for 22px+ headings (Step 5). Weights: 400 body, 500
++ * labels/buttons, 600 card titles, 700 page headings (Step 5) — four
++ * weights total, matching the four static weight files actually loaded
++ * (see layout.tsx / VISUAL_BASELINE_V1.md's font-loading contract).
++ *
++ * These are utility classes, not element selectors — h1/h2/etc. keep
++ * whatever semantic level a page already uses; a class here only changes
++ * appearance, never document structure (Step 6's explicit requirement).
++ */
++@layer components {
++  .text-display    { font-size: 36px; line-height: 1.2; font-weight: 700; }
++  .text-page-title { font-size: 28px; line-height: 1.2; font-weight: 700; }
++  .text-section-title { font-size: 22px; line-height: 1.2; font-weight: 600; }
++  .text-card-title { font-size: 16px; line-height: 1.4; font-weight: 600; }
++  .text-body       { font-size: 16px; line-height: 1.4; font-weight: 400; }
++  .text-body-sm    { font-size: 14px; line-height: 1.4; font-weight: 400; }
++  .text-label      { font-size: 13px; line-height: 1.4; font-weight: 500; }
++  .text-button     { font-size: 14px; line-height: 1.4; font-weight: 500; }
++  .text-meta       { font-size: 12px; line-height: 1.4; font-weight: 400; }
++  .text-caption    { font-size: 12px; line-height: 1.4; font-weight: 400; }
++}
++
++/*
++ * Global base — the one sitewide, uniform (never patchwork) application
++ * approved as T-059's proving surface. Page-level components that already
++ * set an explicit bg-white/bg-gray-50 (most of them) will still render
++ * their own colour on top of this — this base only becomes visible where
++ * no page-level class already overrides it. The font swap is the one
++ * genuinely visible, uniform, sitewide change this ticket makes to
++ * production.
++ */
++body {
++  background: var(--bg);
++  color: var(--text);
++  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
++}
++
++/*
++ * Shared focus-visible treatment — defined here so every future ticket's
++ * interactive elements can opt in via `focus-visible:outline-focus`
++ * (Tailwind alias, see tailwind.config.ts) without redefining the colour.
++ * Not swept across existing components in this ticket (see the migration
++ * map) — existing `focus:ring-pink-200` usages are untouched until each
++ * surface's own visual ticket lands, so nothing regresses today.
++ */
++.focus-ring-token:focus-visible {
++  outline: 2px solid var(--focus);
++  outline-offset: 2px;
++}
+diff --git a/frontend/components/Header.test.tsx b/frontend/components/Header.test.tsx
+new file mode 100644
+index 0000000..343494d
+--- /dev/null
++++ b/frontend/components/Header.test.tsx
+@@ -0,0 +1,36 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'Header.tsx'), 'utf-8');
++
++describe('T-059: Header — mobile menu icon migrated to the shared Icon system', () => {
++  test('uses lucide Menu/X via the shared Icon component, not hand-authored inline <svg>', () => {
++    assert.ok(source.includes("import { Menu, X } from 'lucide-react';"));
++    assert.ok(source.includes("import Icon from '@/components/ui/Icon';"));
++    assert.ok(!source.includes('<svg'), 'the old inline SVG paths should be fully replaced');
++  });
++
++  test('icon size (24) and colour (text-gray-700) are unchanged from before the migration — a glyph-source swap only, not a restyle', () => {
++    assert.ok(source.includes('<Icon icon={X} size={24} className="text-gray-700" />'));
++    assert.ok(source.includes('<Icon icon={Menu} size={24} className="text-gray-700" />'));
++  });
++
++  test('the toggle button keeps its own real accessible name — the icon is not asked to invent one', () => {
++    assert.ok(source.includes('aria-label="Menu"'));
++  });
++
++  test('regression: brand colour, nav links, and desktop auth buttons are untouched by T-059 (no header redesign)', () => {
++    assert.ok(source.includes('text-pink-600'), 'T-059 explicitly does not restyle Header brand/nav colour — that is a later ticket');
++    assert.ok(source.includes('bg-pink-600'));
++    assert.ok(source.includes("t('salons')"));
++    assert.ok(source.includes("t('register')"));
++  });
++
++  test('regression: LanguageSwitcher wiring is untouched', () => {
++    assert.ok(source.includes('<LanguageSwitcher currentLocale={locale} surface="header" />'));
++  });
++});
+diff --git a/frontend/components/Header.tsx b/frontend/components/Header.tsx
+index 96968e2..923487c 100644
+--- a/frontend/components/Header.tsx
++++ b/frontend/components/Header.tsx
+@@ -2,6 +2,8 @@
+ import { useState } from 'react';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
++import { Menu, X } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import LanguageSwitcher from './LanguageSwitcher';
+ 
+ export default function Header({ locale }: { locale: string }) {
+@@ -29,13 +31,9 @@ export default function Header({ locale }: { locale: string }) {
+         {/* Mobile burger */}
+         <button onClick={() => setOpen(!open)} className="md:hidden p-2 rounded-lg hover:bg-gray-100" aria-label="Menu">
+           {open ? (
+-            <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+-            </svg>
++            <Icon icon={X} size={24} className="text-gray-700" />
+           ) : (
+-            <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+-            </svg>
++            <Icon icon={Menu} size={24} className="text-gray-700" />
+           )}
+         </button>
+       </div>
+diff --git a/frontend/components/ui/Button.test.tsx b/frontend/components/ui/Button.test.tsx
+new file mode 100644
+index 0000000..be006ca
+--- /dev/null
++++ b/frontend/components/ui/Button.test.tsx
+@@ -0,0 +1,40 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'Button.tsx'), 'utf-8');
++
++describe('T-059: Button — shared primary/secondary pattern', () => {
++  test('only consumes semantic tokens (bg-brand/text-inverse/etc.), never a raw Tailwind palette colour', () => {
++    assert.ok(!/(pink|gray|red|green|blue|yellow|amber|emerald|purple)-\d/.test(source), 'Button must not reference a raw Tailwind colour utility');
++  });
++
++  test('preserves the T-057 44px minimum control height unconditionally', () => {
++    assert.ok(source.includes('min-h-[44px]'));
++  });
++
++  test('disabled state stays legible (reduced opacity, not hidden) and non-interactive', () => {
++    assert.ok(source.includes('disabled:opacity-50'));
++    assert.ok(source.includes('disabled:pointer-events-none'));
++  });
++
++  test('uses the shared focus-ring token class, not a component-local focus ring', () => {
++    assert.ok(source.includes('focus-ring-token'));
++  });
++
++  test('primary and secondary variants are visually distinct from each other', () => {
++    const primary = source.match(/primary:\s*'([^']+)'/)?.[1] ?? '';
++    const secondary = source.match(/secondary:\s*'([^']+)'/)?.[1] ?? '';
++    assert.ok(primary.length > 0 && secondary.length > 0);
++    assert.notEqual(primary, secondary);
++    assert.ok(primary.includes('bg-brand'));
++    assert.ok(secondary.includes('border-border'));
++  });
++
++  test('defaults type="button" — never accidentally submits a surrounding form', () => {
++    assert.ok(source.includes('type="button"'));
++  });
++});
+diff --git a/frontend/components/ui/Button.tsx b/frontend/components/ui/Button.tsx
+new file mode 100644
+index 0000000..d7eecfb
+--- /dev/null
++++ b/frontend/components/ui/Button.tsx
+@@ -0,0 +1,37 @@
++import type { ButtonHTMLAttributes, ReactNode } from 'react';
++
++/**
++ * T-059 — the one shared primary/secondary button pattern for Visual
++ * Baseline v1. Consumes only semantic tokens (brand/surface/border/text),
++ * never a raw Tailwind colour utility, so a future palette change never
++ * requires touching a call site. Not yet wired into any shipped page —
++ * proven on the internal design-system-preview route only (see T-059's
++ * migration boundary in docs/06_ENGINEERING/VISUAL_BASELINE_V1.md); every
++ * real button in production today (search submit, contact actions, header
++ * CTA, etc.) keeps its own literal Tailwind classes until its own
++ * page-level visual ticket lands, so nothing in production changes shape
++ * or colour as a side effect of this component existing.
++ *
++ * Preserves T-057's 44px minimum control height unconditionally.
++ */
++type Variant = 'primary' | 'secondary';
++
++interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
++  variant?: Variant;
++  children: ReactNode;
++}
++
++const BASE = 'inline-flex items-center justify-center gap-2 rounded-md text-button min-h-[44px] px-4 transition-colors focus-ring-token disabled:opacity-50 disabled:pointer-events-none';
++
++const VARIANT_CLASSES: Record<Variant, string> = {
++  primary: 'bg-brand text-text-inverse hover:bg-brand-hover active:bg-brand-active',
++  secondary: 'bg-surface text-text border border-border hover:border-border-strong',
++};
++
++export default function Button({ variant = 'primary', className = '', children, ...rest }: ButtonProps) {
++  return (
++    <button type="button" className={`${BASE} ${VARIANT_CLASSES[variant]} ${className}`} {...rest}>
++      {children}
++    </button>
++  );
++}
+diff --git a/frontend/components/ui/Icon.test.tsx b/frontend/components/ui/Icon.test.tsx
+new file mode 100644
+index 0000000..1e89077
+--- /dev/null
++++ b/frontend/components/ui/Icon.test.tsx
+@@ -0,0 +1,34 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'Icon.tsx'), 'utf-8');
++
++describe('T-059: Icon — shared icon contract', () => {
++  test('decorative defaults to true (aria-hidden by default)', () => {
++    assert.ok(source.includes('decorative = true'));
++  });
++
++  test('aria-hidden is only ever set when decorative — never invents an accessible label', () => {
++    const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++    assert.ok(codeOnly.includes("aria-hidden={decorative ? 'true' : undefined}"));
++    assert.ok(!/aria-label/.test(codeOnly), 'Icon must never set aria-label itself — accessible names stay owned by the control it sits inside');
++    assert.ok(!/\btitle=/.test(codeOnly), 'title must not be used as an accessible-naming mechanism');
++  });
++
++  test('fixed stroke width, not caller-configurable (keeps every icon visually consistent)', () => {
++    assert.ok(source.includes('const STROKE_WIDTH = 1.75;'));
++    assert.ok(!/strokeWidth\?:/.test(source), 'stroke width must not be an exposed prop');
++  });
++
++  test('size is restricted to the 3-value scale (16 | 20 | 24), not an arbitrary number', () => {
++    assert.ok(source.includes('export type IconSize = 16 | 20 | 24;'));
++  });
++
++  test('is not focusable (decorative glyphs must never receive tab focus)', () => {
++    assert.ok(source.includes('focusable="false"'));
++  });
++});
+diff --git a/frontend/components/ui/Icon.tsx b/frontend/components/ui/Icon.tsx
+new file mode 100644
+index 0000000..160fed8
+--- /dev/null
++++ b/frontend/components/ui/Icon.tsx
+@@ -0,0 +1,36 @@
++import type { LucideIcon } from 'lucide-react';
++
++/**
++ * T-059 — the one shared icon contract for Visual Baseline v1. Wraps a
++ * lucide-react icon component with the product's fixed size/stroke scale
++ * so no call site invents its own numbers.
++ *
++ * Decorative by default (aria-hidden="true") — matches every existing
++ * icon-adjacent control in the codebase, which already carries its own
++ * accessible name via a real <label>, aria-label, or visible text (T-055/
++ * T-057). Pass `decorative={false}` only for the rare icon that is itself
++ * the sole conveyor of meaning with no adjacent label — even then, prefer
++ * fixing the control to have a real accessible name instead.
++ */
++export type IconSize = 16 | 20 | 24;
++
++const STROKE_WIDTH = 1.75;
++
++interface IconProps {
++  icon: LucideIcon;
++  size?: IconSize;
++  decorative?: boolean;
++  className?: string;
++}
++
++export default function Icon({ icon: LucideGlyph, size = 20, decorative = true, className }: IconProps) {
++  return (
++    <LucideGlyph
++      size={size}
++      strokeWidth={STROKE_WIDTH}
++      aria-hidden={decorative ? 'true' : undefined}
++      focusable="false"
++      className={className}
++    />
++  );
++}
+diff --git a/frontend/lib/colorContrast.test.ts b/frontend/lib/colorContrast.test.ts
+new file mode 100644
+index 0000000..e371280
+--- /dev/null
++++ b/frontend/lib/colorContrast.test.ts
+@@ -0,0 +1,30 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { contrastRatio } from './colorContrast';
++
++describe('T-059: contrastRatio — validated against known WCAG reference values', () => {
++  test('black on white is the maximum ratio, 21:1', () => {
++    assert.ok(Math.abs(contrastRatio('#000000', '#FFFFFF') - 21) < 0.01);
++  });
++
++  test('identical colours produce a ratio of 1:1', () => {
++    assert.ok(Math.abs(contrastRatio('#A62E5C', '#A62E5C') - 1) < 0.01);
++  });
++
++  test('is order-independent (fg/bg swap gives the same ratio)', () => {
++    const a = contrastRatio('#1E1A19', '#FAF8F6');
++    const b = contrastRatio('#FAF8F6', '#1E1A19');
++    assert.equal(a, b);
++  });
++
++  test('accepts 3-digit hex shorthand equivalently to its 6-digit expansion', () => {
++    const short = contrastRatio('#fff', '#000');
++    const long = contrastRatio('#ffffff', '#000000');
++    assert.equal(short, long);
++  });
++
++  test('a known WCAG example: #767676 on white is ~4.54:1 (the classic "just passes AA" grey)', () => {
++    const r = contrastRatio('#767676', '#FFFFFF');
++    assert.ok(r > 4.5 && r < 4.6, `expected ~4.54, got ${r}`);
++  });
++});
+diff --git a/frontend/lib/colorContrast.ts b/frontend/lib/colorContrast.ts
+new file mode 100644
+index 0000000..452f8f6
+--- /dev/null
++++ b/frontend/lib/colorContrast.ts
+@@ -0,0 +1,37 @@
++/**
++ * T-059 — WCAG 2.x relative-luminance contrast ratio between two sRGB hex
++ * colours. Pure and dependency-free so it can validate the actual
++ * Visual Baseline v1 tokens (extracted live from app/globals.css by the
++ * accompanying test, not duplicated here) without a second hardcoded copy
++ * of the palette drifting out of sync with the real CSS.
++ */
++
++function hexToRgb(hex: string): [number, number, number] {
++  const clean = hex.replace('#', '');
++  const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
++  const num = parseInt(full, 16);
++  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
++}
++
++function srgbToLinear(channel: number): number {
++  const c = channel / 255;
++  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
++}
++
++function relativeLuminance([r, g, b]: [number, number, number]): number {
++  const [rl, gl, bl] = [srgbToLinear(r), srgbToLinear(g), srgbToLinear(b)];
++  return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
++}
++
++/** Returns the WCAG contrast ratio (1–21) between two hex colours, order-independent. */
++export function contrastRatio(hexA: string, hexB: string): number {
++  const lA = relativeLuminance(hexToRgb(hexA));
++  const lB = relativeLuminance(hexToRgb(hexB));
++  const lighter = Math.max(lA, lB);
++  const darker = Math.min(lA, lB);
++  return (lighter + 0.05) / (darker + 0.05);
++}
++
++export const WCAG_AA_NORMAL_TEXT = 4.5;
++export const WCAG_AA_LARGE_TEXT = 3.0;
++export const WCAG_AA_NON_TEXT = 3.0;
+diff --git a/frontend/lib/visualBaselineTokens.test.ts b/frontend/lib/visualBaselineTokens.test.ts
+new file mode 100644
+index 0000000..bcf0286
+--- /dev/null
++++ b/frontend/lib/visualBaselineTokens.test.ts
+@@ -0,0 +1,182 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { contrastRatio, WCAG_AA_NORMAL_TEXT, WCAG_AA_NON_TEXT } from './colorContrast';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++const globalsCss = fs.readFileSync(path.join(frontendRoot, 'app', 'globals.css'), 'utf-8');
++const tailwindConfig = fs.readFileSync(path.join(frontendRoot, 'tailwind.config.ts'), 'utf-8');
++const layoutSource = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'layout.tsx'), 'utf-8');
++
++/** Extracts a CSS custom property's hex value straight out of globals.css — never a second hardcoded copy of the palette, so this test always checks what's actually shipped. */
++function tokenHex(name: string): string {
++  const re = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})\\s*;`);
++  const m = globalsCss.match(re);
++  if (!m) throw new Error(`token ${name} not found in globals.css`);
++  return m[1];
++}
++
++describe('T-059: required semantic tokens exist exactly once', () => {
++  const required = [
++    '--bg', '--surface', '--surface-subtle', '--surface-elevated',
++    '--text', '--text-secondary', '--text-muted', '--text-inverse',
++    '--brand', '--brand-hover', '--brand-active', '--brand-soft',
++    '--accent', '--accent-strong', '--accent-soft',
++    '--border', '--border-strong', '--focus',
++    '--success', '--success-text', '--success-soft',
++    '--warning', '--warning-soft',
++    '--danger', '--danger-soft',
++    '--closed', '--closed-soft',
++    '--radius-sm', '--radius-md', '--radius-pill',
++    '--shadow-resting', '--shadow-elevated',
++  ];
++
++  for (const token of required) {
++    test(`${token} is defined`, () => {
++      const re = new RegExp(`\\s${token.replace('--', '\\-\\-')}:\\s*[^;]+;`);
++      assert.ok(re.test(globalsCss), `expected ${token} to be declared in globals.css`);
++    });
++  }
++
++  test('no token is declared twice inside :root (no accidental duplicate/conflicting definition)', () => {
++    const rootBlock = globalsCss.slice(globalsCss.indexOf(':root {'), globalsCss.indexOf('\n}\n', globalsCss.indexOf(':root {')));
++    for (const token of required) {
++      const count = (rootBlock.match(new RegExp(`\\s${token.replace('--', '\\-\\-')}:`, 'g')) || []).length;
++      assert.equal(count, 1, `${token} should be declared exactly once inside :root, found ${count}`);
++    }
++  });
++
++  test('status colours (success/warning/danger/closed) are independent of --brand — no status token references var(--brand)', () => {
++    for (const token of ['--success', '--warning', '--danger', '--closed']) {
++      const re = new RegExp(`${token.replace('--', '\\-\\-')}:\\s*([^;]+);`);
++      const m = globalsCss.match(re);
++      assert.ok(m && !m[1].includes('var(--brand'), `${token} must not derive from --brand`);
++    }
++  });
++
++  test('--focus is a distinct value from --brand and --danger (never confused with either)', () => {
++    const focus = tokenHex('--focus');
++    const brand = tokenHex('--brand');
++    const danger = tokenHex('--danger');
++    assert.notEqual(focus.toLowerCase(), brand.toLowerCase());
++    assert.notEqual(focus.toLowerCase(), danger.toLowerCase());
++  });
++
++  test('token names are semantic, not colour names (no --pink/--pink500-style token)', () => {
++    assert.ok(!/--(pink|magenta|rose)\d*\s*:/i.test(globalsCss));
++  });
++});
++
++describe('T-059: Tailwind aliases resolve to the semantic CSS variables', () => {
++  const aliasPairs: [string, string][] = [
++    ['bg:', 'var(--bg)'], ['surface:', 'var(--surface)'], ['text:', 'var(--text)'],
++    ['brand:', 'var(--brand)'], ['accent:', 'var(--accent)'], ['border:', 'var(--border)'],
++    ['focus:', 'var(--focus)'], ['success:', 'var(--success)'], ['danger:', 'var(--danger)'],
++    ['closed:', 'var(--closed)'],
++  ];
++  for (const [tw, cssVar] of aliasPairs) {
++    test(`Tailwind "${tw.replace(':', '')}" resolves to ${cssVar}`, () => {
++      assert.ok(tailwindConfig.includes(`${tw} "${cssVar}"`), `expected tailwind.config.ts to alias ${tw} -> ${cssVar}`);
++    });
++  }
++
++  test('borderRadius/boxShadow/fontFamily are also token-driven, not new literal values', () => {
++    assert.ok(tailwindConfig.includes('borderRadius:'));
++    assert.ok(tailwindConfig.includes('boxShadow:'));
++    assert.ok(tailwindConfig.includes('"var(--font-inter)"'));
++  });
++});
++
++describe('T-059: contrast — core pairs meet WCAG AA', () => {
++  const textPairs: [string, string, string, string][] = [
++    ['text on bg', '--text', '--bg', 'normal'],
++    ['text on surface', '--text', '--surface', 'normal'],
++    ['text-secondary on bg', '--text-secondary', '--bg', 'normal'],
++    ['text-secondary on surface', '--text-secondary', '--surface', 'normal'],
++    ['text-muted on bg', '--text-muted', '--bg', 'normal'],
++    ['text-muted on surface', '--text-muted', '--surface', 'normal'],
++    ['text-inverse on brand', '--text-inverse', '--brand', 'normal'],
++    ['text-inverse on brand-hover', '--text-inverse', '--brand-hover', 'normal'],
++    ['brand on surface (links/secondary text)', '--brand', '--surface', 'normal'],
++    ['success-text on success-soft', '--success-text', '--success-soft', 'normal'],
++    ['closed on closed-soft', '--closed', '--closed-soft', 'normal'],
++    ['danger on danger-soft', '--danger', '--danger-soft', 'normal'],
++    ['accent-strong on surface', '--accent-strong', '--surface', 'normal'],
++  ];
++
++  for (const [label, fgTok, bgTok, kind] of textPairs) {
++    test(`${label} >= ${WCAG_AA_NORMAL_TEXT}:1`, () => {
++      const ratio = contrastRatio(tokenHex(fgTok), tokenHex(bgTok));
++      assert.ok(ratio >= WCAG_AA_NORMAL_TEXT, `${label}: ${ratio.toFixed(2)}:1, required ${WCAG_AA_NORMAL_TEXT}:1`);
++    });
++  }
++
++  test('focus indicator meets the 3:1 non-text contrast requirement against both surface and bg', () => {
++    const vsSurface = contrastRatio(tokenHex('--focus'), tokenHex('--surface'));
++    const vsBg = contrastRatio(tokenHex('--focus'), tokenHex('--bg'));
++    assert.ok(vsSurface >= WCAG_AA_NON_TEXT, `focus vs surface: ${vsSurface.toFixed(2)}:1`);
++    assert.ok(vsBg >= WCAG_AA_NON_TEXT, `focus vs bg: ${vsBg.toFixed(2)}:1`);
++  });
++
++  test('plain --accent (not accent-strong) is documented as decorative-only — its own contrast on surface is allowed to be below 4.5:1 because no token/component may use it for text', () => {
++    const ratio = contrastRatio(tokenHex('--accent'), tokenHex('--surface'));
++    // This assertion exists to make the constraint explicit and testable:
++    // if --accent is ever strengthened to text-safe contrast, accent-strong
++    // becomes redundant — that's fine, but should be a deliberate change.
++    assert.ok(ratio < WCAG_AA_NORMAL_TEXT, 'if this now passes, reconsider whether --accent-strong is still needed');
++  });
++});
++
++describe('T-059: typography — semantic classes exist, do not redefine heading semantics', () => {
++  const roles = ['text-display', 'text-page-title', 'text-section-title', 'text-card-title', 'text-body', 'text-body-sm', 'text-label', 'text-button', 'text-meta', 'text-caption'];
++  for (const role of roles) {
++    test(`.${role} is defined in globals.css`, () => {
++      assert.ok(globalsCss.includes(`.${role}`), `expected .${role} to be defined`);
++    });
++  }
++
++  test('typography classes are plain classes, not element selectors (h1/h2/etc. keep their own semantics)', () => {
++    assert.ok(!/h1\s*{/.test(globalsCss) && !/h1\s*,/.test(globalsCss), 'must not globally restyle <h1> by element selector');
++  });
++
++  test('four weights only: 400/500/600/700 appear in the typography scale, no others', () => {
++    const typographyBlock = globalsCss.slice(globalsCss.indexOf('@layer components'), globalsCss.indexOf('@layer components') + 1200);
++    const weights = [...typographyBlock.matchAll(/font-weight:\s*(\d+)/g)].map(m => m[1]);
++    const uniqueWeights = new Set(weights);
++    assert.ok(uniqueWeights.size <= 4, `expected at most 4 distinct weights, found ${[...uniqueWeights].join(', ')}`);
++    for (const w of uniqueWeights) assert.ok(['400', '500', '600', '700'].includes(w), `unexpected weight ${w}`);
++  });
++});
++
++describe('T-059: font loading contract', () => {
++  test('Inter is loaded via next/font/google (self-hosted at build time, no runtime CDN request)', () => {
++    assert.ok(layoutSource.includes("import { Inter } from 'next/font/google';"));
++  });
++
++  test('subsets cover latin, latin-ext, greek, and cyrillic', () => {
++    const block = layoutSource.slice(layoutSource.indexOf('const inter = Inter({'), layoutSource.indexOf('});', layoutSource.indexOf('const inter = Inter({')));
++    for (const subset of ['latin', 'latin-ext', 'greek', 'cyrillic']) {
++      assert.ok(block.includes(`'${subset}'`), `expected subset "${subset}"`);
++    }
++  });
++
++  test('exactly the 4 weights the type scale uses are requested — 400/500/600/700, not the full variable range', () => {
++    const block = layoutSource.slice(layoutSource.indexOf('const inter = Inter({'), layoutSource.indexOf('});', layoutSource.indexOf('const inter = Inter({')));
++    const weightMatch = block.match(/weight:\s*\[([^\]]+)\]/);
++    assert.ok(weightMatch, 'expected an explicit weight array, not the unbounded variable font');
++    const weights = weightMatch![1].split(',').map(w => w.trim().replace(/'/g, ''));
++    assert.deepEqual(weights.sort(), ['400', '500', '600', '700']);
++  });
++
++  test('display: swap avoids invisible-text layout shift', () => {
++    assert.ok(layoutSource.includes("display: 'swap'"));
++  });
++
++  test('the font variable is attached to <html>, and the fallback stack still includes the pre-existing system-ui stack', () => {
++    assert.ok(layoutSource.includes('className={inter.variable}'));
++    assert.ok(globalsCss.includes('var(--font-inter), ui-sans-serif, system-ui, sans-serif'));
++  });
++});
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 57b64e4..208fe2c 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -10,6 +10,7 @@
+       "dependencies": {
+         "@tanstack/react-query": "^5.101.0",
+         "leaflet": "^1.9.4",
++        "lucide-react": "^1.27.0",
+         "next": "14.2.35",
+         "next-intl": "^4.13.0",
+         "react": "^18",
+@@ -4769,6 +4770,14 @@
+       "integrity": "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==",
+       "dev": true
+     },
++    "node_modules/lucide-react": {
++      "version": "1.27.0",
++      "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.27.0.tgz",
++      "integrity": "sha512-rJicGl/3Fly/E0rOH1YmPZ6e49JCnKknh1ox1vpHnkfjujAkKA6sqUZvH3MTAaXXjgexyUwgNwTJzTtYuAFYJw==",
++      "peerDependencies": {
++        "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
+     "node_modules/math-intrinsics": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index 2e6907b..7f8dd07 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,11 +7,12 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts lib/colorContrast.test.ts lib/visualBaselineTokens.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx components/Header.test.tsx components/ui/Icon.test.tsx components/ui/Button.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\" \"app/[locale]/design-system-preview/designSystemPreview.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
+     "leaflet": "^1.9.4",
++    "lucide-react": "^1.27.0",
+     "next": "14.2.35",
+     "next-intl": "^4.13.0",
+     "react": "^18",
+diff --git a/frontend/tailwind.config.ts b/frontend/tailwind.config.ts
+index d43da91..fc81d7d 100644
+--- a/frontend/tailwind.config.ts
++++ b/frontend/tailwind.config.ts
+@@ -11,6 +11,50 @@ const config: Config = {
+       colors: {
+         background: "var(--background)",
+         foreground: "var(--foreground)",
++        // T-059 — Visual Baseline v1 semantic tokens (Direction B). See
++        // app/globals.css for the underlying custom-property values and
++        // docs/06_ENGINEERING/VISUAL_BASELINE_V1.md for the full spec.
++        // Not yet consumed sitewide — available for the page-level
++        // tickets that follow T-059.
++        bg: "var(--bg)",
++        surface: "var(--surface)",
++        "surface-subtle": "var(--surface-subtle)",
++        "surface-elevated": "var(--surface-elevated)",
++        text: "var(--text)",
++        "text-secondary": "var(--text-secondary)",
++        "text-muted": "var(--text-muted)",
++        "text-inverse": "var(--text-inverse)",
++        brand: "var(--brand)",
++        "brand-hover": "var(--brand-hover)",
++        "brand-active": "var(--brand-active)",
++        "brand-soft": "var(--brand-soft)",
++        accent: "var(--accent)",
++        "accent-strong": "var(--accent-strong)",
++        "accent-soft": "var(--accent-soft)",
++        border: "var(--border)",
++        "border-strong": "var(--border-strong)",
++        focus: "var(--focus)",
++        success: "var(--success)",
++        "success-text": "var(--success-text)",
++        "success-soft": "var(--success-soft)",
++        warning: "var(--warning)",
++        "warning-soft": "var(--warning-soft)",
++        danger: "var(--danger)",
++        "danger-soft": "var(--danger-soft)",
++        closed: "var(--closed)",
++        "closed-soft": "var(--closed-soft)",
++      },
++      borderRadius: {
++        sm: "var(--radius-sm)",
++        md: "var(--radius-md)",
++        pill: "var(--radius-pill)",
++      },
++      boxShadow: {
++        resting: "var(--shadow-resting)",
++        elevated: "var(--shadow-elevated)",
++      },
++      fontFamily: {
++        sans: ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+       },
+     },
+   },
