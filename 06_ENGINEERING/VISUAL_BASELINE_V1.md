@@ -280,7 +280,14 @@ No new icons beyond what T-059 already migrated (`Menu`/`X`, both already in `He
 
 **Round 2 (post-unification fix, re-verified against the corrected implementation):** every one of the 6 unified-shell pages (homepage, search, salon detail, privacy, cookies, masters) checked at 1280px and 375px for: exactly one `<header>` with `role="banner"`, exactly one `<main id="main-content">`, exactly one `<footer>`, no horizontal overflow, zero console/hydration errors — all pass. Mobile menu re-verified on all 4 variant surfaces (default via home/masters, search, legal via privacy): exactly one burger, 44×44, opens, reaches `/search`, no duplicated focusable nav DOM. `nav.back`/`nav.menu` accessible-name localization re-verified across all 4 locales on a `legal`-variant page. Locale-switch query preservation re-confirmed on `/search` post-refactor (`?area=athens-center&view=map` survives `en`→`ru`). Search's map view width re-confirmed unchanged (still fills its pre-existing, untouched `max-w-6xl` results container — 1120px at a 1280px viewport, exactly as before the `<div>`→`<main>` retag, confirmed via `git diff` that the retag touched no `className`). T-056 Back-restoration re-confirmed (48/48 cards) against the corrected build.
 
-**One finding, confirmed unrelated to T-060 (both rounds):** a horizontal-overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button (`px-6 py-3 ... whitespace-nowrap`) extending 13px past the viewport. Verified byte-for-byte identical class list on current production, independent of any T-060 file — `SearchBar.tsx` is homepage content, out of scope. Flagged for the homepage visual-refresh ticket.
+**Round 3 (live production, `https://lookla.gr`, post-merge/post-deploy, `beauty_web` rebuilt and restarted alone):** re-ran the same landmark/mobile-nav/aria-current/locale-switch/map-width/T-056 checks directly against production across all 6 unified-shell pages — all pass, matching Round 2 exactly. T-056 restoration additionally confirmed to restore both card count (48/48) *and* scroll position. Footer's Privacy/Cookie Policy links confirmed reachable.
+
+```text
+T-060 regressions: 0
+Known pre-existing SearchBar 320px overflow: unchanged, deferred
+```
+
+**One finding, confirmed unrelated to T-060 (all three rounds):** a horizontal-overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button (`px-6 py-3 ... whitespace-nowrap`) extending 13px past the viewport. Verified byte-for-byte identical class list on current production both before and after this deploy, independent of any T-060 file — `SearchBar.tsx` is homepage content, out of scope. This is reported as confirmed non-regression, not as a passed visual check. Flagged for the homepage visual-refresh ticket.
 
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
 

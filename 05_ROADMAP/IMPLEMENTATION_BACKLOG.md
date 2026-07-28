@@ -1414,7 +1414,12 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 ### T-060 — Header, Footer & Global Shell Visual Refresh
 **Priority:** P0 (second ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-059 ✅ Visual Foundations
-**Status:** 🔶 Implemented, including a required rework after a REQUEST CHANGES round — pending fresh independent review. **Not merged, not deployed.** (An earlier version of this entry prematurely stated "Completed / Merged via PR #57 / live verification passed" — that was written ahead of the actual review outcome and is corrected here: the reviewer requested changes on PR #57 before any merge happened, so production was never touched under this status.)
+**Status:** ✅ Completed. REQUEST CHANGES round resolved (Option 1 — shell unified), re-reviewed, **APPROVE**, merged via PR #57 (`6588881` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
+
+```text
+T-060 regressions: 0
+Known pre-existing SearchBar 320px overflow: unchanged, deferred
+```
 
 **Scope:** applies Direction B tokens to one shared `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` shell and the `[locale]/layout.tsx` wrapper. Fixes the known 40×40 burger touch-target gap (now 44×44), adds programmatic active-nav-state, keyboard/focus lifecycle for the mobile menu, and a query-preservation bug found live in production (switching locale previously dropped `?area=...&view=map`-style filter state entirely). No homepage/search/SalonCard/salon-detail *content* touched. Full contract, variant table, and legacy-boundary report: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
 
@@ -1432,9 +1437,11 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 - Sticky-footer shell (`flex min-h-screen flex-col` + a `flex-1` wrapper) so short pages don't leave the footer floating.
 - All footer links/language-switcher buttons brought to 44px (were ~20px tall / ~15-19px wide).
 
-**Verification:** 851/852 tests passing (the one non-pass is `[320] horizontal overflow`, the pre-existing, documented, unrelated `SearchBar.tsx` finding below — not a real failure). One pre-existing test bug found and fixed as a direct consequence (`lib/cookieConsentUi.test.ts`'s file-exclusion regex excluded `.test.ts` but not `.test.tsx`, causing a false positive against the new `Footer.test.tsx`). Lint/build clean (`next build` type-checks and compiles clean; bundle-size note: `privacy`/`cookies`/`masters` grew from near-static 141B–1.72kB to 4.22–5.51kB First Load JS, an expected consequence of now sharing one interactive client shell). Isolated Playwright verification, post-unification-fix: all 6 unified-shell pages checked for exactly one `role="banner"` header, exactly one `<main id="main-content">`, exactly one footer, no horizontal overflow, zero console/hydration errors — all pass, at both a desktop and a mobile width. Mobile menu re-verified reachable and functional on every variant. `nav.back`/`nav.menu` localization re-verified across all 4 locales. Locale-switch query preservation, search map-view width (unchanged — confirmed via `git diff` that the `<div>`→`<main>` retag touched no `className`), and T-056 Back-restoration (48/48 cards) all re-confirmed against the corrected build. Live production verification has **not** run yet — pending merge approval.
+**Verification:** 851/852 local tests passing (the one non-pass is `[320] horizontal overflow`, the pre-existing, documented, unrelated `SearchBar.tsx` finding below — must not be described as a passed visual check). One pre-existing test bug found and fixed as a direct consequence (`lib/cookieConsentUi.test.ts`'s file-exclusion regex excluded `.test.ts` but not `.test.tsx`, causing a false positive against the new `Footer.test.tsx`). Lint/build clean (`next build` type-checks and compiles clean; bundle-size note: `privacy`/`cookies`/`masters` grew from near-static 141B–1.72kB to 4.22–5.51kB First Load JS, an expected consequence of now sharing one interactive client shell). Isolated Playwright verification, post-unification-fix: all 6 unified-shell pages checked for exactly one `role="banner"` header, exactly one `<main id="main-content">`, exactly one footer, no horizontal overflow, zero console/hydration errors — all pass, at both a desktop and a mobile width. Mobile menu re-verified reachable and functional on every variant. `nav.back`/`nav.menu` localization re-verified across all 4 locales. Locale-switch query preservation, search map-view width (unchanged — confirmed via `git diff` that the `<div>`→`<main>` retag touched no `className`), and T-056 Back-restoration (48/48 cards) all re-confirmed against the corrected build.
 
-**One finding, confirmed unrelated to T-060 (both rounds):** a horizontal overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button — verified byte-identical on current production, independent of any shell file. Flagged for the homepage visual-refresh ticket.
+**Live production verification (`https://lookla.gr`, 2026-07-28, post-deploy):** all 6 unified-shell pages (home/search/masters/privacy/cookies/salon-detail) × {1280, 375}px — exactly one `role="banner"` header, exactly one `<main id="main-content">` (not duplicated), exactly one footer, zero console/hydration errors. Mobile disclosure re-verified live on 4 surfaces (default via home/masters, search, legal via privacy): single burger, 44×44, opens, no duplicated focusable nav DOM, Escape closes and returns focus. `aria-current="page"` confirmed correct on the two `default`-variant pages (`/masters` marks "Professionals" current and NOT "Salons & Studios"; homepage marks neither). Locale switch on `/search` still preserves `?area=athens-center&view=map` across `en`→`ru`. Search map view width unchanged (1120px, same as pre-T-060). T-056 restoration confirmed live: 48/48 cards **and** scroll position both restored after Back. Footer Privacy/Cookie Policy links confirmed live. The known 320px homepage overflow was re-measured at 13px — **unchanged from before this deploy, not improved and not worsened** — see the explicit status block above; this is not being reported as a passing check, only as confirmed non-regression.
+
+**One finding, confirmed unrelated to T-060 (all rounds, including live post-deploy):** a horizontal overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button — verified byte-identical on current production both before and after this deploy, independent of any shell file. Flagged for the homepage visual-refresh ticket.
 
 **Acceptance Criteria:**
 - [x] Burger touch target ≥44×44 (was 40×40)
@@ -1448,8 +1455,8 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 - [x] Exactly one `<main id="main-content">` landmark per unified-shell page, Header/Footer outside it, no nested `<main>`s
 - [x] T-056 restoration, T-057 control semantics, T-058 dedup, and search map-view width all re-verified unaffected post-unification
 - [x] Four locales verified at 6 breakpoints
-- [ ] Live production verification — not yet run (pending merge)
-- [ ] Independent review — REQUEST CHANGES on round 1 (PR #57); round-2 fix implemented, awaiting re-review
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — REQUEST CHANGES on round 1 (PR #57), Option 1 fix implemented, **APPROVE** on round 2
 
 ---
 
