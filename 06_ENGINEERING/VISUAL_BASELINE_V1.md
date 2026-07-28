@@ -365,6 +365,12 @@ Measured (isolated standalone, 1440px, `networkidle`): 42 total requests, CLS **
 
 53 new focused tests (`SearchBar.test.tsx`, `CategoryGrid.test.tsx`, `AreaGrid.test.tsx`, `app/[locale]/homepage.test.ts`) plus 1 pre-existing T-059 `Icon.test.tsx` assertion updated for the `IconSize` extension. Full suite: 905/905 passing (all T-042/T-054–T-060 regression suites green, unmodified). Lint clean (only pre-existing, unrelated warnings). `next build` clean. Isolated Playwright: 24 breakpoint×locale combinations + focus-state, reduced-motion, mobile-nav-over-homepage, category/area navigation, search-submission, and `area_select`-dedup checks — all pass.
 
+**Live production verification (`https://lookla.gr`, 2026-07-28, post-merge/post-deploy, `beauty_web` rebuilt and restarted alone):** re-ran the full breakpoint×locale matrix directly against production (24 combinations) — zero horizontal overflow everywhere, search input never overlaps the submit button, zero console/hydration errors. Enter and the submit-button click each independently confirmed to navigate to `/search?q=...` exactly once. All 10 category tiles present with the correct slugs; icons confirmed `aria-hidden` (never contribute to accessible names); accessible names confirmed clean (no emoji). `area_select` confirmed firing exactly once per click via `gtag()`-call interception. No booking/appointment language and no unsupported trust claim found anywhere on the live homepage; the "How it works" step-2 copy fix ("Choose" / "contact them directly") confirmed present. T-060's mobile burger/panel re-confirmed 44×44 and functional over the refreshed homepage. Landmarks re-confirmed (1 h1/banner-header/main/footer). Live CLS measured at 0.0025 (close to zero — the small non-zero delta versus the isolated build's exact 0 is expected on a real page with live analytics/consent scripts attaching, not a regression).
+
+```text
+T-062 regressions: 0
+```
+
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
 
 - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.

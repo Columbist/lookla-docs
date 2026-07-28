@@ -1463,7 +1463,7 @@ Known pre-existing SearchBar 320px overflow: unchanged, deferred
 ### T-062 — Homepage Visual Refresh
 **Priority:** P0 (third ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-059 ✅ Visual foundations, T-060 ✅ Header, Footer & Global Shell
-**Status:** 🔶 Implemented, isolated verification complete — pending independent review. **Not merged, not deployed.**
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #58 (`50c6c87` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
 
 **Ticket-identity note:** requested as "T-061," which collided with an already-existing informal, unreserved backlog placeholder ("map accessibility," see the note further up this document). Per the collision protocol: reported, not reused — assigned **T-062**, the next genuinely unused ID, preserving the requested title/scope verbatim. The map-accessibility placeholder's own informal working number shifted again, to T-063.
 
@@ -1478,7 +1478,13 @@ Known pre-existing SearchBar 320px overflow: unchanged, deferred
 - Section containers now consume T-060's previously-unconsumed `max-w-shell-grid`/`max-w-shell-reading` tokens — the first page to actually adopt them.
 - IA unchanged (hero → categories → areas → how-it-works) — already matched Direction B's preferred structure; nothing removed, nothing added.
 
-**Verification:** 53 new tests + 1 pre-existing T-059 `Icon.test.tsx` assertion updated for the `IconSize` extension. Full suite: 905/905 passing (all T-042–T-060 regression suites green, unmodified). Lint/build clean. Isolated Playwright: 4 locales × 6 breakpoints (24 combinations) — 0px overflow everywhere (down from 13px at 320px), correct landmarks, ≥44×44 touch targets throughout, zero console/hydration errors; plus focus-state, reduced-motion, mobile-nav-over-homepage, category/area navigation, search-submission, and `area_select`-dedup checks. Accessibility: logical heading hierarchy (H1→H2×3→H3×3), no colour-only state, no duplicated/indistinguishable link names. Performance: CLS 0, LCP element is the H1 text (no image on the critical path — none exists on the page), homepage bundle +0.4kB (5.16kB→5.56kB), zero new network requests. Live production verification not yet run — pending merge.
+**Verification:** 53 new tests + 1 pre-existing T-059 `Icon.test.tsx` assertion updated for the `IconSize` extension. Full suite: 905/905 passing (all T-042–T-060 regression suites green, unmodified). Lint/build clean. Isolated Playwright: 4 locales × 6 breakpoints (24 combinations) — 0px overflow everywhere (down from 13px at 320px), correct landmarks, ≥44×44 touch targets throughout, zero console/hydration errors; plus focus-state, reduced-motion, mobile-nav-over-homepage, category/area navigation, search-submission, and `area_select`-dedup checks. Accessibility: logical heading hierarchy (H1→H2×3→H3×3), no colour-only state, no duplicated/indistinguishable link names. Performance (isolated): CLS 0, LCP element is the H1 text (no image on the critical path — none exists on the page), homepage bundle +0.4kB (5.16kB→5.56kB), zero new network requests.
+
+**Live production verification (`https://lookla.gr`, 2026-07-28, post-deploy):** all 4 locales × {320, 375, 390, 768, 1024, 1440}px — zero horizontal overflow at every combination (the 320px overflow fix confirmed live, not just isolated), search input never overlaps the submit button, zero console/hydration errors. Enter and the submit button each navigate to `/search?q=...` exactly once, confirmed separately. All 10 category tiles present with the expected slugs, icons `aria-hidden` (never contribute to accessible names), accessible names are clean text with no emoji. `area_select` fires exactly once per click, confirmed live via `gtag()`-call interception. No booking/appointment language and no unsupported verification/trust claim anywhere on the homepage; the "How it works" step-2 fix ("Choose" + "contact them directly") confirmed present live. T-060's mobile burger/panel confirmed still 44×44 and still opens cleanly over the refreshed homepage. Landmarks confirmed (1 h1/banner-header/main/footer); live CLS measured at 0.0025 (close to zero, consistent with the isolated 0 result — the small non-zero delta is expected on a real page with live analytics/consent scripts attaching, not a regression).
+
+```text
+T-062 regressions: 0
+```
 
 **Acceptance Criteria:**
 - [x] Homepage SearchBar overflow fixed (320px, root cause documented, all 4 locales)
@@ -1491,8 +1497,8 @@ Known pre-existing SearchBar 320px overflow: unchanged, deferred
 - [x] Four locales verified at 6 breakpoints
 - [x] Accessibility: landmarks, heading hierarchy, keyboard operability, touch targets, no colour-only state
 - [x] Performance impact measured (CLS/LCP/bundle/requests)
-- [ ] Live production verification — not yet run (pending merge)
-- [ ] Independent review — pending
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
 
 ---
 
