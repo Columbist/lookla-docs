@@ -1361,7 +1361,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
 
 - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-061** (shifted again once T-060 was assigned to the Global Shell ticket below) — still not formally reserved.
+- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-063** (shifted again — T-061 collided with the incoming "Homepage Visual Refresh" ticket request, which was assigned **T-062** instead; T-061 itself was never formally reserved, so it's now retired rather than reused) — still not formally reserved.
 - ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
 
 ---
@@ -1457,6 +1457,48 @@ Known pre-existing SearchBar 320px overflow: unchanged, deferred
 - [x] Four locales verified at 6 breakpoints
 - [x] Live production verification — passed on `https://lookla.gr`
 - [x] Independent review — REQUEST CHANGES on round 1 (PR #57), Option 1 fix implemented, **APPROVE** on round 2
+
+---
+
+### T-062 — Homepage Visual Refresh
+**Priority:** P0 (third ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-059 ✅ Visual foundations, T-060 ✅ Header, Footer & Global Shell
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #58 (`50c6c87` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
+
+**Ticket-identity note:** requested as "T-061," which collided with an already-existing informal, unreserved backlog placeholder ("map accessibility," see the note further up this document). Per the collision protocol: reported, not reused — assigned **T-062**, the next genuinely unused ID, preserving the requested title/scope verbatim. The map-accessibility placeholder's own informal working number shifted again, to T-063.
+
+**Scope:** `app/[locale]/page.tsx`, `components/SearchBar.tsx`, `components/CategoryGrid.tsx`, `components/AreaGrid.tsx`, and a one-value extension to `components/ui/Icon.tsx`'s `IconSize` enum (+28, for the category grid's larger visual anchor). Direction B tokens applied; emoji replaced with `lucide-react`; the known homepage `SearchBar.tsx` 320px overflow fixed (required defect fix per the ticket). Search-results page, `SalonCard` (global), salon-detail, and the T-060 shell are untouched. Full contract, imagery decision, and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-062 section.
+
+**Key changes:**
+- **SearchBar 320px overflow — root cause found and fixed:** the input was a `flex-1` item with no `min-width` override; flexbox's default `min-width: auto` refused to let it shrink, pushing the fixed-width submit button 13px past the 320px viewport. Fix: `min-w-0` on the input — the actual, minimal, one-class fix. Everything else in the file is presentation refresh (🔍 emoji → `lucide-react` `Search` icon, real `<label>`, `aria-label` on submit, Direction B tokens, both controls ≥44×44px). Verified 0px overflow at 320px across all 4 locales, down from 13px.
+- **Category emoji → `lucide-react` icons** via the shared `Icon` component (a documented, one-time `IconSize` extension to 28, since the old emoji rendered larger than any existing Icon call site needed). Destinations, category count, and all 4 locale name maps unchanged. Some mappings are necessarily approximate (no literal "nail polish"/"razor" glyph exists in Lucide) but none are misleading — the visible label, not the icon, identifies the category.
+- **Area discovery:** token-only refresh (no emoji existed here). `area_select` event shape/call-site/count unchanged — re-verified live via `gtag()`-call interception (fires exactly once per click).
+- **Hero:** legacy `bg-gradient-to-br from-pink-50 to-purple-50` full-hero wash replaced with a restrained, non-photographic, zero-network-request composition (two blurred `brand-soft`/`accent-soft` circles, `aria-hidden`). **No licensed image asset exists** (`frontend/public/` has none beyond `robots.txt`/`sitemap.xml`) — using a real crawled salon photo would read as editorial endorsement of one business; recorded as a future, unscheduled content task rather than blocking the ticket. H1/subtitle copy kept unchanged (already states what Lookla is, its geographic scope, and implies breadth); typography switched to T-059's `.text-display`/`.text-body` tokens.
+- **Found and fixed a real pre-existing false claim:** the "How it works" section's step 2 read "Book" / "Choose a time and book online" (and equivalent Greek/Russian/Ukrainian) — directly contradicting the fact that Lookla has no booking functionality (T-009/T-010 removed the last fake booking CTAs). Fixed narrowly to "Choose" / "Pick the salon or professional that suits you, then contact them directly" in all 4 locales (string values only, key names unchanged); step 3's copy was also adjusted to remove an now-orphaned "appointment" reference. How-it-works icons migrated off emoji too (🔍📅✨ → `Search`/`CheckCircle2`/`Sparkles`).
+- Section containers now consume T-060's previously-unconsumed `max-w-shell-grid`/`max-w-shell-reading` tokens — the first page to actually adopt them.
+- IA unchanged (hero → categories → areas → how-it-works) — already matched Direction B's preferred structure; nothing removed, nothing added.
+
+**Verification:** 53 new tests + 1 pre-existing T-059 `Icon.test.tsx` assertion updated for the `IconSize` extension. Full suite: 905/905 passing (all T-042–T-060 regression suites green, unmodified). Lint/build clean. Isolated Playwright: 4 locales × 6 breakpoints (24 combinations) — 0px overflow everywhere (down from 13px at 320px), correct landmarks, ≥44×44 touch targets throughout, zero console/hydration errors; plus focus-state, reduced-motion, mobile-nav-over-homepage, category/area navigation, search-submission, and `area_select`-dedup checks. Accessibility: logical heading hierarchy (H1→H2×3→H3×3), no colour-only state, no duplicated/indistinguishable link names. Performance (isolated): CLS 0, LCP element is the H1 text (no image on the critical path — none exists on the page), homepage bundle +0.4kB (5.16kB→5.56kB), zero new network requests.
+
+**Live production verification (`https://lookla.gr`, 2026-07-28, post-deploy):** all 4 locales × {320, 375, 390, 768, 1024, 1440}px — zero horizontal overflow at every combination (the 320px overflow fix confirmed live, not just isolated), search input never overlaps the submit button, zero console/hydration errors. Enter and the submit button each navigate to `/search?q=...` exactly once, confirmed separately. All 10 category tiles present with the expected slugs, icons `aria-hidden` (never contribute to accessible names), accessible names are clean text with no emoji. `area_select` fires exactly once per click, confirmed live via `gtag()`-call interception. No booking/appointment language and no unsupported verification/trust claim anywhere on the homepage; the "How it works" step-2 fix ("Choose" + "contact them directly") confirmed present live. T-060's mobile burger/panel confirmed still 44×44 and still opens cleanly over the refreshed homepage. Landmarks confirmed (1 h1/banner-header/main/footer); live CLS measured at 0.0025 (close to zero, consistent with the isolated 0 result — the small non-zero delta is expected on a real page with live analytics/consent scripts attaching, not a regression).
+
+```text
+T-062 regressions: 0
+```
+
+**Acceptance Criteria:**
+- [x] Homepage SearchBar overflow fixed (320px, root cause documented, all 4 locales)
+- [x] Homepage category emoji replaced with the Lucide icon system
+- [x] No booking/verification/statistics claim beyond what the product truthfully supports (found and fixed a pre-existing false booking claim)
+- [x] Search-results page, SalonCard (global), and salon-detail not redesigned
+- [x] No backend/database/API/ranking/search-semantics change
+- [x] No new or renamed GA4 event; `area_select` shape and dedup behaviour unchanged
+- [x] T-060 shell preserved (Header/Footer/landmarks untouched, re-verified)
+- [x] Four locales verified at 6 breakpoints
+- [x] Accessibility: landmarks, heading hierarchy, keyboard operability, touch targets, no colour-only state
+- [x] Performance impact measured (CLS/LCP/bundle/requests)
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
 
 ---
 
