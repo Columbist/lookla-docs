@@ -1383,7 +1383,7 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 ### T-059 — Visual Foundations: Tokens, Typography & Icon System
 **Priority:** P0 (first ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-042 ✅, T-054 ✅, T-055 ✅, T-056 ✅, T-057 ✅, T-058 ✅ (functional/accessibility/analytics foundation); Visual Baseline Audit (2026-07-27/28, inventory-only) for the approved Direction B token proposal
-**Status:** Implemented (branch `feat/T-059-visual-foundations`), pending independent review.
+**Status:** ✅ Completed. Merged via PR #56, deployed to production (`beauty_web` rebuilt and restarted alone — no other service touched), live production verification passed.
 
 **Scope:** semantic colour/shape/depth tokens, a self-hosted Inter typeface with verified 4-locale glyph coverage, one icon system (`lucide-react`), a shared `Button`/`Icon` primitive pair, and a shared focus-ring class — established as CSS custom properties (`app/globals.css`) aliased into Tailwind (`tailwind.config.ts`), with zero duplication across CSS/Tailwind/TypeScript. No page-level redesign. Full specification, token table, contrast matrix, and migration ownership map: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
 
@@ -1402,12 +1402,12 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 - [x] No page-level redesign; homepage/search/SalonCard/salon-detail/header/footer/cookie-UI structurally untouched
 - [x] All protected contracts (search, SalonCard, salon detail, analytics, consent, accessibility) verified unaffected
 - [x] Performance impact measured and bounded (7 woff2 files, ~218KB total build output, self-hosted, no new blocking runtime request)
-- [ ] Live production verification — pending deploy
-- [ ] Independent review — pending
+- [x] Live production verification — passed on `https://lookla.gr`, see below
+- [x] Independent review — approved (PR #56)
 
----
+**Live production verification (`https://lookla.gr`, 2026-07-28):** verified against production directly. All 4 locales × {320, 375, 768, 1024, 1440}px on `/design-system-preview`: Inter applied, zero runtime requests to `fonts.googleapis.com`/`fonts.gstatic.com` (confirmed self-hosted), no horizontal overflow, headings render in clean line-height multiples at every width (no diacritic-clipping signal — the first check attempt used an overly strict heuristic that flagged 320px's legitimate 4-line wrap as a false positive; corrected to check for clean whole-line multiples instead of an arbitrary ratio ceiling), `noindex` meta present, 28 token swatches render, buttons meet 44px, focus-visible produces a real 2px solid outline in the `--focus` colour. Font delivery: exactly 4 same-origin `.woff2` files loaded on the real homepage, zero external font requests. CLS measured at 0.0028 (well under the 0.1 threshold) on the real homepage. GA4/consent/T-058: `search_results_view` still fires exactly once on a fresh load, T-056 restoration still restores 48/48 cards after Back, and T-058's dedup still holds (zero duplicate `search_results_view` after Back) — confirmed live, not just via the existing test suite.
 
-## EPIC-10 — Translation QA
+**One finding, confirmed pre-existing (not a T-059 regression):** the header's mobile-menu button measures 40×40px, short of the 44×44px target. Verified byte-for-byte against the pre-T-059 source (`git show`) that this is unchanged — the old inline `<svg className="w-6 h-6">` (24px) inside a `p-2` (8px padding) button produces the identical 40px math as the new `<Icon size={24}>` swap. T-059's icon migration was a glyph-source swap only, deliberately not a sizing change (matching its own non-goals). Flagged here as a concrete input for the next ticket (Header/Footer & Global Shell visual refresh), not fixed under T-059.
 
 ### T-032 — Manual Russian translation quality review
 **Priority:** P1 | **Owner:** OPS | **Estimate:** 2h | **Epic:** EPIC-10

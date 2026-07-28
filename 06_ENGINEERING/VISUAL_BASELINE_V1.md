@@ -174,6 +174,7 @@ Deliberately not generalized further — no abstract component library, no prema
 - 32 `focus:ring-2` / 36 `focus:ring-pink-*` occurrences — not migrated to `.focus-ring-token`.
 - 3 unique literal hex colours outside the token system (`#2563eb`, `#3b82f6`, `#db2777`) — not removed.
 - ~118 raw emoji/symbol-range character occurrences across 21 files — only the Header's 2 removed; see the icon migration table above for full disposition.
+- **Header mobile-menu touch target is 40×40px, short of 44×44** (found during T-059's live production verification, 2026-07-28). Confirmed pre-existing and byte-identical before/after T-059's icon migration (`git show` comparison: the old inline `w-6 h-6` SVG inside `p-2` padding produces the same 40px math as the new `Icon size={24}` swap) — not a regression, out of T-059's scope (a glyph-source swap, deliberately not a sizing change). Concrete input for the Header/Footer & Global Shell ticket.
 
 ## Protected contracts — explicitly verified unaffected
 
