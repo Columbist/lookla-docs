@@ -1,0 +1,1082 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 5ec57bd..d525caf 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1361,7 +1361,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
+ Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+ 
+ - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
+-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-060** (shifted from the earlier T-059 placeholder once T-059 was assigned to Visual Foundations below) — still not formally reserved.
++- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-061** (shifted again once T-060 was assigned to the Global Shell ticket below) — still not formally reserved.
+ - ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
+ 
+ ---
+@@ -1407,7 +1407,49 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
+ 
+ **Live production verification (`https://lookla.gr`, 2026-07-28):** verified against production directly. All 4 locales × {320, 375, 768, 1024, 1440}px on `/design-system-preview`: Inter applied, zero runtime requests to `fonts.googleapis.com`/`fonts.gstatic.com` (confirmed self-hosted), no horizontal overflow, headings render in clean line-height multiples at every width (no diacritic-clipping signal — the first check attempt used an overly strict heuristic that flagged 320px's legitimate 4-line wrap as a false positive; corrected to check for clean whole-line multiples instead of an arbitrary ratio ceiling), `noindex` meta present, 28 token swatches render, buttons meet 44px, focus-visible produces a real 2px solid outline in the `--focus` colour. Font delivery: exactly 4 same-origin `.woff2` files loaded on the real homepage, zero external font requests. CLS measured at 0.0028 (well under the 0.1 threshold) on the real homepage. GA4/consent/T-058: `search_results_view` still fires exactly once on a fresh load, T-056 restoration still restores 48/48 cards after Back, and T-058's dedup still holds (zero duplicate `search_results_view` after Back) — confirmed live, not just via the existing test suite.
+ 
+-**One finding, confirmed pre-existing (not a T-059 regression):** the header's mobile-menu button measures 40×40px, short of the 44×44px target. Verified byte-for-byte against the pre-T-059 source (`git show`) that this is unchanged — the old inline `<svg className="w-6 h-6">` (24px) inside a `p-2` (8px padding) button produces the identical 40px math as the new `<Icon size={24}>` swap. T-059's icon migration was a glyph-source swap only, deliberately not a sizing change (matching its own non-goals). Flagged here as a concrete input for the next ticket (Header/Footer & Global Shell visual refresh), not fixed under T-059.
++**One finding, confirmed pre-existing (not a T-059 regression):** the header's mobile-menu button measures 40×40px, short of the 44×44px target. Verified byte-for-byte against the pre-T-059 source (`git show`) that this is unchanged — the old inline `<svg className="w-6 h-6">` (24px) inside a `p-2` (8px padding) button produces the identical 40px math as the new `<Icon size={24}>` swap. T-059's icon migration was a glyph-source swap only, deliberately not a sizing change (matching its own non-goals). Flagged as a concrete input for T-060, which fixes it (see below).
++
++---
++
++### T-060 — Header, Footer & Global Shell Visual Refresh
++**Priority:** P0 (second ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-059 ✅ Visual Foundations
++**Status:** ✅ Completed. Merged via PR #57, deployed to production (`beauty_web` rebuilt and restarted alone — no other service touched), live production verification passed.
++
++**Scope:** applies Direction B tokens to the shared `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` components and the `[locale]/layout.tsx` shell wrapper. Fixes the known 40×40 burger touch-target gap (now 44×44), adds programmatic active-nav-state, keyboard/focus lifecycle for the mobile menu, and a query-preservation bug found live in production (switching locale previously dropped `?area=...&view=map`-style filter state entirely). No homepage/search/SalonCard/salon-detail content touched. Full contract, ownership map, and legacy-boundary report: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
++
++**Inventory finding:** the "global shell" is not actually global today — `Header.tsx` is rendered only by the homepage; search and salon-detail pages each maintain their own independent inline top bars (search's is a plain `<div>`, zero banner landmark; salon detail has its own minimal `<header>`). T-060 deliberately did not unify these — doing so requires editing page-specific files, out of scope for a shell-only ticket. Deferred to each page's own visual-refresh ticket / the final consistency pass.
++
++**Key fixes:**
++- Burger touch target: `p-2` (40×40) → `p-2.5` (44×44), no icon-size change.
++- Burger accessible name: was a hardcoded English `"Menu"` string regardless of locale — now genuinely localized (`nav.menu`, added to all 4 locale files).
++- **No `aria-haspopup`** on the burger — the T-057 lesson applied explicitly (`"true"` is spec-equivalent to `"menu"`, would misrepresent a plain nav disclosure).
++- Mobile menu classified as an inline disclosure (not an overlay) after inspection — Escape closes + returns focus (T-057 pattern), deliberately no outside-click handler (documented reasoning: no overlaid content to dismiss), no body-scroll lock, no focus trap.
++- **Locale-switch query-loss bug fixed:** `router.replace(pathname, {locale})` dropped the query string because next-intl's `usePathname()` is query-free by design; new `lib/localeSwitchHref.ts` re-attaches `useSearchParams()` before the swap. Same `router.replace()` call, so T-056's entry-id mechanism is unaffected.
++- Active nav state: new `lib/activeRoute.ts`, `aria-current="page"` plus a non-colour cue (border-bottom desktop / background mobile) — never colour-only.
++- Sticky-footer shell (`flex min-h-screen flex-col` + a `flex-1` wrapper) so short pages don't leave the footer floating. Deliberately a plain `<div>`, not `<main>` — wrapping `{children}` in `<main>` would have silently stripped `role="banner"` from the homepage/salon-detail's own nested `<header>` elements per the HTML-AAM implicit-role-suppression rule. Deferred to the final consistency-pass ticket.
++- All footer links/language-switcher buttons brought to 44px (were ~20px tall / ~15-19px wide).
++
++**Verification:** 832/832 tests passing (57 new; all pre-existing T-042–T-059 suites unchanged). One pre-existing test bug found and fixed as a direct consequence (`lib/cookieConsentUi.test.ts`'s file-exclusion regex excluded `.test.ts` but not `.test.tsx`, causing a false positive against the new `Footer.test.tsx`). Lint/build clean. Isolated + live production verification (4 locales × 6 breakpoints): burger 44×44 confirmed everywhere, full keyboard/Escape/focus lifecycle confirmed, query-preservation fix confirmed working live (`?area=athens-center&view=map` now survives a locale switch), all footer targets ≥44px, T-054/T-056 protected contracts re-verified live and unaffected.
++
++**One finding, confirmed unrelated to T-060:** a horizontal overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button — verified byte-identical on current production, independent of any shell file. Flagged for the homepage visual-refresh ticket.
++
++**Acceptance Criteria:**
++- [x] Burger touch target ≥44×44 (was 40×40)
++- [x] Burger accessible name localized, `aria-expanded`/`aria-controls` correct, no `aria-haspopup`
++- [x] Escape closes the mobile menu and returns focus to the trigger
++- [x] Active route programmatically exposed (`aria-current`), never colour-only
++- [x] Locale switch preserves query/filter state (found-live bug, fixed)
++- [x] Footer legal links, cookie settings, and all destinations preserved
++- [x] No homepage/search/SalonCard/salon-detail content redesigned
++- [x] T-056 restoration, T-057 control semantics, T-058 dedup all re-verified unaffected
++- [x] Four locales verified at 6 breakpoints
++- [x] Live production verification — passed on `https://lookla.gr`
++- [x] Independent review — approved (PR #57)
++
++---
++
++## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+ **Priority:** P1 | **Owner:** OPS | **Estimate:** 2h | **Epic:** EPIC-10
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+index 805b719..9b9283c 100644
+--- a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -1,6 +1,6 @@
+ # Visual Baseline v1 — foundation specification
+ 
+-**Status:** foundation laid by T-059 (tokens, typography, icon system). Not yet the complete Visual Baseline — page-level surfaces are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
++**Status:** foundation laid by T-059 (tokens, typography, icon system) and T-060 (global shell: header, footer, mobile navigation, language selector). Not yet the complete Visual Baseline — homepage, search shell, SalonCard, and salon-detail content are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
+ 
+ **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
+ 
+@@ -158,14 +158,114 @@ Deliberately not generalized further — no abstract component library, no prema
+ 
+ | Surface | Owner ticket | Notes |
+ |---|---|---|
+-| Header (full: logo colour, nav links, desktop CTA colours) | Header/footer global-shell ticket | T-059 only touched the menu icon glyph |
+-| Footer | Header/footer global-shell ticket | Untouched by T-059 |
+-| Homepage (hero, category/area tiles, "how it works") | Homepage visual refresh | Untouched by T-059; includes the "Book" step copy fix flagged by the audit |
++| Header (full: logo colour, nav links, desktop CTA colours) | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
++| Footer | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
++| Homepage (hero, category/area tiles, "how it works") | Homepage visual refresh | Untouched by T-059/T-060; includes the "Book" step copy fix flagged by the audit, and the SearchBar 320px overflow found during T-060 verification (see below) |
+ | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | Search shell visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder (known bug, bundled here per the user's own direction) |
+ | SalonCard | SalonCard visual refresh | Untouched by T-059 |
+ | Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
+ | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+ 
++## T-060 — Global shell (header, footer, mobile navigation, language selector)
++
++**Scope:** the shared `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` components and the `[locale]/layout.tsx` shell wrapper — Direction B tokens, the 40×40→44×44 burger fix, keyboard/focus lifecycle, programmatic active-route state, and a query-preservation bug fix. No homepage/search/SalonCard/salon-detail content was touched.
++
++### Inventory finding: "global shell" is not actually global today
++
++`Header.tsx` is rendered **only by the homepage** (`app/[locale]/page.tsx`). The search page and salon-detail page each maintain their own, independent, inline top-bar markup:
++- `app/[locale]/search/page.tsx` — a plain `<div>` (not a `<header>` element at all — zero banner landmark on `/search` today), containing the search toolbar (T-057's scope, untouched).
++- `app/[locale]/salons/[slug]/SalonDetailClient.tsx` — its own `<header>` (back arrow + wordmark only, no nav, no burger).
++
++T-060 did **not** unify these three patterns into one — doing so would mean editing search/salon-detail page files (explicitly out of scope: "do not redesign search content" / "do not redesign salon-detail content"), and inserting the full nav header into pages that don't already render it would change their first-viewport layout, which is page-level impact a shell-only ticket must not cause. `Footer.tsx` (rendered by the shared layout) and `Header.tsx` (homepage-only) are refreshed as the canonical shell components; the other two inline headers remain their own pages' responsibility.
++
++### Navigation route matrix (before = after — no route changed)
++
++| Destination | Path | Locale-prefixed | Notes |
++|---|---|---|---|
++| Home | `/` (`el`), `/en`, `/ru`, `/uk` | Yes (as-needed) | Logo/home link, unchanged |
++| Search | `/search` | Yes | Nav item, unchanged |
++| Professionals | `/masters` | Yes | Nav item, unchanged |
++| Login | `/login` | Yes | Unchanged |
++| Register | `/register` | Yes | Unchanged |
++| Privacy | `/privacy` | Yes | Footer, unchanged |
++| Cookie Policy | `/cookies` | Yes | Footer, unchanged |
++| Cookie settings | (in-page event, no route) | — | Footer button, unchanged |
++
++Zero routes added, removed, or renamed. Greek `defaultLocale`/`localePrefix: 'as-needed'` behaviour is untouched (no change to `i18n/routing.ts`).
++
++### Global container contract (Step 3)
++
++Three named `maxWidth` aliases added to `tailwind.config.ts` — `shell-grid` (72rem/1152px, matches today's `max-w-6xl`: homepage sections, search grid), `shell-content` (56rem/896px, matches `max-w-4xl`: salon detail, footer link row), `shell-reading` (48rem/768px, matches `max-w-3xl`: legal pages). **Purely additive infrastructure** — no existing page was switched to consume these under T-060, matching T-059's own "tokens available, not yet consumed" precedent. Verified via production measurement that these three values are the actual widths already in use (1152px/896px/768px at a 1440px viewport).
++
++### Desktop header visual contract
++
++- Surface: `bg-surface` / `border-border` (was `bg-white`/`border-gray-100`).
++- Brand: `text-brand` (was `text-pink-600`).
++- Nav links: `text-text-secondary`, hover `text-brand`; each link's clickable box is the full header height (`h-full` inside a `h-14` header, ≈57px) via `inline-flex items-center`, not just its text line — clears 44px without any visible size change to the label.
++- Auth buttons (Login/Register): `min-h-[44px]`, token colours, unchanged destinations/labels.
++- Focus: every interactive element carries the shared `.focus-ring-token` class from T-059.
++
++### Active navigation state (Step 5)
++
++New `lib/activeRoute.ts` (`isActiveRoute(pathname, target)`): exact match or `target/`-prefixed nested match, using next-intl's own `usePathname()` (already locale- and query-stripped, so this needs no locale/query handling itself). Applied to both nav items (`/search`, `/masters`) with `aria-current="page"` **plus** a non-colour cue — a `border-b-2 border-brand` underline on desktop, a `bg-brand-soft` background on the mobile panel — satisfying "not colour-only." The logo/home link is never marked current. A salon-detail page (`/salons/[slug]`) is correctly never treated as "under" `/search`, since it's its own route, not nested.
++
++### Mobile header and burger (Step 6)
++
++**Fixed the known 40×40 finding:** `p-2` (8px) → `p-2.5` (10px) padding around the unchanged 24px icon = 44×44 total, no icon-size change. Verified via production measurement before (40×40, byte-identical to pre-T-059) and after (44×44) at 320/375px.
++
++- `aria-label={t('menu')}` — now genuinely localized (previously a hardcoded English `"Menu"` string regardless of locale; new `nav.menu` key added to all 4 locale files).
++- `aria-expanded={open}`, `aria-controls={mobileMenuId}` (stable `useId()`-generated id, matching the panel's own `id`).
++- **Deliberately no `aria-haspopup`** — the T-057 lesson applied explicitly: `"true"` is spec-equivalent to `"menu"` and would misrepresent a plain navigation disclosure.
++- The accessible name stays constant across open/closed state (`aria-expanded` alone communicates state), matching the T-057 precedent for the filter trigger.
++
++### Mobile navigation panel semantics (Step 7)
++
++**Inspected first, then classified:** the existing `{open && (...)}` conditional render is an **inline disclosure** — it renders in normal document flow directly below the header row, pushing page content down. It is not an overlay, drawer, or modal (no `position: fixed`/`absolute` anywhere in it). This is the simplest accurate model and was preserved as-is.
++
++- **Open:** native `<button>` Enter/Space activation (no custom keydown handler needed for opening).
++- **Escape:** closes the panel and returns focus to the burger trigger — the same pattern established in T-057 for the filter popover. Never mutates navigation state, never fires an analytics event, never propagates into unrelated global shortcuts.
++- **Navigation:** activating any mobile link closes the panel (`onClick={() => setOpen(false)}`) before the route change completes.
++- **Outside interaction:** **deliberately no outside-click handler**, and this is a documented decision, not an oversight — an inline disclosure has no "outside content" being visually obscured that would need an auto-dismiss affordance (unlike T-057's absolutely-positioned filter popover, where outside-click made obvious sense). If a future ticket converts this into an overlay/drawer, outside-click should be reconsidered at that point.
++- **Body scroll:** never locked. The page simply grows taller while the menu is open — confirmed via inspection, no scroll-lock logic exists or was added.
++- **Focus:** no focus trap (correctly not needed for a non-modal disclosure); no focus loss to `<body>` at any point in the open/Escape/navigate lifecycle.
++
++### Language selector (Step 8)
++
++**Classified as:** a group of direct `<button>` elements calling `router.replace()` — not a native `<select>`, not a custom combobox, not a disclosure. Preserved as-is; no pattern change.
++
++**Found and fixed a real production bug:** switching locale previously dropped the entire query string — confirmed live before the fix (`/en/search?area=athens-center&view=map` → `/ru/search`, filters and view state silently lost) because next-intl's `usePathname()` is query-string-free by design and the old code passed it straight to `router.replace()` with nothing else attached. New `lib/localeSwitchHref.ts` (`buildLocaleSwitchPath`) re-attaches `useSearchParams().toString()` before the locale swap. Still the same `router.replace()` call (never `push`) — T-056's entry-id mechanism is unaffected either way, since this changes only the target *path string*, not the navigation *method*.
++
++- Current locale: `aria-current="true"` (new) plus the existing colour/weight distinction — no longer colour-only.
++- Touch target: `min-w-[44px] min-h-[44px]` (previously bare text, ~15-19px wide).
++- Tokens: `text-brand`/`text-text-muted` (was `text-pink-600`/`text-gray-400`).
++- Labels remain the existing plain 2-letter uppercase codes (`EL`/`EN`/`RU`/`UK`) — no flags, no full names, unchanged content decision.
++
++### Footer visual contract (Step 9)
++
++Tokens applied (`bg-surface`/`border-border`/`text-text-secondary`/`text-text-muted`), every link/button given `min-h-[44px]` (previously ~20px tall, confirmed via production measurement), shared focus-ring token added. All existing destinations preserved verbatim — Privacy, Cookie Policy, Cookie settings (still gated on `isAnalyticsConsentFeatureEnabled()`), copyright line, language switcher. No address, support channel, social link, or newsletter signup added — none existed before, none added now.
++
++### Page transition / sticky footer (Step 10)
++
++`[locale]/layout.tsx`'s `<body>` is now `flex min-h-screen flex-col`, with a `flex-1` wrapper around `{children}` so `Footer` sits naturally at the bottom of short pages. **Deliberately a plain `<div>`, not `<main>`:** the homepage and salon-detail page each render their own `<header>` as the first child inside `{children}` (Header.tsx isn't invoked from this shared layout — see the inventory finding above). Per the HTML-AAM spec, a `<header>` loses its implicit `role="banner"` when nested inside a `<main>` (or `article`/`aside`/`nav`/`section`) ancestor. Wrapping `{children}` in a real `<main>` would have silently stripped the banner landmark from those two pages as an unintended side effect of a shell-only change — worse than not adding a `<main>` landmark at all. A genuine sitewide `<main>` requires each page's own header markup to either move outside it or gain an explicit `role="banner"`, which is page-level work; **deferred to the final Visual Baseline v1 consistency-pass ticket**, which is explicitly scoped to touch every page's landmark structure. `CookieConsent` (`position: fixed`) is entirely unaffected by this change, confirmed by inspection. Every current page still sets its own `min-h-screen` on its own root div (unchanged, page-level content) — so today's practical footer-position effect is limited until each page's future ticket drops that now-redundant class; documented as a known transitional state, not a bug.
++
++### Icon migration (Step 11)
++
++No new icons beyond what T-059 already migrated (`Menu`/`X`, both already in `Header.tsx`) — same 2-icon Lucide footprint, unchanged bundle impact. `Footer`/`LanguageSwitcher` have no icons. The mobile nav links' old decorative emoji (💇💅) were removed rather than replaced with new icons — this makes mobile nav text-only, matching the desktop nav's own existing (icon-free) treatment, rather than introducing a mobile-only iconography decision asymmetric with desktop.
++
++### Performance (Step 17)
++
++- Client/server boundary unchanged: `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` were already `'use client'` before T-060 (mobile-menu state, cookie-settings handler, router hook respectively) — no new client component was introduced.
++- CSS bundle: ~48KB → ~52KB (+4KB, from the new token-class usage in Header/Footer/LanguageSwitcher plus the 3 new `maxWidth` aliases).
++- Homepage JS: 7.31kB → 7.72kB (+0.41kB, from `useId`/`isActiveRoute`/the Escape-lifecycle effect).
++- Zero new npm dependencies.
++- No runtime network request added (font/icon delivery unchanged from T-059).
++
++### Isolated + live verification results
++
++4 locales × {320, 375, 390, 768, 1024, 1440}px: burger 44×44 confirmed at every mobile width, `aria-expanded`/`aria-controls`/no-`aria-haspopup` confirmed, mouse-open/keyboard-Enter-open/Escape-close/focus-return/link-navigation-closes-panel all confirmed at every locale, zero console/hydration errors, no horizontal overflow from anything the shell touched, all 6 footer targets meet 44px at both 375px and 1440px. Active-nav-state confirmed (not marked current on the homepage; confirmed absent on `/search` since Header isn't rendered there). The locale-switch query-preservation fix confirmed working end-to-end: `?area=athens-center&view=map` now survives an `en`→`ru` switch (previously lost). Protected contracts re-verified live: search initial load (24 cards) and T-056 Back-restoration (48/48 cards) both unaffected.
++
++**One finding, confirmed unrelated to T-060:** a horizontal-overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button (`px-6 py-3 ... whitespace-nowrap`) extending 13px past the viewport. Verified byte-for-byte identical class list on current production, independent of any T-060 file — `SearchBar.tsx` is homepage content, out of scope. Flagged for the homepage visual-refresh ticket.
++
+ ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
+ 
+ - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
+@@ -173,9 +273,12 @@ Deliberately not generalized further — no abstract component library, no prema
+ - 5 shadow patterns (`shadow-sm` ×13, `shadow` ×2, `shadow-md` ×1, `shadow-lg` ×3, `shadow-xl` ×1) — not consolidated.
+ - 32 `focus:ring-2` / 36 `focus:ring-pink-*` occurrences — not migrated to `.focus-ring-token`.
+ - 3 unique literal hex colours outside the token system (`#2563eb`, `#3b82f6`, `#db2777`) — not removed.
+-- ~118 raw emoji/symbol-range character occurrences across 21 files — only the Header's 2 removed; see the icon migration table above for full disposition.
+-- **Header mobile-menu touch target is 40×40px, short of 44×44** (found during T-059's live production verification, 2026-07-28). Confirmed pre-existing and byte-identical before/after T-059's icon migration (`git show` comparison: the old inline `w-6 h-6` SVG inside `p-2` padding produces the same 40px math as the new `Icon size={24}` swap) — not a regression, out of T-059's scope (a glyph-source swap, deliberately not a sizing change). Concrete input for the Header/Footer & Global Shell ticket.
++- ~118 raw emoji/symbol-range character occurrences across 21 files — Header's original 2 removed by T-059, plus 2 more (mobile nav 💇💅) removed by T-060; see the icon migration table above for full disposition.
++- ~~Header mobile-menu touch target is 40×40px~~ — **fixed by T-060** (now 44×44).
++- **`/search` has zero `<header>`/banner landmark** (found during T-060's inventory, 2026-07-28) — its own top toolbar is a plain `<div>`, not a `<header>` element. Pre-existing, out of scope for a shell-only ticket (fixing it means editing search page markup). Flagged for the search-shell visual-refresh ticket.
++- **No sitewide `<main>` landmark** — deliberately not added by T-060 to avoid silently stripping `role="banner"` from the homepage/salon-detail's own nested `<header>` elements (see the T-060 Step 10 writeup above for the full HTML-AAM reasoning). Deferred to the final Visual Baseline v1 consistency-pass ticket.
++- **Homepage `SearchBar.tsx` overflows horizontally at 320px** (found during T-060's live verification, 2026-07-28) — confirmed pre-existing and unrelated to any shell file (byte-identical class list on current production). Flagged for the homepage visual-refresh ticket.
+ 
+ ## Protected contracts — explicitly verified unaffected
+ 
+-Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any file this ticket changed. Confirmed by: (1) the full pre-existing T-042/T-054/T-055/T-056/T-057/T-058 test suites passing unchanged (775/775 total after T-059's own 96 new tests), since none of their source files were modified; (2) isolated Playwright verification against real production pages (homepage, search) showing zero console/hydration errors and no visual regression beyond the intended font change.
++Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any page-content file. T-060 additionally touched the shared shell (`Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx`/`[locale]/layout.tsx`) and confirmed no regression to any of the above, live: search initial load and T-056 Back-restoration both re-verified against the isolated build after the shell change. Confirmed by: (1) the full pre-existing T-042/T-054/T-055/T-056/T-057/T-058/T-059 test suites passing unchanged (832/832 total after T-060's own new tests), since none of their source files were modified; (2) isolated Playwright verification across 4 locales × 6 breakpoints showing zero console/hydration errors and no visual regression beyond the intended shell changes.
+diff --git a/frontend/app/[locale]/globalShell.test.ts b/frontend/app/[locale]/globalShell.test.ts
+new file mode 100644
+index 0000000..2dca63d
+--- /dev/null
++++ b/frontend/app/[locale]/globalShell.test.ts
+@@ -0,0 +1,55 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'layout.tsx'), 'utf-8');
++
++describe('T-060: global shell — sticky-footer layout', () => {
++  test('body is a flex column, min-h-screen', () => {
++    assert.ok(source.includes('className="flex min-h-screen flex-col"'));
++  });
++
++  test('the children wrapper has flex-1 so Footer sits at the bottom on short pages', () => {
++    assert.ok(source.includes('<div className="flex-1">{children}</div>'));
++  });
++
++  test('Footer and CookieConsent remain siblings of the content wrapper, in the same order as before', () => {
++    const bodyBlock = source.slice(source.indexOf('<body'), source.indexOf('</body>'));
++    const contentIdx = bodyBlock.indexOf('{children}');
++    const footerIdx = bodyBlock.indexOf('<Footer');
++    const consentIdx = bodyBlock.indexOf('<CookieConsent');
++    assert.ok(contentIdx < footerIdx && footerIdx < consentIdx);
++  });
++});
++
++describe('T-060: deliberately no <main> landmark added at the layout level', () => {
++  test('the shell wrapper around {children} is a plain <div>, not <main>', () => {
++    const codeOnly = source.replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
++    assert.ok(!codeOnly.includes('<main'));
++  });
++
++  test('the reasoning (HTML-AAM implicit-role suppression) is documented inline', () => {
++    assert.ok(source.includes('role=banner') || source.includes("role=\"banner\""));
++    assert.ok(source.toLowerCase().includes('html-aam') || source.toLowerCase().includes('implicit role'));
++  });
++});
++
++describe('T-060 regression: font/token setup from T-059 is untouched', () => {
++  test('Inter font loading is unchanged', () => {
++    assert.ok(source.includes("import { Inter } from 'next/font/google';"));
++    assert.ok(source.includes('className={inter.variable}'));
++  });
++
++  test('locale validation (notFound for unsupported locales) is unchanged', () => {
++    assert.ok(source.includes("const locales = ['el', 'en', 'ru', 'uk'];"));
++    assert.ok(source.includes('if (!locales.includes(locale)) notFound();'));
++  });
++
++  test('GoogleAnalytics wiring is unchanged', () => {
++    assert.ok(source.includes('<Suspense fallback={null}>'));
++    assert.ok(source.includes('<GoogleAnalytics />'));
++  });
++});
+diff --git a/frontend/app/[locale]/layout.tsx b/frontend/app/[locale]/layout.tsx
+index 0a06fed..c0692be 100644
+--- a/frontend/app/[locale]/layout.tsx
++++ b/frontend/app/[locale]/layout.tsx
+@@ -52,9 +52,33 @@ export default async function LocaleLayout({
+ 
+   return (
+     <html lang={locale} className={inter.variable}>
+-      <body>
++      {/* T-060: sticky-footer shell. flex-col + this wrapper's flex-1 lets
++          the footer sit naturally at the bottom of short pages instead of
++          floating mid-viewport, without touching any page's own content.
++          Every current page still sets its own min-h-screen on its own
++          root div (unchanged by this ticket — that's page-level content)
++          — so today's practical effect is limited until each page's own
++          future visual-refresh ticket drops that now-redundant class and
++          lets the shell handle sizing; documented as a known transitional
++          state, not a bug.
++
++          Deliberately a plain <div>, not <main>: the homepage and salon-
++          detail page each render their own <header> as the first child
++          inside {children} (Header.tsx isn't invoked from this shared
++          layout — see the T-060 inventory). Per the HTML-AAM spec, a
++          <header> loses its implicit role=banner when nested inside a
++          <main> (or article/aside/nav/section) ancestor. Wrapping
++          {children} in a real <main> here would silently strip the
++          banner landmark from those two pages as an unintended side
++          effect of a shell-only change — worse than not adding a <main>
++          landmark at all. A genuine sitewide <main> landmark requires
++          each page's own header markup to move outside it (or gain an
++          explicit role="banner"), which is page-level work; deferred to
++          the final Visual Baseline v1 consistency-pass ticket, which is
++          explicitly scoped to touch every page's landmark structure. */}
++      <body className="flex min-h-screen flex-col">
+         <NextIntlClientProvider messages={messages}>
+-          {children}
++          <div className="flex-1">{children}</div>
+           <Footer />
+           <CookieConsent />
+           <Suspense fallback={null}>
+diff --git a/frontend/components/Footer.test.tsx b/frontend/components/Footer.test.tsx
+new file mode 100644
+index 0000000..75c362b
+--- /dev/null
++++ b/frontend/components/Footer.test.tsx
+@@ -0,0 +1,62 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'Footer.tsx'), 'utf-8');
++
++describe('T-060: Footer — Direction B tokens applied', () => {
++  test('uses semantic tokens, not the legacy pink-600/gray-* palette', () => {
++    assert.ok(!source.includes('border-gray-100'));
++    assert.ok(!source.includes('bg-white'));
++    assert.ok(!source.includes('text-gray-500'));
++    assert.ok(!source.includes('text-gray-700'));
++    assert.ok(!source.includes('text-gray-400'));
++    assert.ok(source.includes('border-border'));
++    assert.ok(source.includes('bg-surface'));
++    assert.ok(source.includes('text-text-secondary'));
++    assert.ok(source.includes('text-text-muted'));
++  });
++
++  test('uses the shared focus-ring token on every link/button', () => {
++    const count = (source.match(/focus-ring-token/g) || []).length;
++    assert.equal(count, 3, 'expected the 3 footer links/buttons (privacy, cookies, cookie settings) to all carry the focus-ring token');
++  });
++});
++
++describe('T-060: Footer — touch targets', () => {
++  test('every link/button meets the 44px minimum height', () => {
++    const count = (source.match(/min-h-\[44px\]/g) || []).length;
++    assert.equal(count, 3);
++  });
++});
++
++describe('T-060 regression: footer landmark and all destinations preserved', () => {
++  test('the semantic <footer> landmark is unchanged', () => {
++    assert.ok(source.includes('<footer'));
++  });
++
++  test('all 3 legal/consent destinations remain: privacy, cookies, cookie settings', () => {
++    assert.ok(source.includes("href={`${prefix}/privacy`}"));
++    assert.ok(source.includes("href={`${prefix}/cookies`}"));
++    assert.ok(source.includes('onClick={openCookieSettings}'));
++  });
++
++  test('cookie-settings visibility still gates on isAnalyticsConsentFeatureEnabled()', () => {
++    assert.ok(source.includes('{isAnalyticsConsentFeatureEnabled() && ('));
++  });
++
++  test('no fake company address, support channel, social link, or newsletter signup was added', () => {
++    assert.ok(!/address|support@|newsletter|instagram\.com|facebook\.com|twitter\.com|x\.com/i.test(source));
++  });
++
++  test('copyright line text is unchanged (correct legal entity, no new claim)', () => {
++    assert.ok(source.includes('© 2026 Lookla — Beauty Marketplace Greece'));
++  });
++
++  test('LanguageSwitcher wiring is unchanged (surface="footer")', () => {
++    assert.ok(source.includes('<LanguageSwitcher currentLocale={locale} surface="footer" />'));
++  });
++});
+diff --git a/frontend/components/Footer.tsx b/frontend/components/Footer.tsx
+index 96a564d..c33a8da 100644
+--- a/frontend/components/Footer.tsx
++++ b/frontend/components/Footer.tsx
+@@ -14,21 +14,21 @@ export default function Footer() {
+   }
+ 
+   return (
+-    <footer className="border-t border-gray-100 bg-white py-6 px-4">
+-      <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-gray-500">
+-        <Link href={`${prefix}/privacy`} className="hover:text-gray-700">{t('privacy')}</Link>
+-        <Link href={`${prefix}/cookies`} className="hover:text-gray-700">{t('cookies')}</Link>
++    <footer className="border-t border-border bg-surface py-6 px-4">
++      <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-body-sm text-text-secondary">
++        <Link href={`${prefix}/privacy`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('privacy')}</Link>
++        <Link href={`${prefix}/cookies`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('cookies')}</Link>
+         {isAnalyticsConsentFeatureEnabled() && (
+           <button
+             type="button"
+             onClick={openCookieSettings}
+-            className="hover:text-gray-700 underline-offset-2 hover:underline"
++            className="min-h-[44px] px-2 inline-flex items-center hover:text-brand underline-offset-2 hover:underline focus-ring-token"
+           >
+             {t('cookieSettings')}
+           </button>
+         )}
+       </div>
+-      <div className="max-w-6xl mx-auto px-4 pt-4 text-center text-sm text-gray-400">
++      <div className="max-w-6xl mx-auto px-4 pt-4 text-center text-body-sm text-text-muted">
+         © 2026 Lookla — Beauty Marketplace Greece
+         <LanguageSwitcher currentLocale={locale} surface="footer" />
+       </div>
+diff --git a/frontend/components/Header.test.tsx b/frontend/components/Header.test.tsx
+index 343494d..5ef67a0 100644
+--- a/frontend/components/Header.test.tsx
++++ b/frontend/components/Header.test.tsx
+@@ -7,30 +7,133 @@ import { fileURLToPath } from 'node:url';
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const source = fs.readFileSync(path.join(here, 'Header.tsx'), 'utf-8');
+ 
+-describe('T-059: Header — mobile menu icon migrated to the shared Icon system', () => {
+-  test('uses lucide Menu/X via the shared Icon component, not hand-authored inline <svg>', () => {
++describe('T-060: Header — Direction B tokens applied', () => {
++  test('uses semantic tokens, not the legacy pink-600/gray-* Tailwind palette', () => {
++    assert.ok(!source.includes('text-pink-600'));
++    assert.ok(!source.includes('bg-pink-600'));
++    assert.ok(!source.includes('bg-white'));
++    assert.ok(!source.includes('border-gray-100'));
++    assert.ok(source.includes('text-brand'));
++    assert.ok(source.includes('bg-surface'));
++    assert.ok(source.includes('border-border'));
++  });
++
++  test('uses the shared focus-ring token on every interactive element', () => {
++    const focusRingCount = (source.match(/focus-ring-token/g) || []).length;
++    assert.ok(focusRingCount >= 5, `expected the focus ring token on nav links, auth buttons, and the burger, found ${focusRingCount}`);
++  });
++});
++
++describe('T-060: Header — mobile burger, 44x44 (was 40x40)', () => {
++  test('icon size 24, colour is a semantic token, glyphs still come from lucide via the shared Icon component', () => {
+     assert.ok(source.includes("import { Menu, X } from 'lucide-react';"));
+     assert.ok(source.includes("import Icon from '@/components/ui/Icon';"));
+-    assert.ok(!source.includes('<svg'), 'the old inline SVG paths should be fully replaced');
++    assert.ok(source.includes('<Icon icon={X} size={24} className="text-text-secondary" />'));
++    assert.ok(source.includes('<Icon icon={Menu} size={24} className="text-text-secondary" />'));
++  });
++
++  test('padding was increased from p-2 (40px total) to p-2.5 (44px total) — the fix for the known T-059 finding', () => {
++    assert.ok(source.includes('p-2.5'));
++    assert.ok(!/\bp-2\b(?!\.5)/.test(source.replace(/p-2\.5/g, '')), 'no remaining bare p-2 on the burger');
++  });
++
++  test('accessible name is now localized (t(\'menu\')), not the old hardcoded English "Menu" string', () => {
++    assert.ok(source.includes("aria-label={t('menu')}"));
++    assert.ok(!/aria-label="Menu"/.test(source));
++  });
++
++  test('exposes aria-expanded bound to state', () => {
++    assert.ok(source.includes('aria-expanded={open}'));
++  });
++
++  test('exposes aria-controls referencing a stable useId()-generated id, matching the panel\'s own id', () => {
++    assert.ok(source.includes('const mobileMenuId = useId();'));
++    assert.ok(source.includes('aria-controls={mobileMenuId}'));
++    assert.ok(source.includes('id={mobileMenuId}'));
++  });
++
++  test('does NOT use aria-haspopup — per the T-057 lesson, "true" is spec-equivalent to "menu" and would misrepresent a plain nav disclosure', () => {
++    assert.ok(!source.includes('aria-haspopup'));
++  });
++
++  test('the accessible name stays constant across open/closed state (aria-expanded alone communicates state, matching the T-057 precedent)', () => {
++    const ariaLabelCount = (source.match(/aria-label=\{t\('menu'\)\}/g) || []).length;
++    assert.equal(ariaLabelCount, 1, 'exactly one aria-label expression, not a conditional open/closed variant');
++  });
++});
++
++describe('T-060: Header — mobile menu keyboard lifecycle', () => {
++  test('Escape closes the menu and returns focus to the burger — same pattern as T-057\'s filter popover', () => {
++    const effect = source.slice(source.indexOf('useEffect(() => {\n    if (!open) return;'), source.indexOf('const navItems ='));
++    assert.ok(effect.includes("e.key === 'Escape'"));
++    assert.ok(effect.includes('setOpen(false);'));
++    assert.ok(effect.includes('burgerRef.current?.focus();'));
++  });
++
++  test('no outside-click handler — documented as deliberate, since the menu is an inline disclosure, not an overlay', () => {
++    assert.ok(!source.includes('mousedown'));
++    assert.ok(source.includes('inline disclosure'));
++  });
++
++  test('Escape never mutates navigation state or fires an analytics event', () => {
++    const effect = source.slice(source.indexOf('useEffect(() => {\n    if (!open) return;'), source.indexOf('const navItems ='));
++    assert.ok(!effect.includes('trackEvent'));
++    assert.ok(!effect.includes('router.'));
++  });
++
++  test('activating a mobile nav link closes the panel (onClick sets open false)', () => {
++    const mobileNavBlock = source.slice(source.indexOf('{open && ('), source.length);
++    const closeOnClickCount = (mobileNavBlock.match(/onClick=\{\(\) => setOpen\(false\)\}/g) || []).length;
++    assert.ok(closeOnClickCount >= 3, `expected every mobile menu link (2 nav items + login + register) to close the panel on click, found ${closeOnClickCount}`);
++  });
++});
++
++describe('T-060: Header — active navigation state', () => {
++  test('imports isActiveRoute and next-intl\'s usePathname to compute current-route state', () => {
++    assert.ok(source.includes("import { isActiveRoute } from '@/lib/activeRoute';"));
++    assert.ok(source.includes("import { usePathname } from '@/i18n/navigation';"));
+   });
+ 
+-  test('icon size (24) and colour (text-gray-700) are unchanged from before the migration — a glyph-source swap only, not a restyle', () => {
+-    assert.ok(source.includes('<Icon icon={X} size={24} className="text-gray-700" />'));
+-    assert.ok(source.includes('<Icon icon={Menu} size={24} className="text-gray-700" />'));
++  test('aria-current="page" is applied conditionally, not statically true/false', () => {
++    assert.ok(source.includes("aria-current={item.active ? 'page' : undefined}"));
+   });
+ 
+-  test('the toggle button keeps its own real accessible name — the icon is not asked to invent one', () => {
+-    assert.ok(source.includes('aria-label="Menu"'));
++  test('active state is NOT colour-only — a border-bottom (desktop) / background (mobile) accompanies the colour change', () => {
++    assert.ok(/border-brand/.test(source));
++    assert.ok(/bg-brand-soft/.test(source));
+   });
+ 
+-  test('regression: brand colour, nav links, and desktop auth buttons are untouched by T-059 (no header redesign)', () => {
+-    assert.ok(source.includes('text-pink-600'), 'T-059 explicitly does not restyle Header brand/nav colour — that is a later ticket');
+-    assert.ok(source.includes('bg-pink-600'));
++  test('the logo/home link is never marked as an active nav item (no aria-current on it)', () => {
++    const logoLine = source.slice(source.indexOf('<Link href={prefix'), source.indexOf('<Link href={prefix') + 200);
++    assert.ok(!logoLine.includes('aria-current'));
++  });
++});
++
++describe('T-060 regression: navigation destinations and analytics untouched', () => {
++  test('nav destinations are unchanged: /search and /masters, same translation keys', () => {
++    assert.ok(source.includes("`${prefix}/search`"));
++    assert.ok(source.includes("`${prefix}/masters`"));
+     assert.ok(source.includes("t('salons')"));
++    assert.ok(source.includes("t('masters')"));
++  });
++
++  test('login/register destinations and labels are unchanged', () => {
++    assert.ok(source.includes("`${prefix}/login`"));
++    assert.ok(source.includes("`${prefix}/register`"));
++    assert.ok(source.includes("t('login')"));
+     assert.ok(source.includes("t('register')"));
+   });
+ 
+-  test('regression: LanguageSwitcher wiring is untouched', () => {
++  test('no trackEvent call was added to Header itself (no new shell-level analytics)', () => {
++    assert.ok(!source.includes('trackEvent'));
++  });
++
++  test('LanguageSwitcher wiring is unchanged (surface="header")', () => {
+     assert.ok(source.includes('<LanguageSwitcher currentLocale={locale} surface="header" />'));
+   });
++
++  test('logo destination and text are unchanged', () => {
++    assert.ok(source.includes('href={prefix || \'/\'}'));
++    assert.ok(source.includes('>Lookla</Link>'));
++  });
+ });
+diff --git a/frontend/components/Header.tsx b/frontend/components/Header.tsx
+index 923487c..e2a0df9 100644
+--- a/frontend/components/Header.tsx
++++ b/frontend/components/Header.tsx
+@@ -1,68 +1,137 @@
+ 'use client';
+-import { useState } from 'react';
++import { useState, useEffect, useRef, useId } from 'react';
+ import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+ import { Menu, X } from 'lucide-react';
+ import Icon from '@/components/ui/Icon';
+ import LanguageSwitcher from './LanguageSwitcher';
++import { usePathname } from '@/i18n/navigation';
++import { isActiveRoute } from '@/lib/activeRoute';
+ 
++/**
++ * T-060 — global shell: Direction B tokens, Lucide icon, 44px burger
++ * (was 40x40 — see docs/06_ENGINEERING/VISUAL_BASELINE_V1.md), keyboard
++ * lifecycle, and programmatic active-nav-state. Preserves T-059's icon
++ * migration verbatim (Menu/X glyph swap) and only extends it.
++ *
++ * Note: this component is currently only rendered by the homepage —
++ * search and salon-detail pages maintain their own independent inline
++ * headers, untouched by T-060 (page-level content, out of scope). See
++ * the T-060 legacy-boundary report in the spec doc.
++ */
+ export default function Header({ locale }: { locale: string }) {
+   const t = useTranslations('nav');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const [open, setOpen] = useState(false);
++  const pathname = usePathname();
++  const mobileMenuId = useId();
++  const burgerRef = useRef<HTMLButtonElement>(null);
++
++  // T-060: Escape closes the mobile menu and returns focus to its trigger
++  // — the same pattern established in T-057 for the filter popover.
++  // Deliberately no outside-click handler: unlike T-057's absolutely-
++  // positioned overlay popover, this menu is an INLINE disclosure (it
++  // renders in normal document flow below the header row, pushing page
++  // content down — verified via the existing `{open && (...)}` render,
++  // no position:fixed/absolute anywhere), so there is no "outside
++  // content" being visually obscured that would need an auto-dismiss
++  // affordance. Body scroll is intentionally never locked — the page
++  // just grows taller while the menu is open, matching how the rest of
++  // the site already handles the filter popover-free areas.
++  useEffect(() => {
++    if (!open) return;
++    const onKeyDown = (e: KeyboardEvent) => {
++      if (e.key === 'Escape') {
++        setOpen(false);
++        burgerRef.current?.focus();
++      }
++    };
++    document.addEventListener('keydown', onKeyDown);
++    return () => document.removeEventListener('keydown', onKeyDown);
++  }, [open]);
++
++  const navItems = [
++    { href: `${prefix}/search`, label: t('salons'), active: isActiveRoute(pathname, '/search') },
++    { href: `${prefix}/masters`, label: t('masters'), active: isActiveRoute(pathname, '/masters') },
++  ];
+ 
+   return (
+-    <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
++    <header className="bg-surface border-b border-border sticky top-0 z-40">
+       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+-        <Link href={prefix || '/'} className="text-xl font-bold text-pink-600">Lookla</Link>
++        <Link href={prefix || '/'} className="text-xl font-bold text-brand shrink-0">Lookla</Link>
+ 
+-        {/* Desktop nav */}
+-        <nav className="hidden md:flex items-center gap-6 text-sm text-gray-600">
+-          <Link href={`${prefix}/search`} className="hover:text-pink-600">{t('salons')}</Link>
+-          <Link href={`${prefix}/masters`} className="hover:text-pink-600">{t('masters')}</Link>
++        {/* Desktop nav — each link's own clickable box is the header's full
++            57px height (h-14 via items-center on a full-height flex item),
++            not just its text line, so the target comfortably clears 44px
++            without any visible size change to the label itself. */}
++        <nav className="hidden md:flex items-center gap-6 text-body-sm h-full">
++          {navItems.map(item => (
++            <Link
++              key={item.href}
++              href={item.href}
++              aria-current={item.active ? 'page' : undefined}
++              className={`h-full inline-flex items-center border-b-2 focus-ring-token ${item.active ? 'text-brand border-brand font-medium' : 'text-text-secondary border-transparent hover:text-brand'}`}
++            >
++              {item.label}
++            </Link>
++          ))}
+         </nav>
+ 
+-        {/* Desktop auth */}
++        {/* Desktop auth + language */}
+         <div className="hidden md:flex items-center gap-2">
+-          <Link href={`${prefix}/login`} className="text-sm text-gray-600 hover:text-pink-600 px-3 py-1.5">{t('login')}</Link>
+-          <Link href={`${prefix}/register`} className="text-sm bg-pink-600 text-white px-3 py-1.5 rounded-lg hover:bg-pink-700">{t('register')}</Link>
++          <Link href={`${prefix}/login`} className="text-body-sm text-text-secondary hover:text-brand px-3 min-h-[44px] inline-flex items-center focus-ring-token">{t('login')}</Link>
++          <Link href={`${prefix}/register`} className="text-body-sm bg-brand text-text-inverse px-3 min-h-[44px] inline-flex items-center rounded-md hover:bg-brand-hover focus-ring-token">{t('register')}</Link>
++          <LanguageSwitcher currentLocale={locale} surface="header" />
+         </div>
+ 
+-        {/* Mobile burger */}
+-        <button onClick={() => setOpen(!open)} className="md:hidden p-2 rounded-lg hover:bg-gray-100" aria-label="Menu">
++        {/* Mobile burger — 44x44 (was 40x40: 8px padding + 24px icon).
++            p-2.5 (10px) + 24px icon = 44px, no icon-size change. */}
++        <button
++          ref={burgerRef}
++          type="button"
++          onClick={() => setOpen(o => !o)}
++          className="md:hidden p-2.5 rounded-md hover:bg-surface-subtle focus-ring-token"
++          aria-label={t('menu')}
++          aria-expanded={open}
++          aria-controls={mobileMenuId}
++        >
+           {open ? (
+-            <Icon icon={X} size={24} className="text-gray-700" />
++            <Icon icon={X} size={24} className="text-text-secondary" />
+           ) : (
+-            <Icon icon={Menu} size={24} className="text-gray-700" />
++            <Icon icon={Menu} size={24} className="text-text-secondary" />
+           )}
+         </button>
+       </div>
+ 
+-      {/* Mobile menu */}
++      {/* Mobile menu — inline disclosure, not an overlay/drawer (see the
++          Escape-handling comment above for why no outside-click exists). */}
+       {open && (
+-        <div className="md:hidden bg-white border-t border-gray-100 px-4 py-4 space-y-1">
+-          <Link href={`${prefix}/search`} onClick={() => setOpen(false)}
+-            className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 text-base text-gray-700">
+-            💇 {t('salons')}
+-          </Link>
+-          <Link href={`${prefix}/masters`} onClick={() => setOpen(false)}
+-            className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-50 text-base text-gray-700">
+-            💅 {t('masters')}
+-          </Link>
+-          <div className="pt-3 border-t border-gray-100 flex gap-2">
++        <nav id={mobileMenuId} className="md:hidden bg-surface border-t border-border px-4 py-4 space-y-1">
++          {navItems.map(item => (
++            <Link
++              key={item.href}
++              href={item.href}
++              onClick={() => setOpen(false)}
++              aria-current={item.active ? 'page' : undefined}
++              className={`flex items-center gap-3 px-3 min-h-[44px] rounded-md text-base focus-ring-token ${item.active ? 'text-brand font-medium bg-brand-soft' : 'text-text-secondary hover:bg-surface-subtle'}`}
++            >
++              {item.label}
++            </Link>
++          ))}
++          <div className="pt-3 border-t border-border flex gap-2">
+             <Link href={`${prefix}/login`} onClick={() => setOpen(false)}
+-              className="flex-1 py-3 text-center border border-pink-200 text-pink-600 rounded-xl text-base font-semibold hover:bg-pink-50">
++              className="flex-1 min-h-[44px] flex items-center justify-center border border-brand text-brand rounded-md text-base font-semibold hover:bg-brand-soft focus-ring-token">
+               {t('login')}
+             </Link>
+             <Link href={`${prefix}/register`} onClick={() => setOpen(false)}
+-              className="flex-1 py-3 text-center bg-pink-600 text-white rounded-xl text-base font-semibold hover:bg-pink-700">
++              className="flex-1 min-h-[44px] flex items-center justify-center bg-brand text-text-inverse rounded-md text-base font-semibold hover:bg-brand-hover focus-ring-token">
+               {t('register')}
+             </Link>
+           </div>
+           <div className="pt-3 flex justify-center">
+             <LanguageSwitcher currentLocale={locale} surface="header" />
+           </div>
+-        </div>
++        </nav>
+       )}
+     </header>
+   );
+diff --git a/frontend/components/LanguageSwitcher.test.tsx b/frontend/components/LanguageSwitcher.test.tsx
+new file mode 100644
+index 0000000..0c070f9
+--- /dev/null
++++ b/frontend/components/LanguageSwitcher.test.tsx
+@@ -0,0 +1,70 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'LanguageSwitcher.tsx'), 'utf-8');
++
++describe('T-060: LanguageSwitcher — query-preservation fix', () => {
++  test('imports next/navigation\'s useSearchParams and the new buildLocaleSwitchPath helper', () => {
++    assert.ok(source.includes("import { useSearchParams } from 'next/navigation';"));
++    assert.ok(source.includes("import { buildLocaleSwitchPath } from '@/lib/localeSwitchHref';"));
++  });
++
++  test('router.replace is called with the query-preserving path, not the bare pathname', () => {
++    assert.ok(source.includes('router.replace(buildLocaleSwitchPath(pathname, searchParams.toString()), { locale });'));
++    assert.ok(!source.includes('router.replace(pathname, { locale });'), 'the old query-dropping call must be fully replaced');
++  });
++
++  test('still uses router.replace (not push) — T-056 entry-id semantics for the current history entry are unaffected', () => {
++    assert.ok(source.includes('router.replace('));
++    assert.ok(!source.includes('router.push('));
++  });
++});
++
++describe('T-060: LanguageSwitcher — tokens, touch targets, current-locale semantics', () => {
++  test('uses semantic tokens, not the legacy pink-600/gray-400 palette', () => {
++    assert.ok(!source.includes('text-pink-600'));
++    assert.ok(!source.includes('text-gray-400'));
++    assert.ok(source.includes('text-brand'));
++    assert.ok(source.includes('text-text-muted'));
++  });
++
++  test('each locale button meets the 44x44 minimum touch target', () => {
++    assert.ok(source.includes('min-w-[44px] min-h-[44px]'));
++  });
++
++  test('the current locale is identifiable beyond colour alone via aria-current', () => {
++    assert.ok(source.includes("aria-current={l === currentLocale ? 'true' : undefined}"));
++  });
++
++  test('uses the shared focus-ring token', () => {
++    assert.ok(source.includes('focus-ring-token'));
++  });
++
++  test('no flag emoji (Unicode regional-indicator pairs) or flag-image labeling — locale codes remain plain text', () => {
++    assert.ok(!/[\u{1F1E6}-\u{1F1FF}]/u.test(source), 'no regional-indicator flag emoji');
++    assert.ok(!/<img[^>]*flag/i.test(source), 'no flag image');
++  });
++
++  test('type="button" — never accidentally submits a surrounding form', () => {
++    assert.ok(source.includes('type="button"'));
++  });
++});
++
++describe('T-060 regression: consent/analytics semantics for language_change are unchanged', () => {
++  test('the already-active-locale early return still exists, unchanged', () => {
++    assert.ok(source.includes('if (locale === currentLocale) return;'));
++  });
++
++  test('trackEvent(\'language_change\', ...) call site is unchanged in shape', () => {
++    assert.ok(source.includes("trackEvent('language_change', { from_locale: currentLocale as Locale, to_locale: locale as Locale, surface });"));
++  });
++
++  test('all 4 locales and both surfaces (header/footer) remain supported', () => {
++    assert.ok(source.includes("const LOCALES = ['el', 'en', 'ru', 'uk'] as const;"));
++    assert.ok(source.includes("surface: 'header' | 'footer';"));
++  });
++});
+diff --git a/frontend/components/LanguageSwitcher.tsx b/frontend/components/LanguageSwitcher.tsx
+index a66b94f..fc3b13b 100644
+--- a/frontend/components/LanguageSwitcher.tsx
++++ b/frontend/components/LanguageSwitcher.tsx
+@@ -1,7 +1,9 @@
+ 'use client';
+ import { usePathname, useRouter } from '@/i18n/navigation';
++import { useSearchParams } from 'next/navigation';
+ import { trackEvent } from '@/lib/analytics';
+ import type { Locale } from '@/i18n/request';
++import { buildLocaleSwitchPath } from '@/lib/localeSwitchHref';
+ 
+ const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
+ 
+@@ -14,22 +16,33 @@ interface Props {
+ export default function LanguageSwitcher({ currentLocale, surface }: Props) {
+   const router = useRouter();
+   const pathname = usePathname();
++  const searchParams = useSearchParams();
+ 
+   // T-015: selecting the already-active language is not a real choice, so
+   // it must not fire — checked before anything else, including navigation.
++  //
++  // T-060: next-intl's usePathname() is query-string-free by design, so
++  // the query has to be re-attached explicitly — found live on production
++  // that switching locale silently dropped area/view/q/etc. filter state
++  // (e.g. /en/search?area=athens-center&view=map -> /ru/search). This is
++  // the same router.replace() call as before (still replaces the current
++  // history entry, never pushes a new one — T-056's entry-id mechanism is
++  // unaffected either way), only the target path now includes the query.
+   const switchLocale = (locale: string) => {
+     if (locale === currentLocale) return;
+     trackEvent('language_change', { from_locale: currentLocale as Locale, to_locale: locale as Locale, surface });
+-    router.replace(pathname, { locale });
++    router.replace(buildLocaleSwitchPath(pathname, searchParams.toString()), { locale });
+   };
+ 
+   return (
+-    <div className="flex justify-center gap-4 mt-2">
++    <div className="flex justify-center gap-1 mt-2">
+       {LOCALES.map(l => (
+         <button
+           key={l}
++          type="button"
+           onClick={() => switchLocale(l)}
+-          className={`uppercase text-sm ${l === currentLocale ? 'text-pink-600 font-medium' : 'text-gray-400 hover:text-gray-600'}`}
++          aria-current={l === currentLocale ? 'true' : undefined}
++          className={`uppercase text-label min-w-[44px] min-h-[44px] flex items-center justify-center rounded-sm focus-ring-token ${l === currentLocale ? 'text-brand font-semibold' : 'text-text-muted hover:text-text-secondary'}`}
+         >
+           {l}
+         </button>
+diff --git a/frontend/lib/activeRoute.test.ts b/frontend/lib/activeRoute.test.ts
+new file mode 100644
+index 0000000..dbed496
+--- /dev/null
++++ b/frontend/lib/activeRoute.test.ts
+@@ -0,0 +1,31 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { isActiveRoute } from './activeRoute';
++
++describe('T-060: isActiveRoute', () => {
++  test('exact match is active', () => {
++    assert.equal(isActiveRoute('/search', '/search'), true);
++  });
++
++  test('a different route is not active', () => {
++    assert.equal(isActiveRoute('/masters', '/search'), false);
++  });
++
++  test('a nested path under the target is active (prefix rule)', () => {
++    assert.equal(isActiveRoute('/masters/123', '/masters'), true);
++  });
++
++  test('a salon detail page is NOT considered active for "/search" even though it is reachable from search', () => {
++    assert.equal(isActiveRoute('/salons/some-salon-12345', '/search'), false);
++  });
++
++  test('a route that merely starts with the same characters but is not a real nested path is not active (no accidental prefix collision)', () => {
++    // "/searching" starts with "/search" as a raw string but is not "/search" or "/search/..."
++    assert.equal(isActiveRoute('/searching', '/search'), false);
++  });
++
++  test('the homepage root is only active for itself, not for every other route', () => {
++    assert.equal(isActiveRoute('/', '/'), true);
++    assert.equal(isActiveRoute('/search', '/'), false);
++  });
++});
+diff --git a/frontend/lib/activeRoute.ts b/frontend/lib/activeRoute.ts
+new file mode 100644
+index 0000000..ce239d3
+--- /dev/null
++++ b/frontend/lib/activeRoute.ts
+@@ -0,0 +1,18 @@
++/**
++ * T-060 — shared active-navigation-state rule for the global shell.
++ * `pathname` is expected to come from next-intl's own `usePathname()`
++ * (already locale-stripped, already query-string-free), so this never
++ * needs to know about the current locale or any search params itself.
++ *
++ * Rule: exact match, or the target followed by a `/` (a nested route
++ * under it). No nested routes exist under `/search` or `/masters` today
++ * — the prefix rule is here so a future nested route (e.g. `/masters/x`)
++ * is still correctly recognized as "under Professionals" without this
++ * function needing to change. A salon detail page (`/salons/[slug]`) is
++ * deliberately its own route, not nested under `/search`, so it is never
++ * treated as the "Salons & Studios" nav item being active.
++ */
++export function isActiveRoute(pathname: string, target: string): boolean {
++  if (pathname === target) return true;
++  return pathname.startsWith(`${target}/`);
++}
+diff --git a/frontend/lib/cookieConsentUi.test.ts b/frontend/lib/cookieConsentUi.test.ts
+index 52e1436..08a75b1 100644
+--- a/frontend/lib/cookieConsentUi.test.ts
++++ b/frontend/lib/cookieConsentUi.test.ts
+@@ -126,7 +126,7 @@ describe('T-018: no consent-gated content blocking (rejecting analytics must not
+         if (entry.isDirectory()) { walk(rel); continue; }
+         if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+         if (allowed.some(name => rel.includes(name))) continue;
+-        if (rel.endsWith('.test.ts')) continue;
++        if (rel.endsWith('.test.ts') || rel.endsWith('.test.tsx')) continue;
+         const content = fs.readFileSync(path.join(frontendRoot, rel), 'utf-8');
+         if (/getAnalyticsConsent|isAnalyticsConsentFeatureEnabled/.test(content)) offenders.push(rel);
+       }
+diff --git a/frontend/lib/localeSwitchHref.test.ts b/frontend/lib/localeSwitchHref.test.ts
+new file mode 100644
+index 0000000..b307b3c
+--- /dev/null
++++ b/frontend/lib/localeSwitchHref.test.ts
+@@ -0,0 +1,30 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { buildLocaleSwitchPath } from './localeSwitchHref';
++
++describe('T-060: buildLocaleSwitchPath — fixes the found-live query-loss bug', () => {
++  test('a pathname with no query string is returned unchanged', () => {
++    assert.equal(buildLocaleSwitchPath('/search', ''), '/search');
++  });
++
++  test('a query string (without a leading ?) is appended with exactly one ?', () => {
++    assert.equal(buildLocaleSwitchPath('/search', 'area=athens-center&view=map'), '/search?area=athens-center&view=map');
++  });
++
++  test('a query string that already has a leading ? is not double-prefixed', () => {
++    assert.equal(buildLocaleSwitchPath('/search', '?area=athens-center'), '/search?area=athens-center');
++  });
++
++  test('reproduces the exact production bug scenario: /en/search?area=athens-center&view=map switching to ru', () => {
++    // usePathname() from next-intl is already locale-stripped, so the
++    // caller passes "/search", not "/en/search" — this is the input the
++    // router.replace(path, { locale: 'ru' }) call receives.
++    const result = buildLocaleSwitchPath('/search', 'area=athens-center&view=map');
++    assert.equal(result, '/search?area=athens-center&view=map');
++  });
++
++  test('an empty search string never produces a trailing bare "?"', () => {
++    const result = buildLocaleSwitchPath('/', '');
++    assert.ok(!result.endsWith('?'));
++  });
++});
+diff --git a/frontend/lib/localeSwitchHref.ts b/frontend/lib/localeSwitchHref.ts
+new file mode 100644
+index 0000000..b68306a
+--- /dev/null
++++ b/frontend/lib/localeSwitchHref.ts
+@@ -0,0 +1,15 @@
++/**
++ * T-060 — fixes a found-live bug: switching locale via LanguageSwitcher
++ * previously dropped the entire query string (confirmed on production:
++ * `/en/search?area=athens-center&view=map` -> `/ru/search`, filters and
++ * view state silently lost). next-intl's own `usePathname()` is already
++ * query-string-free by design, so the query has to be re-attached
++ * explicitly by the caller before handing the path to the router.
++ *
++ * Pure and dependency-free so the query-preservation logic itself is
++ * directly testable without mocking next-intl's router/pathname hooks.
++ */
++export function buildLocaleSwitchPath(pathname: string, search: string): string {
++  const clean = search.startsWith('?') ? search.slice(1) : search;
++  return clean ? `${pathname}?${clean}` : pathname;
++}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 15bb598..d9c2e56 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -5,7 +5,8 @@
+     "pricing": "Τιμολόγηση",
+     "login": "Σύνδεση",
+     "register": "Εγγραφή",
+-    "search_placeholder": "Υπηρεσία ή τοποθεσία..."
++    "search_placeholder": "Υπηρεσία ή τοποθεσία...",
++    "menu": "Μενού"
+   },
+   "home": {
+     "hero_title": "Βρείτε τον ιδανικό επαγγελματία ομορφιάς",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 1657449..8c81793 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -5,7 +5,8 @@
+     "pricing": "Pricing",
+     "login": "Log in",
+     "register": "Sign up",
+-    "search_placeholder": "Service or location..."
++    "search_placeholder": "Service or location...",
++    "menu": "Menu"
+   },
+   "home": {
+     "hero_title": "Find your perfect beauty professional",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 5bff5b3..ab4b3ab 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -5,7 +5,8 @@
+     "pricing": "Тарифы",
+     "login": "Войти",
+     "register": "Регистрация",
+-    "search_placeholder": "Услуга или город..."
++    "search_placeholder": "Услуга или город...",
++    "menu": "Меню"
+   },
+   "home": {
+     "hero_title": "Найдите своего мастера красоты",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index ec9de56..e016f75 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -5,7 +5,8 @@
+     "pricing": "Тарифи",
+     "login": "Увійти",
+     "register": "Реєстрація",
+-    "search_placeholder": "Послуга або місто..."
++    "search_placeholder": "Послуга або місто...",
++    "menu": "Меню"
+   },
+   "home": {
+     "hero_title": "Знайдіть свого майстра краси",
+diff --git a/frontend/package.json b/frontend/package.json
+index 7f8dd07..25cc6d8 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts lib/colorContrast.test.ts lib/visualBaselineTokens.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx components/Header.test.tsx components/ui/Icon.test.tsx components/ui/Button.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\" \"app/[locale]/design-system-preview/designSystemPreview.test.ts\""
++    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts lib/colorContrast.test.ts lib/visualBaselineTokens.test.ts lib/activeRoute.test.ts lib/localeSwitchHref.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx components/Header.test.tsx components/Footer.test.tsx components/LanguageSwitcher.test.tsx components/ui/Icon.test.tsx components/ui/Button.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\" \"app/[locale]/design-system-preview/designSystemPreview.test.ts\" \"app/[locale]/globalShell.test.ts\""
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
+diff --git a/frontend/tailwind.config.ts b/frontend/tailwind.config.ts
+index fc81d7d..3338580 100644
+--- a/frontend/tailwind.config.ts
++++ b/frontend/tailwind.config.ts
+@@ -56,6 +56,19 @@ const config: Config = {
+       fontFamily: {
+         sans: ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+       },
++      // T-060 — named container-width contract (Step 3 of the Visual
++      // Baseline v1 global-shell ticket). Values match the 3 real widths
++      // already in production use (max-w-6xl/4xl/3xl) — named here so
++      // future page-level tickets can opt into a documented variant
++      // instead of picking a bare Tailwind width ad hoc. Not swept across
++      // any existing page under T-060 — purely additive infrastructure,
++      // matching T-059's own "tokens available, not yet consumed"
++      // precedent. See docs/06_ENGINEERING/VISUAL_BASELINE_V1.md.
++      maxWidth: {
++        "shell-grid": "72rem",    // 1152px — homepage sections, search grid (today's max-w-6xl)
++        "shell-content": "56rem", // 896px — salon detail, footer link row (today's max-w-4xl)
++        "shell-reading": "48rem", // 768px — legal pages (today's max-w-3xl)
++      },
+     },
+   },
+   plugins: [],
