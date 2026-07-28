@@ -1361,8 +1361,49 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
 
 - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes.
-- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27. Map accessibility above remains the next candidate (unofficial working number T-059, not yet reserved).
+- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-060** (shifted from the earlier T-059 placeholder once T-059 was assigned to Visual Foundations below) — still not formally reserved.
+- ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
+
+---
+
+## Visual Baseline v1 (new phase, 2026-07-28)
+
+The current production UI was audited (inventory-only Visual Baseline Audit, 2026-07-27/28 — no code changed) and found to visually communicate "unfinished" through specific, evidenced mechanisms: zero photography anywhere on the homepage, one saturated colour (`pink-600`) simultaneously carrying brand/every action/focus/active state, seven visually identical white boxes stacked on the salon detail page, three unrelated icon systems in simultaneous use (platform emoji, hand-authored SVG, Unicode symbols), and no consolidated spacing/radius/shadow system. Two genuine i18n bugs were also found live in production and are tracked for their respective future page-level tickets (not fixed standalone): a hardcoded Greek `Όλες οι αξιολογήσεις` placeholder in the rating filter regardless of locale, and a hardcoded Greek `+N φωτογραφίες` gallery overlay on the salon detail page regardless of locale.
+
+**Why this phase exists before SQC-01B:** every conversion number the product produces today (`search_results_view → salon_open → contact_action`) is filtered through a UI that visually undermines trust through concrete, specific mechanisms — establishing SQC-01B's ranking baseline against that UI would measure the visual system, not the search relevance it's meant to measure.
+
+**Approved direction:** Direction B — Clean Marketplace (of three audited directions — A/Editorial Beauty, B, C/Friendly Local Discovery). Chosen for its resilience to incomplete data (most listings currently lack a price or verification), lowest implementation risk against the completed T-042–T-058 functional/accessibility contracts, and safest long-term fit for a future owner dashboard and booking flow.
+
+**Sequence (foundational-first, 7 tickets, none redesigning the whole site at once):** (1) visual tokens/typography/icon foundation, (2) header/footer + global shell, (3) homepage, (4) search shell + controls, (5) SalonCard, (6) salon detail, (7) shared async/legal/cookie alignment + final production-baseline verification. The official **Beta Visual Baseline** date (the point after which conversion analytics is treated as measuring the real product, not a visually unfinished one) begins only after ticket 7 deploys — not after ticket 1.
+
+**Protected throughout every ticket in this phase:** backend, database, API contracts, search ranking/default ordering, URL/query-parameter state, consent logic, GA4 event taxonomy and parameters, and every accessibility/analytics contract established by T-055–T-058 (accessible names, `aria-expanded`/`aria-pressed`, keyboard lifecycles, 44px touch targets, T-056 restoration, T-058 dedup).
+
+**Ranking/default ordering** remains unnumbered and deferred, now additionally gated on the Beta Visual Baseline date, not just on GA4 traffic accumulation — starting that baseline clock before the visual refresh completes would mix pre- and post-refresh behaviour in the same cohort.
+
+### T-059 — Visual Foundations: Tokens, Typography & Icon System
+**Priority:** P0 (first ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-042 ✅, T-054 ✅, T-055 ✅, T-056 ✅, T-057 ✅, T-058 ✅ (functional/accessibility/analytics foundation); Visual Baseline Audit (2026-07-27/28, inventory-only) for the approved Direction B token proposal
+**Status:** Implemented (branch `feat/T-059-visual-foundations`), pending independent review.
+
+**Scope:** semantic colour/shape/depth tokens, a self-hosted Inter typeface with verified 4-locale glyph coverage, one icon system (`lucide-react`), a shared `Button`/`Icon` primitive pair, and a shared focus-ring class — established as CSS custom properties (`app/globals.css`) aliased into Tailwind (`tailwind.config.ts`), with zero duplication across CSS/Tailwind/TypeScript. No page-level redesign. Full specification, token table, contrast matrix, and migration ownership map: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
+
+**Direction B token palette — transcribed from the approved audit artifact, not reinterpreted.** Two audit-proposed values failed WCAG contrast validation and were strengthened (never softened): `--text-muted` (`#9C938C` → `#7C7069`, 3.01:1 → 4.80:1) and `--focus` (`#D98CAE` → `#B84B7C`, 2.53:1 → 4.84:1 vs. surface). Several categories the audit left undefined were added to complete the semantic set the ticket required (`--danger`/`--danger-soft`, `--brand-active`/`--brand-soft`, `--accent-strong`, `--text-inverse`, `--surface-subtle`, `--border-strong`) — all documented with their derivation in the spec doc.
+
+**Proving surface:** a new internal, unlinked, `noindex` route (`/design-system-preview`) demonstrates every token, all 10 typography roles, both button variants, the icon system, and status pills using real localized product strings (never lorem) across all 4 locales. Applying the new tokens directly to any real shipped page (e.g. Header) was deliberately avoided — the new `--brand` colour differs from the still-present `pink-600`, and mixing both on one real page would create exactly the "visibly broken hybrid" the ticket warned against. The only real-page changes: the global font swap (uniform sitewide, confirmed via computed-style check on production homepage/search) and Header's mobile-menu icon (glyph-source swap only — same size, same colour, same accessible name, no token/colour change).
+
+**Verification:** 96 new tests (775/775 total, including all pre-existing T-042–T-058 suites unchanged since no shared source file was touched). Includes a real, reusable WCAG contrast function (`lib/colorContrast.ts`) that live-extracts token hex values from `globals.css` and asserts every required pair — not just a documentation table, a regression test that fails if a future token edit weakens contrast. `npm run lint` and `npm run build` clean. Isolated Playwright verification: 4 locales × {320, 375, 768, 1024, 1440}px on the preview route (font applied, no overflow, 20+ swatches rendered, 44px button height, disabled state, keyboard-Tab reachability, no long-running animations, zero console errors) plus Header-icon-migration checks in 2 locales; a direct screenshot comparison of the real homepage/search pages post-build showed the font change applied cleanly with zero other visual difference.
+
+**Acceptance Criteria:**
+- [x] Semantic colour tokens implemented, aliased through Tailwind, no raw hex/Tailwind-palette duplication
+- [x] Typography foundation implemented (Inter, 4 weights, `display: swap`, verified 4-locale glyph coverage)
+- [x] One icon system established (`lucide-react`), decorative-by-default contract, no accessible-name invention
+- [x] Contrast validated for every required pair, enforced by an automated test against the live token values
+- [x] Controlled proving surface demonstrates the system without creating a hybrid look on any real page
+- [x] No page-level redesign; homepage/search/SalonCard/salon-detail/header/footer/cookie-UI structurally untouched
+- [x] All protected contracts (search, SalonCard, salon detail, analytics, consent, accessibility) verified unaffected
+- [x] Performance impact measured and bounded (7 woff2 files, ~218KB total build output, self-hosted, no new blocking runtime request)
+- [ ] Live production verification — pending deploy
+- [ ] Independent review — pending
 
 ---
 
