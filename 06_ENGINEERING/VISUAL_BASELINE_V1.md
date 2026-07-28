@@ -1,6 +1,6 @@
 # Visual Baseline v1 — foundation specification
 
-**Status:** foundation laid by T-059 (tokens, typography, icon system). Not yet the complete Visual Baseline — page-level surfaces are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
+**Status:** foundation laid by T-059 (tokens, typography, icon system) and T-060 (global shell: header, footer, mobile navigation, language selector). Not yet the complete Visual Baseline — homepage, search shell, SalonCard, and salon-detail content are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
 
 **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
 
@@ -158,13 +158,113 @@ Deliberately not generalized further — no abstract component library, no prema
 
 | Surface | Owner ticket | Notes |
 |---|---|---|
-| Header (full: logo colour, nav links, desktop CTA colours) | Header/footer global-shell ticket | T-059 only touched the menu icon glyph |
-| Footer | Header/footer global-shell ticket | Untouched by T-059 |
-| Homepage (hero, category/area tiles, "how it works") | Homepage visual refresh | Untouched by T-059; includes the "Book" step copy fix flagged by the audit |
+| Header (full: logo colour, nav links, desktop CTA colours) | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
+| Footer | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
+| Homepage (hero, category/area tiles, "how it works") | Homepage visual refresh | Untouched by T-059/T-060; includes the "Book" step copy fix flagged by the audit, and the SearchBar 320px overflow found during T-060 verification (see below) |
 | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | Search shell visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder (known bug, bundled here per the user's own direction) |
 | SalonCard | SalonCard visual refresh | Untouched by T-059 |
 | Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
 | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+
+## T-060 — Global shell (header, footer, mobile navigation, language selector)
+
+**Scope:** the shared `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` components and the `[locale]/layout.tsx` shell wrapper — Direction B tokens, the 40×40→44×44 burger fix, keyboard/focus lifecycle, programmatic active-route state, and a query-preservation bug fix. No homepage/search/SalonCard/salon-detail content was touched.
+
+### Inventory finding: "global shell" is not actually global today
+
+`Header.tsx` is rendered **only by the homepage** (`app/[locale]/page.tsx`). The search page and salon-detail page each maintain their own, independent, inline top-bar markup:
+- `app/[locale]/search/page.tsx` — a plain `<div>` (not a `<header>` element at all — zero banner landmark on `/search` today), containing the search toolbar (T-057's scope, untouched).
+- `app/[locale]/salons/[slug]/SalonDetailClient.tsx` — its own `<header>` (back arrow + wordmark only, no nav, no burger).
+
+T-060 did **not** unify these three patterns into one — doing so would mean editing search/salon-detail page files (explicitly out of scope: "do not redesign search content" / "do not redesign salon-detail content"), and inserting the full nav header into pages that don't already render it would change their first-viewport layout, which is page-level impact a shell-only ticket must not cause. `Footer.tsx` (rendered by the shared layout) and `Header.tsx` (homepage-only) are refreshed as the canonical shell components; the other two inline headers remain their own pages' responsibility.
+
+### Navigation route matrix (before = after — no route changed)
+
+| Destination | Path | Locale-prefixed | Notes |
+|---|---|---|---|
+| Home | `/` (`el`), `/en`, `/ru`, `/uk` | Yes (as-needed) | Logo/home link, unchanged |
+| Search | `/search` | Yes | Nav item, unchanged |
+| Professionals | `/masters` | Yes | Nav item, unchanged |
+| Login | `/login` | Yes | Unchanged |
+| Register | `/register` | Yes | Unchanged |
+| Privacy | `/privacy` | Yes | Footer, unchanged |
+| Cookie Policy | `/cookies` | Yes | Footer, unchanged |
+| Cookie settings | (in-page event, no route) | — | Footer button, unchanged |
+
+Zero routes added, removed, or renamed. Greek `defaultLocale`/`localePrefix: 'as-needed'` behaviour is untouched (no change to `i18n/routing.ts`).
+
+### Global container contract (Step 3)
+
+Three named `maxWidth` aliases added to `tailwind.config.ts` — `shell-grid` (72rem/1152px, matches today's `max-w-6xl`: homepage sections, search grid), `shell-content` (56rem/896px, matches `max-w-4xl`: salon detail, footer link row), `shell-reading` (48rem/768px, matches `max-w-3xl`: legal pages). **Purely additive infrastructure** — no existing page was switched to consume these under T-060, matching T-059's own "tokens available, not yet consumed" precedent. Verified via production measurement that these three values are the actual widths already in use (1152px/896px/768px at a 1440px viewport).
+
+### Desktop header visual contract
+
+- Surface: `bg-surface` / `border-border` (was `bg-white`/`border-gray-100`).
+- Brand: `text-brand` (was `text-pink-600`).
+- Nav links: `text-text-secondary`, hover `text-brand`; each link's clickable box is the full header height (`h-full` inside a `h-14` header, ≈57px) via `inline-flex items-center`, not just its text line — clears 44px without any visible size change to the label.
+- Auth buttons (Login/Register): `min-h-[44px]`, token colours, unchanged destinations/labels.
+- Focus: every interactive element carries the shared `.focus-ring-token` class from T-059.
+
+### Active navigation state (Step 5)
+
+New `lib/activeRoute.ts` (`isActiveRoute(pathname, target)`): exact match or `target/`-prefixed nested match, using next-intl's own `usePathname()` (already locale- and query-stripped, so this needs no locale/query handling itself). Applied to both nav items (`/search`, `/masters`) with `aria-current="page"` **plus** a non-colour cue — a `border-b-2 border-brand` underline on desktop, a `bg-brand-soft` background on the mobile panel — satisfying "not colour-only." The logo/home link is never marked current. A salon-detail page (`/salons/[slug]`) is correctly never treated as "under" `/search`, since it's its own route, not nested.
+
+### Mobile header and burger (Step 6)
+
+**Fixed the known 40×40 finding:** `p-2` (8px) → `p-2.5` (10px) padding around the unchanged 24px icon = 44×44 total, no icon-size change. Verified via production measurement before (40×40, byte-identical to pre-T-059) and after (44×44) at 320/375px.
+
+- `aria-label={t('menu')}` — now genuinely localized (previously a hardcoded English `"Menu"` string regardless of locale; new `nav.menu` key added to all 4 locale files).
+- `aria-expanded={open}`, `aria-controls={mobileMenuId}` (stable `useId()`-generated id, matching the panel's own `id`).
+- **Deliberately no `aria-haspopup`** — the T-057 lesson applied explicitly: `"true"` is spec-equivalent to `"menu"` and would misrepresent a plain navigation disclosure.
+- The accessible name stays constant across open/closed state (`aria-expanded` alone communicates state), matching the T-057 precedent for the filter trigger.
+
+### Mobile navigation panel semantics (Step 7)
+
+**Inspected first, then classified:** the existing `{open && (...)}` conditional render is an **inline disclosure** — it renders in normal document flow directly below the header row, pushing page content down. It is not an overlay, drawer, or modal (no `position: fixed`/`absolute` anywhere in it). This is the simplest accurate model and was preserved as-is.
+
+- **Open:** native `<button>` Enter/Space activation (no custom keydown handler needed for opening).
+- **Escape:** closes the panel and returns focus to the burger trigger — the same pattern established in T-057 for the filter popover. Never mutates navigation state, never fires an analytics event, never propagates into unrelated global shortcuts.
+- **Navigation:** activating any mobile link closes the panel (`onClick={() => setOpen(false)}`) before the route change completes.
+- **Outside interaction:** **deliberately no outside-click handler**, and this is a documented decision, not an oversight — an inline disclosure has no "outside content" being visually obscured that would need an auto-dismiss affordance (unlike T-057's absolutely-positioned filter popover, where outside-click made obvious sense). If a future ticket converts this into an overlay/drawer, outside-click should be reconsidered at that point.
+- **Body scroll:** never locked. The page simply grows taller while the menu is open — confirmed via inspection, no scroll-lock logic exists or was added.
+- **Focus:** no focus trap (correctly not needed for a non-modal disclosure); no focus loss to `<body>` at any point in the open/Escape/navigate lifecycle.
+
+### Language selector (Step 8)
+
+**Classified as:** a group of direct `<button>` elements calling `router.replace()` — not a native `<select>`, not a custom combobox, not a disclosure. Preserved as-is; no pattern change.
+
+**Found and fixed a real production bug:** switching locale previously dropped the entire query string — confirmed live before the fix (`/en/search?area=athens-center&view=map` → `/ru/search`, filters and view state silently lost) because next-intl's `usePathname()` is query-string-free by design and the old code passed it straight to `router.replace()` with nothing else attached. New `lib/localeSwitchHref.ts` (`buildLocaleSwitchPath`) re-attaches `useSearchParams().toString()` before the locale swap. Still the same `router.replace()` call (never `push`) — T-056's entry-id mechanism is unaffected either way, since this changes only the target *path string*, not the navigation *method*.
+
+- Current locale: `aria-current="true"` (new) plus the existing colour/weight distinction — no longer colour-only.
+- Touch target: `min-w-[44px] min-h-[44px]` (previously bare text, ~15-19px wide).
+- Tokens: `text-brand`/`text-text-muted` (was `text-pink-600`/`text-gray-400`).
+- Labels remain the existing plain 2-letter uppercase codes (`EL`/`EN`/`RU`/`UK`) — no flags, no full names, unchanged content decision.
+
+### Footer visual contract (Step 9)
+
+Tokens applied (`bg-surface`/`border-border`/`text-text-secondary`/`text-text-muted`), every link/button given `min-h-[44px]` (previously ~20px tall, confirmed via production measurement), shared focus-ring token added. All existing destinations preserved verbatim — Privacy, Cookie Policy, Cookie settings (still gated on `isAnalyticsConsentFeatureEnabled()`), copyright line, language switcher. No address, support channel, social link, or newsletter signup added — none existed before, none added now.
+
+### Page transition / sticky footer (Step 10)
+
+`[locale]/layout.tsx`'s `<body>` is now `flex min-h-screen flex-col`, with a `flex-1` wrapper around `{children}` so `Footer` sits naturally at the bottom of short pages. **Deliberately a plain `<div>`, not `<main>`:** the homepage and salon-detail page each render their own `<header>` as the first child inside `{children}` (Header.tsx isn't invoked from this shared layout — see the inventory finding above). Per the HTML-AAM spec, a `<header>` loses its implicit `role="banner"` when nested inside a `<main>` (or `article`/`aside`/`nav`/`section`) ancestor. Wrapping `{children}` in a real `<main>` would have silently stripped the banner landmark from those two pages as an unintended side effect of a shell-only change — worse than not adding a `<main>` landmark at all. A genuine sitewide `<main>` requires each page's own header markup to either move outside it or gain an explicit `role="banner"`, which is page-level work; **deferred to the final Visual Baseline v1 consistency-pass ticket**, which is explicitly scoped to touch every page's landmark structure. `CookieConsent` (`position: fixed`) is entirely unaffected by this change, confirmed by inspection. Every current page still sets its own `min-h-screen` on its own root div (unchanged, page-level content) — so today's practical footer-position effect is limited until each page's future ticket drops that now-redundant class; documented as a known transitional state, not a bug.
+
+### Icon migration (Step 11)
+
+No new icons beyond what T-059 already migrated (`Menu`/`X`, both already in `Header.tsx`) — same 2-icon Lucide footprint, unchanged bundle impact. `Footer`/`LanguageSwitcher` have no icons. The mobile nav links' old decorative emoji (💇💅) were removed rather than replaced with new icons — this makes mobile nav text-only, matching the desktop nav's own existing (icon-free) treatment, rather than introducing a mobile-only iconography decision asymmetric with desktop.
+
+### Performance (Step 17)
+
+- Client/server boundary unchanged: `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` were already `'use client'` before T-060 (mobile-menu state, cookie-settings handler, router hook respectively) — no new client component was introduced.
+- CSS bundle: ~48KB → ~52KB (+4KB, from the new token-class usage in Header/Footer/LanguageSwitcher plus the 3 new `maxWidth` aliases).
+- Homepage JS: 7.31kB → 7.72kB (+0.41kB, from `useId`/`isActiveRoute`/the Escape-lifecycle effect).
+- Zero new npm dependencies.
+- No runtime network request added (font/icon delivery unchanged from T-059).
+
+### Isolated + live verification results
+
+4 locales × {320, 375, 390, 768, 1024, 1440}px: burger 44×44 confirmed at every mobile width, `aria-expanded`/`aria-controls`/no-`aria-haspopup` confirmed, mouse-open/keyboard-Enter-open/Escape-close/focus-return/link-navigation-closes-panel all confirmed at every locale, zero console/hydration errors, no horizontal overflow from anything the shell touched, all 6 footer targets meet 44px at both 375px and 1440px. Active-nav-state confirmed (not marked current on the homepage; confirmed absent on `/search` since Header isn't rendered there). The locale-switch query-preservation fix confirmed working end-to-end: `?area=athens-center&view=map` now survives an `en`→`ru` switch (previously lost). Protected contracts re-verified live: search initial load (24 cards) and T-056 Back-restoration (48/48 cards) both unaffected.
+
+**One finding, confirmed unrelated to T-060:** a horizontal-overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button (`px-6 py-3 ... whitespace-nowrap`) extending 13px past the viewport. Verified byte-for-byte identical class list on current production, independent of any T-060 file — `SearchBar.tsx` is homepage content, out of scope. Flagged for the homepage visual-refresh ticket.
 
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
 
@@ -173,9 +273,12 @@ Deliberately not generalized further — no abstract component library, no prema
 - 5 shadow patterns (`shadow-sm` ×13, `shadow` ×2, `shadow-md` ×1, `shadow-lg` ×3, `shadow-xl` ×1) — not consolidated.
 - 32 `focus:ring-2` / 36 `focus:ring-pink-*` occurrences — not migrated to `.focus-ring-token`.
 - 3 unique literal hex colours outside the token system (`#2563eb`, `#3b82f6`, `#db2777`) — not removed.
-- ~118 raw emoji/symbol-range character occurrences across 21 files — only the Header's 2 removed; see the icon migration table above for full disposition.
-- **Header mobile-menu touch target is 40×40px, short of 44×44** (found during T-059's live production verification, 2026-07-28). Confirmed pre-existing and byte-identical before/after T-059's icon migration (`git show` comparison: the old inline `w-6 h-6` SVG inside `p-2` padding produces the same 40px math as the new `Icon size={24}` swap) — not a regression, out of T-059's scope (a glyph-source swap, deliberately not a sizing change). Concrete input for the Header/Footer & Global Shell ticket.
+- ~118 raw emoji/symbol-range character occurrences across 21 files — Header's original 2 removed by T-059, plus 2 more (mobile nav 💇💅) removed by T-060; see the icon migration table above for full disposition.
+- ~~Header mobile-menu touch target is 40×40px~~ — **fixed by T-060** (now 44×44).
+- **`/search` has zero `<header>`/banner landmark** (found during T-060's inventory, 2026-07-28) — its own top toolbar is a plain `<div>`, not a `<header>` element. Pre-existing, out of scope for a shell-only ticket (fixing it means editing search page markup). Flagged for the search-shell visual-refresh ticket.
+- **No sitewide `<main>` landmark** — deliberately not added by T-060 to avoid silently stripping `role="banner"` from the homepage/salon-detail's own nested `<header>` elements (see the T-060 Step 10 writeup above for the full HTML-AAM reasoning). Deferred to the final Visual Baseline v1 consistency-pass ticket.
+- **Homepage `SearchBar.tsx` overflows horizontally at 320px** (found during T-060's live verification, 2026-07-28) — confirmed pre-existing and unrelated to any shell file (byte-identical class list on current production). Flagged for the homepage visual-refresh ticket.
 
 ## Protected contracts — explicitly verified unaffected
 
-Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any file this ticket changed. Confirmed by: (1) the full pre-existing T-042/T-054/T-055/T-056/T-057/T-058 test suites passing unchanged (775/775 total after T-059's own 96 new tests), since none of their source files were modified; (2) isolated Playwright verification against real production pages (homepage, search) showing zero console/hydration errors and no visual regression beyond the intended font change.
+Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any page-content file. T-060 additionally touched the shared shell (`Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx`/`[locale]/layout.tsx`) and confirmed no regression to any of the above, live: search initial load and T-056 Back-restoration both re-verified against the isolated build after the shell change. Confirmed by: (1) the full pre-existing T-042/T-054/T-055/T-056/T-057/T-058/T-059 test suites passing unchanged (832/832 total after T-060's own new tests), since none of their source files were modified; (2) isolated Playwright verification across 4 locales × 6 breakpoints showing zero console/hydration errors and no visual regression beyond the intended shell changes.

@@ -1361,7 +1361,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
 
 - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-060** (shifted from the earlier T-059 placeholder once T-059 was assigned to Visual Foundations below) — still not formally reserved.
+- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-061** (shifted again once T-060 was assigned to the Global Shell ticket below) — still not formally reserved.
 - ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
 
 ---
@@ -1407,7 +1407,49 @@ The current production UI was audited (inventory-only Visual Baseline Audit, 202
 
 **Live production verification (`https://lookla.gr`, 2026-07-28):** verified against production directly. All 4 locales × {320, 375, 768, 1024, 1440}px on `/design-system-preview`: Inter applied, zero runtime requests to `fonts.googleapis.com`/`fonts.gstatic.com` (confirmed self-hosted), no horizontal overflow, headings render in clean line-height multiples at every width (no diacritic-clipping signal — the first check attempt used an overly strict heuristic that flagged 320px's legitimate 4-line wrap as a false positive; corrected to check for clean whole-line multiples instead of an arbitrary ratio ceiling), `noindex` meta present, 28 token swatches render, buttons meet 44px, focus-visible produces a real 2px solid outline in the `--focus` colour. Font delivery: exactly 4 same-origin `.woff2` files loaded on the real homepage, zero external font requests. CLS measured at 0.0028 (well under the 0.1 threshold) on the real homepage. GA4/consent/T-058: `search_results_view` still fires exactly once on a fresh load, T-056 restoration still restores 48/48 cards after Back, and T-058's dedup still holds (zero duplicate `search_results_view` after Back) — confirmed live, not just via the existing test suite.
 
-**One finding, confirmed pre-existing (not a T-059 regression):** the header's mobile-menu button measures 40×40px, short of the 44×44px target. Verified byte-for-byte against the pre-T-059 source (`git show`) that this is unchanged — the old inline `<svg className="w-6 h-6">` (24px) inside a `p-2` (8px padding) button produces the identical 40px math as the new `<Icon size={24}>` swap. T-059's icon migration was a glyph-source swap only, deliberately not a sizing change (matching its own non-goals). Flagged here as a concrete input for the next ticket (Header/Footer & Global Shell visual refresh), not fixed under T-059.
+**One finding, confirmed pre-existing (not a T-059 regression):** the header's mobile-menu button measures 40×40px, short of the 44×44px target. Verified byte-for-byte against the pre-T-059 source (`git show`) that this is unchanged — the old inline `<svg className="w-6 h-6">` (24px) inside a `p-2` (8px padding) button produces the identical 40px math as the new `<Icon size={24}>` swap. T-059's icon migration was a glyph-source swap only, deliberately not a sizing change (matching its own non-goals). Flagged as a concrete input for T-060, which fixes it (see below).
+
+---
+
+### T-060 — Header, Footer & Global Shell Visual Refresh
+**Priority:** P0 (second ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-059 ✅ Visual Foundations
+**Status:** ✅ Completed. Merged via PR #57, deployed to production (`beauty_web` rebuilt and restarted alone — no other service touched), live production verification passed.
+
+**Scope:** applies Direction B tokens to the shared `Header.tsx`/`Footer.tsx`/`LanguageSwitcher.tsx` components and the `[locale]/layout.tsx` shell wrapper. Fixes the known 40×40 burger touch-target gap (now 44×44), adds programmatic active-nav-state, keyboard/focus lifecycle for the mobile menu, and a query-preservation bug found live in production (switching locale previously dropped `?area=...&view=map`-style filter state entirely). No homepage/search/SalonCard/salon-detail content touched. Full contract, ownership map, and legacy-boundary report: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`.
+
+**Inventory finding:** the "global shell" is not actually global today — `Header.tsx` is rendered only by the homepage; search and salon-detail pages each maintain their own independent inline top bars (search's is a plain `<div>`, zero banner landmark; salon detail has its own minimal `<header>`). T-060 deliberately did not unify these — doing so requires editing page-specific files, out of scope for a shell-only ticket. Deferred to each page's own visual-refresh ticket / the final consistency pass.
+
+**Key fixes:**
+- Burger touch target: `p-2` (40×40) → `p-2.5` (44×44), no icon-size change.
+- Burger accessible name: was a hardcoded English `"Menu"` string regardless of locale — now genuinely localized (`nav.menu`, added to all 4 locale files).
+- **No `aria-haspopup`** on the burger — the T-057 lesson applied explicitly (`"true"` is spec-equivalent to `"menu"`, would misrepresent a plain nav disclosure).
+- Mobile menu classified as an inline disclosure (not an overlay) after inspection — Escape closes + returns focus (T-057 pattern), deliberately no outside-click handler (documented reasoning: no overlaid content to dismiss), no body-scroll lock, no focus trap.
+- **Locale-switch query-loss bug fixed:** `router.replace(pathname, {locale})` dropped the query string because next-intl's `usePathname()` is query-free by design; new `lib/localeSwitchHref.ts` re-attaches `useSearchParams()` before the swap. Same `router.replace()` call, so T-056's entry-id mechanism is unaffected.
+- Active nav state: new `lib/activeRoute.ts`, `aria-current="page"` plus a non-colour cue (border-bottom desktop / background mobile) — never colour-only.
+- Sticky-footer shell (`flex min-h-screen flex-col` + a `flex-1` wrapper) so short pages don't leave the footer floating. Deliberately a plain `<div>`, not `<main>` — wrapping `{children}` in `<main>` would have silently stripped `role="banner"` from the homepage/salon-detail's own nested `<header>` elements per the HTML-AAM implicit-role-suppression rule. Deferred to the final consistency-pass ticket.
+- All footer links/language-switcher buttons brought to 44px (were ~20px tall / ~15-19px wide).
+
+**Verification:** 832/832 tests passing (57 new; all pre-existing T-042–T-059 suites unchanged). One pre-existing test bug found and fixed as a direct consequence (`lib/cookieConsentUi.test.ts`'s file-exclusion regex excluded `.test.ts` but not `.test.tsx`, causing a false positive against the new `Footer.test.tsx`). Lint/build clean. Isolated + live production verification (4 locales × 6 breakpoints): burger 44×44 confirmed everywhere, full keyboard/Escape/focus lifecycle confirmed, query-preservation fix confirmed working live (`?area=athens-center&view=map` now survives a locale switch), all footer targets ≥44px, T-054/T-056 protected contracts re-verified live and unaffected.
+
+**One finding, confirmed unrelated to T-060:** a horizontal overflow at 320px on the homepage, traced to `SearchBar.tsx`'s own search-submit button — verified byte-identical on current production, independent of any shell file. Flagged for the homepage visual-refresh ticket.
+
+**Acceptance Criteria:**
+- [x] Burger touch target ≥44×44 (was 40×40)
+- [x] Burger accessible name localized, `aria-expanded`/`aria-controls` correct, no `aria-haspopup`
+- [x] Escape closes the mobile menu and returns focus to the trigger
+- [x] Active route programmatically exposed (`aria-current`), never colour-only
+- [x] Locale switch preserves query/filter state (found-live bug, fixed)
+- [x] Footer legal links, cookie settings, and all destinations preserved
+- [x] No homepage/search/SalonCard/salon-detail content redesigned
+- [x] T-056 restoration, T-057 control semantics, T-058 dedup all re-verified unaffected
+- [x] Four locales verified at 6 breakpoints
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — approved (PR #57)
+
+---
+
+## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
 **Priority:** P1 | **Owner:** OPS | **Estimate:** 2h | **Epic:** EPIC-10
