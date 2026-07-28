@@ -441,6 +441,12 @@ Metadata/canonical/locale-alternates/indexability: untouched (no changes to any 
 
 62 new/updated focused tests (`searchShellVisual.test.ts` — 29 new; `ActiveFilterChips.test.tsx` — 4 new; 5 pre-existing T-057 assertions in `searchControlsA11y.test.ts` and 1 in `searchPage.test.ts` updated to match the new markup while preserving the exact same underlying guarantee, after their original literal-string/fixed-offset markers stopped matching the refreshed source — not a weakening of what they check, only how they locate it). Full suite: 938/938 passing (all T-042/T-054/T-055/T-056/T-057/T-058/T-059/T-060/T-062 regression suites green). Lint clean. `next build` clean. Isolated Playwright: 24 breakpoint×locale combinations, the Greek-hardcode fix per-locale, filter-popover keyboard lifecycle, chip removal + clear-all, List↔Map toggle with live Leaflet render, a simulated API-500 → `role="alert"`, T-056 restoration, and the `gtag()`-intercepted analytics-invariant check — all pass.
 
+**Live production verification (`https://lookla.gr`, post-merge/post-deploy, `beauty_web` rebuilt and restarted alone):** re-ran the full breakpoint×locale matrix directly against production (24 combinations) — zero overflow, no input/submit overlap, filter trigger and both List/Map controls ≥44×44, zero console/hydration errors throughout. Rating-default localization and the List/Map emoji-removal fix both re-confirmed per locale live. All toolbar icons confirmed `aria-hidden`. Filter-popover lifecycle (no `aria-haspopup`, Escape-close-with-focus-return), chip removal + clear-all + canonical-total presence, a simulated API-500 → `role="alert"` + Retry, and the List↔Map toggle (exactly one `aria-pressed="true"`, 2000 live Leaflet markers rendering) all re-confirmed live. `SalonCard` re-confirmed structurally unchanged (single outer link, photo present). T-056 restoration (48/48 cards) and T-058 dedup (exactly one `search_results_view` across the full search→open→Back cycle) both re-confirmed live via `gtag()`-call interception. Live CLS measured at 0.
+
+```text
+T-064 regressions: 0
+```
+
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
 
 - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.

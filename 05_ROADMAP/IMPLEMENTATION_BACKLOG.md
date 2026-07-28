@@ -1506,7 +1506,7 @@ T-062 regressions: 0
 **Priority:** P0 (fourth ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-042 ✅, T-054 ✅, T-056 ✅, T-057 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅
 **Reserved separately:** T-063 — Map Accessibility (untouched by this ticket)
-**Status:** 🔶 Implemented, isolated verification complete — pending independent review. **Not merged, not deployed.**
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #59 (`9787fd8` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
 
 **Ticket-identity note:** T-064 was confirmed genuinely unused before branching — no collision. T-063 remains reserved only for the future Map Accessibility ticket and was not modified.
 
@@ -1521,7 +1521,13 @@ T-062 regressions: 0
 - **List framing:** grid column/gap contract unchanged; only skeleton-tile and load-more-spinner colours updated. `SalonCard.tsx` not modified.
 - Toolbar kept as its existing single sticky row (not restructured) — measurement showed it already wraps cleanly with no overflow; only tokens/icons changed.
 
-**Verification:** 62 new/updated tests (33 net-new across `searchShellVisual.test.ts`/`ActiveFilterChips.test.tsx`; 6 pre-existing T-057-era assertions updated to locate their same guarantee inside the refreshed markup, not weakened). Full suite: 938/938 passing (all T-042–T-062 regression suites green). Lint/build clean (search-page bundle actually *shrank*, 13.4kB→9.46kB — the old inline SVG was replaced by a shared, already-loaded Lucide chunk). Isolated Playwright: 24 breakpoint×locale combinations — zero overflow, no control overlap, ≥44×44 touch targets, zero console/hydration errors; plus the Greek-hardcode fix re-verified per locale, filter-popover keyboard lifecycle (Escape/focus-return/no `aria-haspopup`), chip removal + clear-all, List↔Map toggle with live Leaflet render, a simulated API-500 → `role="alert"`, T-056 restoration (48/48 cards, toolbar intact after remount), and a `gtag()`-intercepted analytics check confirming filter open/close emits nothing and `search_results_view` still fires exactly once. CLS 0; LCP element is a pre-existing `SalonCard` photo (unrelated to this ticket, `SalonCard.tsx` untouched).
+**Verification:** 62 new/updated tests (33 net-new across `searchShellVisual.test.ts`/`ActiveFilterChips.test.tsx`; 6 pre-existing T-057-era assertions updated to locate their same guarantee inside the refreshed markup, not weakened). Full suite: 938/938 passing (all T-042–T-062 regression suites green). Lint/build clean (search-page bundle actually *shrank*, 13.4kB→9.46kB — the old inline SVG was replaced by a shared, already-loaded Lucide chunk). Isolated Playwright: 24 breakpoint×locale combinations — zero overflow, no control overlap, ≥44×44 touch targets, zero console/hydration errors; plus the Greek-hardcode fix re-verified per locale, filter-popover keyboard lifecycle (Escape/focus-return/no `aria-haspopup`), chip removal + clear-all, List↔Map toggle with live Leaflet render, a simulated API-500 → `role="alert"`, T-056 restoration (48/48 cards, toolbar intact after remount), and a `gtag()`-intercepted analytics check confirming filter open/close emits nothing and `search_results_view` still fires exactly once.
+
+**Live production verification (`https://lookla.gr`, 2026-07-28, post-deploy):** all 4 locales × {320, 375, 390, 768, 1024, 1440}px — zero horizontal overflow, no search-input/submit overlap, filter trigger and both List/Map controls ≥44×44, zero console/hydration errors at every one of the 24 combinations. Rating-default localization re-confirmed per locale (EL correctly Greek, EN/RU/UK correctly translated); List/Map button text confirmed emoji-free with a real icon present, in all 4 locales. All toolbar icons confirmed `aria-hidden` (never contribute to accessible names). Filter popover: no `aria-haspopup`, opens/closes correctly, Escape returns focus to the trigger. Chip removal and clear-all both confirmed live; canonical total text present and correctly formatted. Simulated `/api/salons` 500 → `role="alert"`/`aria-live="assertive"` with a working Retry action. List↔Map toggle confirmed exactly one `aria-pressed="true"` before and after, with live Leaflet markers (2000) rendering unaffected. SalonCard confirmed still rendering its photo with a single outer link (no nested links) — visually and structurally unchanged. T-056 restoration confirmed live (48/48 cards); T-058 dedup confirmed live — exactly one `search_results_view` total across the full search→open→Back cycle via `gtag()`-call interception. CLS measured at 0.
+
+```text
+T-064 regressions: 0
+```
 
 **Acceptance Criteria:**
 - [x] Hardcoded Greek `Όλες οι αξιολογήσεις` fixed (all 4 locales verified)
@@ -1534,8 +1540,8 @@ T-062 regressions: 0
 - [x] SalonCard not redesigned internally; map markers/popups untouched (T-063 scope preserved)
 - [x] No backend/database/API/ranking/default-ordering/filter-semantics change
 - [x] Performance impact measured (CLS/LCP/bundle/requests) — bundle size decreased
-- [ ] Live production verification — not yet run (pending merge)
-- [ ] Independent review — pending
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
 
 ---
 
