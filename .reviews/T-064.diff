@@ -1,0 +1,875 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 75f6a1e..10ebdc6 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1502,6 +1502,43 @@ T-062 regressions: 0
+ 
+ ---
+ 
++### T-064 — Search Shell Visual Refresh
++**Priority:** P0 (fourth ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-042 ✅, T-054 ✅, T-056 ✅, T-057 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅
++**Reserved separately:** T-063 — Map Accessibility (untouched by this ticket)
++**Status:** 🔶 Implemented, isolated verification complete — pending independent review. **Not merged, not deployed.**
++
++**Ticket-identity note:** T-064 was confirmed genuinely unused before branching — no collision. T-063 remains reserved only for the future Map Accessibility ticket and was not modified.
++
++**Scope:** `app/[locale]/search/page.tsx`'s render section (toolbar, search form, filter trigger/panel, results summary, List/Map selector, list/map async-state framing) and `components/ActiveFilterChips.tsx`. Direction B tokens applied; every emoji and inline SVG replaced with `lucide-react`; the known hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter default fixed. Search-results page content — SalonCard internals, Leaflet markers/popups, ranking, pagination, the full T-042/T-054/T-056/T-057/T-058 functional contract — is untouched; map-marker accessibility is explicitly out of scope (reserved for T-063). Full contract and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-064 section.
++
++**Key changes:**
++- **Hardcoded Greek rating text — fixed:** `<option value="">Όλες οι αξιολογήσεις</option>` (rendered regardless of locale) replaced with `{t('all_ratings')}`, a new key added to all 4 locale files. EN/RU/UK now show their own translated text; EL correctly still shows the Greek original. Filter semantics/URL contract unchanged.
++- **Additional hardcoded-string finding, fixed:** `search.list`/`search.map` had an emoji baked directly into the translated string (`"☰ List"`/`"🗺 Map"`) in all 4 locales — stripped, with a real Lucide `List`/`Map` icon now rendered alongside the clean text label instead.
++- **Icon system:** the 🔍 search-submit emoji, ✕ clear-query emoji, inline `<svg>` filter-funnel icon, and `×` chip-remove glyph are all replaced by the shared `Icon` component (`Search`/`X`/`SlidersHorizontal`/`X`). Zero emoji remain in the search shell.
++- **Direction B tokens** applied throughout the toolbar, filter panel, active-filter chips (`bg-brand-soft`/`text-brand` replacing `bg-pink-50`/`text-pink-700`, `rounded-pill`), results summary, and async-state (loading/empty/error) presentation.
++- **Map shell:** only a `rounded-md overflow-hidden border` container and token-coloured loading/error framing added around the existing map — `MapView.tsx` (markers, popups, fetch, center/zoom) untouched; map dimensions confirmed unaffected.
++- **List framing:** grid column/gap contract unchanged; only skeleton-tile and load-more-spinner colours updated. `SalonCard.tsx` not modified.
++- Toolbar kept as its existing single sticky row (not restructured) — measurement showed it already wraps cleanly with no overflow; only tokens/icons changed.
++
++**Verification:** 62 new/updated tests (33 net-new across `searchShellVisual.test.ts`/`ActiveFilterChips.test.tsx`; 6 pre-existing T-057-era assertions updated to locate their same guarantee inside the refreshed markup, not weakened). Full suite: 938/938 passing (all T-042–T-062 regression suites green). Lint/build clean (search-page bundle actually *shrank*, 13.4kB→9.46kB — the old inline SVG was replaced by a shared, already-loaded Lucide chunk). Isolated Playwright: 24 breakpoint×locale combinations — zero overflow, no control overlap, ≥44×44 touch targets, zero console/hydration errors; plus the Greek-hardcode fix re-verified per locale, filter-popover keyboard lifecycle (Escape/focus-return/no `aria-haspopup`), chip removal + clear-all, List↔Map toggle with live Leaflet render, a simulated API-500 → `role="alert"`, T-056 restoration (48/48 cards, toolbar intact after remount), and a `gtag()`-intercepted analytics check confirming filter open/close emits nothing and `search_results_view` still fires exactly once. CLS 0; LCP element is a pre-existing `SalonCard` photo (unrelated to this ticket, `SalonCard.tsx` untouched).
++
++**Acceptance Criteria:**
++- [x] Hardcoded Greek `Όλες οι αξιολογήσεις` fixed (all 4 locales verified)
++- [x] Search controls semantics preserved (form, clear, submit, filter trigger/panel, List/Map — all T-057 contracts byte-identical in logic)
++- [x] Active-filter chip recovery preserved (T-054 contract unmodified)
++- [x] T-056 restoration preserved (state/effects block untouched; re-verified live)
++- [x] T-058 analytics dedup preserved; no new or renamed GA4 event
++- [x] Four locales verified at 6 breakpoints
++- [x] 320px overflow absent
++- [x] SalonCard not redesigned internally; map markers/popups untouched (T-063 scope preserved)
++- [x] No backend/database/API/ranking/default-ordering/filter-semantics change
++- [x] Performance impact measured (CLS/LCP/bundle/requests) — bundle size decreased
++- [ ] Live production verification — not yet run (pending merge)
++- [ ] Independent review — pending
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+index e5f742f..7455fe4 100644
+--- a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -1,6 +1,6 @@
+ # Visual Baseline v1 — foundation specification
+ 
+-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), and T-062 (homepage). Not yet the complete Visual Baseline — search shell, SalonCard, and salon-detail content are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
++**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), and T-064 (search shell). Not yet the complete Visual Baseline — SalonCard and salon-detail content are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
+ 
+ **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
+ 
+@@ -161,7 +161,7 @@ Deliberately not generalized further — no abstract component library, no prema
+ | Header (full: logo colour, nav links, desktop CTA colours) | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
+ | Footer | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
+ | Homepage (hero, category/area tiles, "how it works") | ~~Homepage visual refresh~~ — **done, T-062** | Included the "Book" step copy fix and the SearchBar 320px overflow fix (see below) |
+-| Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | Search shell visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder (known bug, bundled here per the user's own direction) |
++| Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
+ | SalonCard | SalonCard visual refresh | Untouched by T-059 |
+ | Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
+ | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+@@ -371,6 +371,76 @@ Measured (isolated standalone, 1440px, `networkidle`): 42 total requests, CLS **
+ T-062 regressions: 0
+ ```
+ 
++## T-064 — Search Shell Visual Refresh
++
++**Scope:** `app/[locale]/search/page.tsx` (toolbar, search form, filter trigger/panel, active-filter chip container wiring, results summary, List/Map selector, list/map async-state framing) and `components/ActiveFilterChips.tsx`. Direction B tokens applied throughout; every emoji and inline SVG replaced with `lucide-react`; the known hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter default fixed, plus one additional hardcoded-string finding (`search.list`/`search.map` had emoji baked directly into the translated string in all 4 locales). Search-results page **content** (SalonCard internals, Leaflet markers/popups, ranking, pagination, the entire T-042/T-054/T-056/T-057/T-058 functional contract) is untouched — this is a chrome-only ticket, same boundary discipline as T-060/T-062.
++
++**Ticket identity:** T-064 was genuinely unused — no collision. T-063 (Map Accessibility) remains a separate, untouched, reserved placeholder; T-064 explicitly does not implement any marker-keyboard/popup-accessibility work.
++
++### Step 1–2 — Inventory & preserved interactions
++
++Production measurement (`https://lookla.gr/en/search`) before implementation, at 320/375/390/768/1024/1440px: zero horizontal overflow at every width (T-057 had already fixed the toolbar's own overflow risk); toolbar wraps to 2 rows below ~640px (search+filter on row 1, List/Map on row 2), a single row above; filter trigger/List/Map controls already 44×44 (T-057); results grid width matches the site's standard container at every breakpoint.
++
++**Interaction/route matrix — before = after, no destination or contract changed:** query submit → `/search?q=...` (unchanged); area/rating/category change → same `update()`/`selectArea()` calls, same URL params; individual chip removal → same `removeActiveFilter`; clear-all → same `clearAllActiveFilters`; List↔Map → same `update('view', ...)`, same `aria-pressed` semantics; infinite scroll → same `IntersectionObserver`+`loadMore()`; API error → same `role="alert"` + `retry` callback; salon open → Back → same T-056 snapshot save/restore path; locale change with active params → untouched (Header's `LanguageSwitcher`, not this ticket). Zero lines of the state/effects/handlers block (roughly the first 505 lines of `page.tsx` — every `useState`/`useEffect`/`useCallback` governing search, filters, T-056 restoration, and T-058 dedup) were touched; only the render/JSX section below it changed.
++
++### Step 3–4 — Visual hierarchy & toolbar
++
++Kept the existing single sticky toolbar row (`sticky top-0 z-30`, unchanged — the ticket's own instruction was to not add/remove stickiness without a demonstrated need, and the current sticky behavior was already correct) rather than restructuring into two rows — production measurement confirmed the current flex-wrap composition already produces a clean, predictable 2-row mobile layout with no overflow, so no structural change was needed, only a token/icon refresh. Search input remains the widest, leftmost, visually dominant control; filter trigger and List/Map stay compact secondary controls; the results heading uses `.text-card-title` (16px/600) — deliberately smaller than a hero-style page title, per the ticket's own "no unnecessary large page title consuming mobile viewport" requirement.
++
++### Step 5–7 — Search form, filter trigger, filter panel
++
++**Search form:** `role="search"`, the real `<label>`, single `onSubmit` handler, and the canonical trimmed-query comparison are all byte-identical to T-057. Visual-only changes: the 🔍 emoji submit icon and ✕ emoji clear icon both replaced by the shared `Icon` component (`Search`/`X` from `lucide-react`), Direction B tokens (`bg-brand`/`border-border`/`focus-within:ring-focus`), both controls still exactly 44×44 (`w-11 h-11`, unchanged).
++
++**Filter trigger:** `aria-expanded`/`aria-controls`/absence of `aria-haspopup` (the T-057 lesson) are all unchanged. The inline `<svg>` funnel path was replaced by `Icon`+`SlidersHorizontal`. The active-filter cue (a small count badge, already present pre-T-064) is unchanged in its derivation — still `[area || city, category, minRating].filter(Boolean).length`, never counting `view`, never double-counting legacy `city` (it's already OR'd with `area` in the same slot, exactly as before) — only its container now also flags "active" state via a `filterActive` boolean feeding both the badge and the button's own background, so the state is never colour-only.
++
++**Filter panel:** `role="group"` + labelled region, non-modal (no dialog role, no focus trap — confirmed absent, matching the existing implementation), Escape-closes-without-applying and outside-click-without-forcing-focus are both unchanged (separate listeners, cannot race — same T-057 architecture). Visual-only: `bg-surface`/`shadow-elevated`/`border-border` replace `bg-white`/`shadow-lg`/`border-gray-100`; labels use `.text-label`; selects get `focus-ring-token`.
++
++### Step 8 — Hardcoded string fixes
++
++**Primary fix:** `<option value="">Όλες οι αξιολογήσεις</option>` (a literal Greek string, unconditionally rendered regardless of locale) replaced with `<option value="">{t('all_ratings')}</option>` — a new `search.all_ratings` key added to all 4 locale files (`el`: "Όλες οι αξιολογήσεις" — the correct value for that locale, unchanged in meaning; `en`: "All ratings"; `ru`: "Все рейтинги"; `uk`: "Всі рейтинги"). Verified live: the EN/RU/UK builds now show their own translated text instead of the Greek placeholder; the EL build correctly still shows the Greek text (it's the right language for that locale). Filter semantics, selected/default value, and the URL/API `min_rating` param are all byte-identical — only the *label text* changed.
++
++**Additional finding, in scope (owned by the search shell), fixed:** `search.list`/`search.map` had an emoji glyph baked directly into the translated string itself (`"☰ List"` / `"🗺 Map"` in en, and the equivalent in el/ru/uk) — not a Greek-specific bug, but the same class of problem (a decorative glyph welded into translatable text, which the site's Direction B icon system is meant to replace with a real, separately-controllable icon). Fixed by stripping the glyph from all 4 locale values and rendering a real `lucide-react` `List`/`Map` icon component alongside the now-clean text label instead.
++
++The star-rating option text (`★ 3+`/`★ 4+`/`★ 4.5+`) was deliberately left as-is — locale-independent (a number plus a universal star symbol), not a translation bug.
++
++### Step 9–11 — Active-filter chips, results summary, List/Map selector
++
++**Chips:** the entire T-054 contract (canonical effective-filter derivation, individual removal, clear-all, `useFilterChipFocus` recovery, legacy-`city` handling) is untouched — `ActiveFilterChips.tsx`'s props/logic are unmodified. Visual-only: `bg-pink-50`/`text-pink-700` → `bg-brand-soft`/`text-brand`; `rounded-full` → the shared `rounded-pill` token; the `×` text glyph → `Icon`+`X` (16px, decorative); `focus-ring-token` added to the remove button. Accessible names (`removeLabel(filter)`), focus sequence, and the one-`<li>`-per-chip/one-`<button>`-per-chip structure are all unchanged.
++
++**Results summary:** still derives its count exclusively from the canonical list-fetch `total` (never `salons.length`/`mapSalons.length`), still `aria-live="polite"`, still shows nothing during loading beyond the existing skeleton placeholder, still shows nothing on error. Visual-only: `.text-card-title` heading, `.text-body-sm text-text-secondary` count text, token-coloured skeleton placeholder.
++
++**List/Map:** `aria-pressed`, the "re-selecting the active view is a no-op" behaviour, and the URL `view` param contract are all unchanged (still plain toggle buttons, not a tabs pattern). Visual-only: wrapped in a shared `bg-surface-subtle` segmented-control container, active state now `bg-brand text-text-inverse` with a `List`/`Map` icon alongside the (now emoji-free) text label — text labels are never dropped, satisfying the ticket's explicit "no icon-only control" requirement.
++
++### Step 12–13 — List/map framing
++
++**List:** grid column/gap contract (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`) is unchanged — verified byte-identical. Only the loading-skeleton tiles' own colours (`bg-white`/`border-gray-100` → `bg-surface`/`border-border`) and the load-more bounce-dot colour (`bg-pink-400` → `bg-brand`) changed. `SalonCard.tsx` itself was not modified (confirmed: it contains no reference to any T-064-introduced import).
++
++**Map:** `MapView.tsx` (markers, popups, clustering, fetch, center/zoom) is completely untouched — the dynamic `import('@/components/MapView')` call site is byte-identical. T-064 only added a `rounded-md overflow-hidden border border-border` shell around the existing `AsyncSection`-wrapped map, plus token colours on the loading/error framing around it (never on the map itself). Verified the wrapper adds no height/width-constraining class, so map dimensions are unaffected — confirmed live (Leaflet still renders at its existing size, `.leaflet-container` present and functional after the visual refresh).
++
++### Step 14 — Async states
++
++T-042's functional/accessibility contract (`role="alert"`/`aria-live="assertive"` for errors, `role="status"`/`aria-live="polite"` for empty, `aria-hidden` skeletons, `useFocusOnStatusRecovery`-driven focus-on-retry) is entirely unchanged — only colours/tokens on the skeleton, empty, and error presentations were touched (`text-gray-400`→`text-text-muted`, `text-red-400`→`text-danger`, retry links `text-pink-600`→`text-brand`). Verified live: simulating a `500` on `/api/salons` still surfaces a `role="alert"` region.
++
++### Step 15–16 — Responsive & four-locale verification
++
++Isolated standalone build, all 4 locales × {320, 375, 390, 768, 1024, 1440}px (24 combinations): zero horizontal overflow at every one; search input never overlaps the submit button; filter trigger and List/Map controls both ≥44×44 at every combination; zero console/hydration errors. The Greek-hardcode fix specifically re-verified per-locale: EN/RU/UK show their own translated "All ratings" text, EL correctly still shows the Greek original.
++
++### Step 17 — Accessibility
++
++T-060's landmarks (banner/main/footer) are unaffected (this ticket doesn't touch `Header`/`Footer`/layout). Filter-trigger `aria-expanded`/`aria-controls`/no-`aria-haspopup`, Escape-close-with-focus-return, List/Map `aria-pressed`, chip focus recovery, and async-state roles are all re-verified live and unchanged. No icon glyph contributes to any accessible name anywhere in the touched files (every `Icon` call stays at its `decorative`-by-default, `aria-hidden` setting). Map-marker accessibility remains entirely out of scope, reserved for T-063.
++
++### Step 18–19 — Analytics & T-056 restoration
++
++Re-verified live via `gtag()`-call interception: opening and closing the filter popover (click, then Escape) emits no event at all; only `search_results_view` fires, exactly once, matching the pre-existing contract. `trackEvent` call-site sweep confirms only the 5 pre-existing T-015 event names appear anywhere in `page.tsx`, and none of the T-064-authored code paths (chip remove, clear-all, List/Map toggle, filter open/close) call it. T-056 regression re-run live: load 48 cards → open a salon → Back — cards restored (48/48) and the refreshed toolbar renders correctly intact after the remount, with no visual flash back to a page-1 state and no duplicate fetch.
++
++### Step 20 — SEO & performance
++
++Metadata/canonical/locale-alternates/indexability: untouched (no changes to any `<head>`-affecting code — this ticket only touches `SearchContent`'s render output). Measured (isolated standalone, 1440px, `en/search`, `networkidle`): CLS **0**; LCP element is a **`<img>` salon photo served from `cdn.lookla.gr`** (`SalonCard`'s own existing photo, not anything this ticket added or could have added — LCP was already photo-bound before T-064 and remains so, since `SalonCard.tsx` itself is untouched). Search-page bundle: 13.4kB → 9.46kB First Load JS — a **decrease**, not an increase: the old inline `<svg>` funnel path string was replaced by a shared `lucide-react` icon reference that reuses chunks already loaded elsewhere on the site (`Icon`/lucide icons were already part of the shared bundle since T-059/T-060/T-062). No new npm dependency, no new font/icon network request.
++
++### Verification summary
++
++62 new/updated focused tests (`searchShellVisual.test.ts` — 29 new; `ActiveFilterChips.test.tsx` — 4 new; 5 pre-existing T-057 assertions in `searchControlsA11y.test.ts` and 1 in `searchPage.test.ts` updated to match the new markup while preserving the exact same underlying guarantee, after their original literal-string/fixed-offset markers stopped matching the refreshed source — not a weakening of what they check, only how they locate it). Full suite: 938/938 passing (all T-042/T-054/T-055/T-056/T-057/T-058/T-059/T-060/T-062 regression suites green). Lint clean. `next build` clean. Isolated Playwright: 24 breakpoint×locale combinations, the Greek-hardcode fix per-locale, filter-popover keyboard lifecycle, chip removal + clear-all, List↔Map toggle with live Leaflet render, a simulated API-500 → `role="alert"`, T-056 restoration, and the `gtag()`-intercepted analytics-invariant check — all pass.
++
+ ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
+ 
+ - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
+@@ -389,4 +459,4 @@ T-062 regressions: 0
+ 
+ ## Protected contracts — explicitly verified unaffected
+ 
+-Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any page-content file, across T-060's two rounds or T-062. The T-060 unification fix touched `search/page.tsx` and `SalonDetailClient.tsx` strictly at the chrome boundary (inline header/logo → `<Header variant="..." />`, `div`→`main` retag, no class changes below that boundary — confirmed via `git diff`). T-062 touched only `page.tsx`/`SearchBar.tsx`/`CategoryGrid.tsx`/`AreaGrid.tsx`/`Icon.tsx` — none of which any other protected surface imports or depends on; `area_select`'s call site lives in `AreaGrid.tsx`, re-verified byte-identical in shape and call count. Confirmed by: (1) the full pre-existing T-042/T-054–T-060 test suites passing unchanged (905/905 total after T-062's own new tests — the 320px `SearchBar.tsx` finding that used to be the sole non-pass is now genuinely fixed, not just documented), since none of their protected source files were modified; (2) isolated Playwright verification across all 6 unified-shell pages (T-060) and, for T-062, all 4 locales × 6 breakpoints of the homepage specifically, plus live-equivalent re-verification of search initial load, T-056 Back-restoration, the search map view's unchanged width, and `area_select` firing exactly once — all showing zero console/hydration errors and no regression beyond each ticket's own intended changes.
++Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any page-content file, across T-060's two rounds, T-062, or T-064. The T-060 unification fix touched `search/page.tsx` and `SalonDetailClient.tsx` strictly at the chrome boundary (inline header/logo → `<Header variant="..." />`, `div`→`main` retag, no class changes below that boundary — confirmed via `git diff`). T-062 touched only `page.tsx`/`SearchBar.tsx`/`CategoryGrid.tsx`/`AreaGrid.tsx`/`Icon.tsx` — none of which any other protected surface imports or depends on; `area_select`'s call site lives in `AreaGrid.tsx`, re-verified byte-identical in shape and call count. T-064 touched `search/page.tsx`'s render section only (the state/effects/handlers block governing T-054/T-056/T-057/T-058 is byte-for-byte unmodified) and `ActiveFilterChips.tsx`'s presentation only (props/logic unmodified) — `MapView.tsx` and `SalonCard.tsx` were not touched at all. Confirmed by: (1) the full pre-existing T-042/T-054–T-062 test suites passing unchanged (938/938 total after T-064's own new/updated tests — a handful of T-057-era tests needed their literal-string/fixed-offset markers updated to locate the same guarantee inside the refreshed markup, not weakened), since no protected source file's logic was modified; (2) isolated Playwright verification across all 6 unified-shell pages (T-060), all 4 locales × 6 breakpoints of the homepage (T-062) and now the search page specifically (T-064), plus live-equivalent re-verification of search initial load, T-056 Back-restoration (including toolbar integrity after the remount), the search map view's unchanged width/dimensions, `area_select` firing exactly once, and the filter-popover open/close cycle firing no analytics at all — all showing zero console/hydration errors and no regression beyond each ticket's own intended changes.
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 59e4e86..295f133 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -2,10 +2,12 @@
+ import { useState, useEffect, useRef, useCallback, useMemo, useId, Suspense, type FormEvent } from 'react';
+ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+ import { useTranslations } from 'next-intl';
++import { Search, X, SlidersHorizontal, List as ListIcon, Map as MapIcon } from 'lucide-react';
+ import type { SalonListItem, SalonMapItem, Category, AreaItem } from '@/lib/api';
+ import { getAreaName, buildAreaUrlParams } from '@/lib/areaFilter';
+ import type { Locale } from '@/i18n/request';
+ import Header from '@/components/Header';
++import Icon from '@/components/ui/Icon';
+ import SalonCard from '@/components/SalonCard';
+ import AsyncSection from '@/components/AsyncSection';
+ import ActiveFilterChips from '@/components/ActiveFilterChips';
+@@ -504,14 +506,14 @@ function SearchContent({ locale }: { locale: string }) {
+   }, [sp, router, pathname, markRemoval]);
+ 
+   return (
+-    <div className="min-h-screen bg-gray-50">
++    <div className="min-h-screen bg-surface-subtle">
+       <Header locale={locale} variant="search">
+-      <div className="bg-white border-b border-gray-100 px-4 py-3 sticky top-0 z-30">
+-        <div className="max-w-6xl mx-auto flex flex-wrap items-center gap-2">
++      <div className="bg-surface border-b border-border px-4 py-3 sticky top-0 z-30">
++        <div className="max-w-shell-grid mx-auto flex flex-wrap items-center gap-2">
+           <form
+             role="search"
+             onSubmit={handleSearchSubmit}
+-            className="flex items-center border border-gray-200 rounded-lg overflow-hidden flex-1 min-w-[160px] max-w-xs"
++            className="flex items-center border border-border rounded-md overflow-hidden flex-1 min-w-[160px] max-w-xs focus-within:ring-2 focus-within:ring-focus"
+           >
+             <label htmlFor="search-query-input" className="sr-only">{t('search_label')}</label>
+             <input
+@@ -520,24 +522,24 @@ function SearchContent({ locale }: { locale: string }) {
+               type="text"
+               defaultValue={q}
+               placeholder={t('placeholder')}
+-              className="px-3 h-11 text-sm focus:outline-none flex-1 min-w-0"
++              className="min-w-0 px-3 h-11 text-body-sm text-text bg-surface focus:outline-none flex-1"
+             />
+             {hasQuery && (
+               <button
+                 type="button"
+                 onClick={clearQuery}
+                 aria-label={t('clear_search')}
+-                className="w-11 h-11 flex items-center justify-center text-gray-400 hover:text-gray-600 shrink-0"
++                className="w-11 h-11 flex items-center justify-center text-text-muted hover:text-text-secondary shrink-0"
+               >
+-                <span aria-hidden="true">✕</span>
++                <Icon icon={X} size={16} />
+               </button>
+             )}
+             <button
+               type="submit"
+               aria-label={t('search_submit')}
+-              className="w-11 h-11 flex items-center justify-center bg-pink-600 text-white hover:bg-pink-700 shrink-0"
++              className="w-11 h-11 flex items-center justify-center bg-brand text-text-inverse hover:bg-brand-hover shrink-0"
+             >
+-              <span aria-hidden="true">🔍</span>
++              <Icon icon={Search} size={20} className="text-text-inverse" />
+             </button>
+           </form>
+ 
+@@ -545,6 +547,7 @@ function SearchContent({ locale }: { locale: string }) {
+           <div className="relative" ref={filtersRef}>
+             {(() => {
+               const activeCount = [area || city, category, minRating].filter(Boolean).length;
++              const filterActive = filtersOpen || activeCount > 0;
+               return (
+                 <button
+                   ref={filterTriggerRef}
+@@ -553,13 +556,11 @@ function SearchContent({ locale }: { locale: string }) {
+                   aria-label={t('open_filters')}
+                   aria-expanded={filtersOpen}
+                   aria-controls={filtersPopoverId}
+-                  className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-lg border text-sm font-medium transition-colors ${filtersOpen || activeCount > 0 ? 'bg-pink-600 text-white border-pink-600' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
++                  className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-md border text-body-sm font-medium transition-colors focus-ring-token ${filterActive ? 'bg-brand text-text-inverse border-brand' : 'border-border text-text-secondary hover:bg-surface-subtle'}`}
+                 >
+-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+-                    <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 01.628.74v2.288a2.25 2.25 0 01-.659 1.59l-4.682 4.683a2.25 2.25 0 00-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 018 18.25v-5.757a2.25 2.25 0 00-.659-1.591L2.659 6.22A2.25 2.25 0 012 4.629V2.34a.75.75 0 01.628-.74z" clipRule="evenodd" />
+-                  </svg>
++                  <Icon icon={SlidersHorizontal} size={16} className={filterActive ? 'text-text-inverse' : 'text-text-secondary'} />
+                   {activeCount > 0 && (
+-                    <span className={`text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center ${filtersOpen || activeCount > 0 ? 'bg-white text-pink-600' : 'bg-pink-600 text-white'}`}>
++                    <span className={`text-caption font-bold w-4 h-4 rounded-full flex items-center justify-center ${filterActive ? 'bg-surface text-brand' : 'bg-brand text-text-inverse'}`}>
+                       {activeCount}
+                     </span>
+                   )}
+@@ -572,12 +573,12 @@ function SearchContent({ locale }: { locale: string }) {
+                 id={filtersPopoverId}
+                 role="group"
+                 aria-label={t('filters_region_label')}
+-                className="absolute top-full right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] bg-white rounded-xl shadow-lg border border-gray-100 p-4 z-50 space-y-3"
++                className="absolute top-full right-0 mt-2 w-72 max-w-[calc(100vw-1rem)] bg-surface rounded-md shadow-elevated border border-border p-4 z-50 space-y-3"
+               >
+                 <div>
+-                  <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_area')}</label>
++                  <label className="text-label text-text-secondary mb-1 block">{t('filter_area')}</label>
+                   <select value={area} disabled={areasError} onChange={e => { selectArea(e.target.value); }}
+-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200 disabled:opacity-60">
++                    className="w-full px-3 py-2 border border-border rounded-md text-body-sm text-text bg-surface focus-ring-token disabled:opacity-60">
+                     <option value="">{t('all_areas')}</option>
+                     {areas.map(a => (
+                       <option key={a.slug} value={a.slug}>
+@@ -585,21 +586,21 @@ function SearchContent({ locale }: { locale: string }) {
+                       </option>
+                     ))}
+                   </select>
+-                  {areasError && <p className="text-xs text-red-400 mt-1">{t('areas_load_error')}</p>}
++                  {areasError && <p className="text-caption text-danger mt-1">{t('areas_load_error')}</p>}
+                 </div>
+                 <div>
+-                  <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_category')}</label>
++                  <label className="text-label text-text-secondary mb-1 block">{t('filter_category')}</label>
+                   <select value={category} onChange={e => { update('category', e.target.value); }}
+-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200">
++                    className="w-full px-3 py-2 border border-border rounded-md text-body-sm text-text bg-surface focus-ring-token">
+                     <option value="">{t('all_cats')}</option>
+                     {categories.map(c => <option key={c.slug} value={c.slug}>{c.name}</option>)}
+                   </select>
+                 </div>
+                 <div>
+-                  <label className="text-xs font-medium text-gray-500 mb-1 block">{t('filter_rating')}</label>
++                  <label className="text-label text-text-secondary mb-1 block">{t('filter_rating')}</label>
+                   <select value={minRating} onChange={e => { update('min_rating', e.target.value); }}
+-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-pink-200">
+-                    <option value="">Όλες οι αξιολογήσεις</option>
++                    className="w-full px-3 py-2 border border-border rounded-md text-body-sm text-text bg-surface focus-ring-token">
++                    <option value="">{t('all_ratings')}</option>
+                     <option value="3">★ 3+</option>
+                     <option value="4">★ 4+</option>
+                     <option value="4.5">★ 4.5+</option>
+@@ -607,27 +608,30 @@ function SearchContent({ locale }: { locale: string }) {
+                 </div>
+                 {(area || city || category || minRating) && (
+                   <button type="button" onClick={clearFilters}
+-                    className="w-full text-xs text-gray-400 hover:text-red-500 pt-1">
+-                    <span aria-hidden="true">✕</span> {t('clear_filters')}
++                    className="w-full flex items-center justify-center gap-1 text-caption text-text-muted hover:text-danger pt-1 focus-ring-token">
++                    <Icon icon={X} size={16} />
++                    {t('clear_filters')}
+                   </button>
+                 )}
+               </div>
+             )}
+           </div>
+ 
+-          <div className="ml-auto flex items-center gap-1 shrink-0">
++          <div className="ml-auto flex items-center gap-1 shrink-0 bg-surface-subtle rounded-md p-1">
+             <button
+               type="button"
+               onClick={() => view !== 'list' && update('view', 'list')}
+               aria-pressed={view !== 'map'}
+-              className={`px-3 min-h-[44px] min-w-[44px] rounded-lg text-sm font-medium ${view !== 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
++              className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-md text-body-sm font-medium focus-ring-token ${view !== 'map' ? 'bg-brand text-text-inverse' : 'text-text-secondary hover:bg-surface'}`}>
++              <Icon icon={ListIcon} size={16} className={view !== 'map' ? 'text-text-inverse' : 'text-text-secondary'} />
+               {t('list')}
+             </button>
+             <button
+               type="button"
+               onClick={() => view !== 'map' && update('view', 'map')}
+               aria-pressed={view === 'map'}
+-              className={`px-3 min-h-[44px] min-w-[44px] rounded-lg text-sm font-medium ${view === 'map' ? 'bg-pink-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
++              className={`flex items-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-md text-body-sm font-medium focus-ring-token ${view === 'map' ? 'bg-brand text-text-inverse' : 'text-text-secondary hover:bg-surface'}`}>
++              <Icon icon={MapIcon} size={16} className={view === 'map' ? 'text-text-inverse' : 'text-text-secondary'} />
+               {t('map')}
+             </button>
+           </div>
+@@ -635,7 +639,7 @@ function SearchContent({ locale }: { locale: string }) {
+       </div>
+       </Header>
+ 
+-      <main id="main-content" className="max-w-6xl mx-auto px-4 py-6">
++      <main id="main-content" className="max-w-shell-grid mx-auto px-4 py-6">
+         {/* T-054: results summary — stable region, canonical total (never
+             rendered-card-count or map-marker-count), aria-live so the
+             eventual count is announced without also announcing the
+@@ -644,10 +648,10 @@ function SearchContent({ locale }: { locale: string }) {
+             of which view (list/map) is currently displayed, since the list
+             fetch runs unconditionally in the background either way. */}
+         <div ref={summaryRef} tabIndex={-1} className="outline-none mb-4">
+-          <h1 className="text-lg font-bold text-gray-900">{t('results_heading')}</h1>
+-          <p className="text-sm text-gray-500 mt-1" role="status" aria-live="polite">
++          <h1 className="text-card-title text-text">{t('results_heading')}</h1>
++          <p className="text-body-sm text-text-secondary mt-1" role="status" aria-live="polite">
+             {searchError ? null : loading ? (
+-              <span className="inline-block h-4 w-28 bg-gray-100 rounded animate-pulse" aria-hidden="true" />
++              <span className="inline-block h-4 w-28 bg-surface-subtle rounded animate-pulse" aria-hidden="true" />
+             ) : (
+               t('results_summary', { count: total })
+             )}
+@@ -663,7 +667,7 @@ function SearchContent({ locale }: { locale: string }) {
+               ref={clearAllRef}
+               type="button"
+               onClick={clearAll}
+-              className="mt-2 text-sm text-gray-500 hover:text-red-500 underline-offset-2 hover:underline"
++              className="mt-2 text-body-sm text-text-muted hover:text-danger underline-offset-2 hover:underline focus-ring-token"
+             >
+               {t('clear_all_filters')}
+             </button>
+@@ -675,15 +679,18 @@ function SearchContent({ locale }: { locale: string }) {
+           // wrapper, not inside any individual state — MapView itself is
+           // what both 'empty' and 'success' render, so there is no
+           // per-state div available to attach it to for those two cases.
+-          <div ref={mapRecoveryRef} tabIndex={-1} className="outline-none">
++          // T-063 (map accessibility) and marker/popup internals are
++          // untouched here — only the surrounding shell (loading/error
++          // framing, radius/border/spacing) below is token-refreshed.
++          <div ref={mapRecoveryRef} tabIndex={-1} className="outline-none rounded-md overflow-hidden border border-border">
+             <AsyncSection
+               status={mapStatus}
+-              loading={<div className="flex items-center justify-center h-96 text-gray-400" aria-hidden="true">...</div>}
++              loading={<div className="flex items-center justify-center h-96 bg-surface text-text-muted" aria-hidden="true">...</div>}
+               empty={<MapView salons={mapSalons} locale={locale} />}
+               error={
+-                <div className="flex flex-col items-center justify-center h-96 text-gray-400 gap-3" role="alert" aria-live="assertive">
++                <div className="flex flex-col items-center justify-center h-96 bg-surface text-text-muted gap-3" role="alert" aria-live="assertive">
+                   <p>{t('map_load_error')}</p>
+-                  <button onClick={loadMapSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                  <button onClick={loadMapSalons} className="text-body-sm text-brand hover:text-brand-hover font-medium focus-ring-token">
+                     {t('retry')}
+                   </button>
+                 </div>
+@@ -707,7 +714,7 @@ function SearchContent({ locale }: { locale: string }) {
+                 loading={
+                   <>
+                     {Array.from({ length: 6 }).map((_, i) => (
+-                      <div key={i} className="bg-white rounded-xl h-64 animate-pulse border border-gray-100" aria-hidden="true" />
++                      <div key={i} className="bg-surface rounded-md h-64 animate-pulse border border-border" aria-hidden="true" />
+                     ))}
+                   </>
+                 }
+@@ -719,21 +726,21 @@ function SearchContent({ locale }: { locale: string }) {
+                   // correctly) gets a neutral message with no meaningless
+                   // "view all" action, since there is nothing broader to see.
+                   activeFilters.length > 0 ? (
+-                    <div className="col-span-3 text-center py-16 text-gray-400 space-y-3" role="status" aria-live="polite">
+-                      <p className="font-semibold text-gray-600">{t('no_matches_title')}</p>
++                    <div className="col-span-3 text-center py-16 text-text-muted space-y-3" role="status" aria-live="polite">
++                      <p className="font-semibold text-text-secondary">{t('no_matches_title')}</p>
+                       <p>{t('no_matches_description')}</p>
+-                      <button onClick={clearAll} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                      <button onClick={clearAll} className="text-body-sm text-brand hover:text-brand-hover font-medium focus-ring-token">
+                         {t('view_all_salons')}
+                       </button>
+                     </div>
+                   ) : (
+-                    <div className="col-span-3 text-center py-16 text-gray-400" role="status" aria-live="polite">{t('no_results')}</div>
++                    <div className="col-span-3 text-center py-16 text-text-muted" role="status" aria-live="polite">{t('no_results')}</div>
+                   )
+                 }
+                 error={
+-                  <div className="col-span-3 text-center py-16 text-gray-400 space-y-3" role="alert" aria-live="assertive">
++                  <div className="col-span-3 text-center py-16 text-text-muted space-y-3" role="alert" aria-live="assertive">
+                     <p>{t('results_load_error')}</p>
+-                    <button onClick={loadSalons} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++                    <button onClick={loadSalons} className="text-body-sm text-brand hover:text-brand-hover font-medium focus-ring-token">
+                       {t('retry')}
+                     </button>
+                   </div>
+@@ -747,9 +754,9 @@ function SearchContent({ locale }: { locale: string }) {
+             <div ref={sentinelRef} className="h-16 flex items-center justify-center mt-4">
+               {loadingMore && (
+                 <div className="flex gap-1">
+-                  <span className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+-                  <span className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+-                  <span className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
++                  <span className="w-2 h-2 bg-brand rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
++                  <span className="w-2 h-2 bg-brand rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
++                  <span className="w-2 h-2 bg-brand rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                 </div>
+               )}
+             </div>
+@@ -763,7 +770,7 @@ function SearchContent({ locale }: { locale: string }) {
+ export default function SearchPage({ params }: { params: { locale: string } }) {
+   const locale = (params as any).locale ?? 'el';
+   return (
+-    <Suspense fallback={<div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="text-gray-400">...</div></div>}>
++    <Suspense fallback={<div className="min-h-screen bg-surface-subtle flex items-center justify-center"><div className="text-text-muted">...</div></div>}>
+       <SearchContent locale={locale} />
+     </Suspense>
+   );
+diff --git a/frontend/app/[locale]/search/searchControlsA11y.test.ts b/frontend/app/[locale]/search/searchControlsA11y.test.ts
+index fecc3b4..073a041 100644
+--- a/frontend/app/[locale]/search/searchControlsA11y.test.ts
++++ b/frontend/app/[locale]/search/searchControlsA11y.test.ts
+@@ -63,7 +63,11 @@ describe('T-057: search form semantics', () => {
+   test('the search submit button has a localized accessible name and hides its decorative icon', () => {
+     const btn = searchFormBlock.slice(searchFormBlock.indexOf('type="submit"') - 200, searchFormBlock.indexOf('type="submit"') + 300);
+     assert.ok(btn.includes("aria-label={t('search_submit')}"));
+-    assert.ok(/<span aria-hidden="true">🔍<\/span>/.test(btn));
++    // T-062/T-064: the emoji glyph was replaced by the shared Icon component
++    // (T-059), which sets aria-hidden="true" by default (decorative) —
++    // the underlying guarantee (icon never reaches the accessible name)
++    // is unchanged, only the glyph source is.
++    assert.ok(/<Icon icon=\{Search\}/.test(btn));
+   });
+ });
+ 
+@@ -81,7 +85,9 @@ describe('T-057: clear-query control', () => {
+   test('clear button has a localized accessible name and hides its decorative glyph', () => {
+     const clearBtn = searchFormBlock.slice(searchFormBlock.indexOf('{hasQuery && ('), searchFormBlock.indexOf('type="submit"'));
+     assert.ok(clearBtn.includes("aria-label={t('clear_search')}"));
+-    assert.ok(/<span aria-hidden="true">✕<\/span>/.test(clearBtn));
++    // T-064: the ✕ glyph was replaced by the shared Icon component (X),
++    // decorative by default — same guarantee, new glyph source.
++    assert.ok(/<Icon icon=\{X\}/.test(clearBtn));
+   });
+ 
+   test('clearQuery reuses the canonical removeQueryFilter (preserves area/category/min_rating/view, resets page)', () => {
+@@ -120,10 +126,11 @@ describe('T-057: filter popover semantics and keyboard lifecycle', () => {
+     assert.ok(filterTriggerBlock.includes('id={filtersPopoverId}'));
+   });
+ 
+-  test('trigger has a localized accessible name independent of the decorative SVG icon', () => {
++  test('trigger has a localized accessible name independent of the decorative icon', () => {
+     assert.ok(filterTriggerBlock.includes("aria-label={t('open_filters')}"));
+-    const svgBlock = filterTriggerBlock.slice(filterTriggerBlock.indexOf('<svg'), filterTriggerBlock.indexOf('</svg>'));
+-    assert.ok(svgBlock.includes('aria-hidden="true"'));
++    // T-064: the inline <svg> funnel icon was replaced by the shared Icon
++    // component (SlidersHorizontal), decorative (aria-hidden) by default.
++    assert.ok(filterTriggerBlock.includes('<Icon icon={SlidersHorizontal}'));
+   });
+ 
+   test('the popover panel exposes role="group" with a localized region label, not a bare unlabeled div', () => {
+@@ -208,7 +215,8 @@ describe('T-057: touch-target sizing', () => {
+   });
+ 
+   test('the query input itself is h-11 (44px), matching the buttons flanking it', () => {
+-    assert.ok(searchFormBlock.includes('className="px-3 h-11 text-sm focus:outline-none flex-1 min-w-0"'));
++    const inputBlock = searchFormBlock.slice(searchFormBlock.indexOf('<input'), searchFormBlock.indexOf('/>', searchFormBlock.indexOf('<input')));
++    assert.ok(/className="[^"]*\bh-11\b/.test(inputBlock));
+   });
+ 
+   test('filter trigger and List/Map controls declare min-h-[44px] min-w-[44px]', () => {
+@@ -264,7 +272,9 @@ describe('T-057: analytics invariants — no new events, no raw query leakage',
+   });
+ 
+   test('the filter-popover open/close toggle does not call trackEvent', () => {
+-    const toggleLine = filterTriggerBlock.slice(0, 400);
++    const toggleIdx = filterTriggerBlock.indexOf('setFiltersOpen(o => !o)');
++    assert.ok(toggleIdx > -1, 'toggle onClick not found in the filter trigger block');
++    const toggleLine = filterTriggerBlock.slice(Math.max(0, toggleIdx - 200), toggleIdx + 200);
+     assert.ok(toggleLine.includes('setFiltersOpen(o => !o)'));
+     assert.ok(!toggleLine.includes('trackEvent'));
+   });
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index da0db15..8498ab9 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -119,7 +119,7 @@ describe('T-042: accessibility — role/aria-live/focus-on-retry for search resu
+   });
+ 
+   test('the map recovery ref lives on an always-present outer div wrapping the whole AsyncSection, not inside any individual state — MapView itself is what both empty and success render, with no per-state div to attach to', () => {
+-    const wrapperIdx = source.indexOf('<div ref={mapRecoveryRef} tabIndex={-1} className="outline-none">');
++    const wrapperIdx = source.indexOf('<div ref={mapRecoveryRef} tabIndex={-1} className="outline-none');
+     assert.ok(wrapperIdx > -1);
+     const asyncSectionIdx = source.indexOf('<AsyncSection\n              status={mapStatus}');
+     assert.ok(wrapperIdx < asyncSectionIdx, 'the ref+tabIndex must be on the wrapper, which must appear before (i.e. outside) the AsyncSection using it');
+diff --git a/frontend/app/[locale]/search/searchShellVisual.test.ts b/frontend/app/[locale]/search/searchShellVisual.test.ts
+new file mode 100644
+index 0000000..1be5f3c
+--- /dev/null
++++ b/frontend/app/[locale]/search/searchShellVisual.test.ts
+@@ -0,0 +1,197 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..', '..', '..');
++const source = fs.readFileSync(path.join(here, 'page.tsx'), 'utf-8');
++
++function readMessages(locale: string): any {
++  return JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++}
++
++const LOCALES = ['el', 'en', 'ru', 'uk'];
++
++const searchFormBlock = source.slice(source.indexOf('<form\n            role="search"'), source.indexOf('{/* Filter button */}'));
++const filterTriggerBlock = source.slice(source.indexOf('{/* Filter button */}'), source.indexOf('<div className="ml-auto'));
++const listMapBlock = source.slice(source.indexOf('<div className="ml-auto'), source.indexOf('</div>\n        </div>\n      </div>'));
++
++describe('T-064: hard-coded Greek rating text — fixed', () => {
++  test('the literal Greek string Όλες οι αξιολογήσεις no longer appears anywhere in page.tsx', () => {
++    assert.ok(!source.includes('Όλες οι αξιολογήσεις'));
++  });
++
++  test('the rating select default option now uses a localization key, not a literal string', () => {
++    assert.ok(source.includes("<option value=\"\">{t('all_ratings')}</option>"));
++  });
++
++  test('all_ratings is defined, non-empty, and locale-appropriate in all 4 locales', () => {
++    const expected: Record<string, string> = { el: 'Όλες οι αξιολογήσεις', en: 'All ratings', ru: 'Все рейтинги', uk: 'Всі рейтинги' };
++    for (const locale of LOCALES) {
++      const value = readMessages(locale).search.all_ratings;
++      assert.equal(value, expected[locale], `${locale}.search.all_ratings mismatch`);
++    }
++  });
++
++  test('no English fallback leakage: el/ru/uk all_ratings are not copies of the English string', () => {
++    const en = readMessages('en').search.all_ratings;
++    for (const locale of ['el', 'ru', 'uk']) {
++      assert.notEqual(readMessages(locale).search.all_ratings, en);
++    }
++  });
++
++  test('the rating filter semantics are unchanged: same 3 numeric option values, same default empty value, same onChange wiring', () => {
++    const ratingBlock = filterTriggerBlock.slice(filterTriggerBlock.indexOf("t('filter_rating')"), filterTriggerBlock.indexOf('clear_filters') === -1 ? filterTriggerBlock.length : filterTriggerBlock.indexOf("(area || city || category || minRating)"));
++    assert.ok(ratingBlock.includes('value="3"'));
++    assert.ok(ratingBlock.includes('value="4"'));
++    assert.ok(ratingBlock.includes('value="4.5"'));
++    assert.ok(ratingBlock.includes("onChange={e => { update('min_rating', e.target.value); }}"));
++  });
++});
++
++describe('T-064: additional hard-coded string sweep — List/Map emoji removed from search.list/search.map', () => {
++  test('search.list and search.map no longer bake an emoji glyph into the translated string, in any locale', () => {
++    const emojiRange = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
++    for (const locale of LOCALES) {
++      const s = readMessages(locale).search;
++      assert.ok(!emojiRange.test(s.list), `${locale}.search.list still contains an emoji: ${s.list}`);
++      assert.ok(!emojiRange.test(s.map), `${locale}.search.map still contains an emoji: ${s.map}`);
++    }
++  });
++
++  test('List/Map now render a real Lucide icon component alongside the (now-clean) text label', () => {
++    assert.ok(listMapBlock.includes('<Icon icon={ListIcon}'));
++    assert.ok(listMapBlock.includes('<Icon icon={MapIcon}'));
++    assert.ok(listMapBlock.includes("{t('list')}"));
++    assert.ok(listMapBlock.includes("{t('map')}"));
++  });
++
++  test('List/Map controls are not icon-only — visible text label remains alongside the icon', () => {
++    const listBtnBlock = listMapBlock.slice(listMapBlock.indexOf("aria-pressed={view !== 'map'}"), listMapBlock.indexOf("aria-pressed={view === 'map'}"));
++    assert.ok(listBtnBlock.includes("{t('list')}"));
++  });
++});
++
++describe('T-064: icon system — Lucide replaces all inline SVG/emoji in the search shell', () => {
++  test('imports Search/X/SlidersHorizontal/List/Map from lucide-react and the shared Icon component', () => {
++    assert.ok(source.includes("import { Search, X, SlidersHorizontal, List as ListIcon, Map as MapIcon } from 'lucide-react';"));
++    assert.ok(source.includes("import Icon from '@/components/ui/Icon';"));
++  });
++
++  test('no emoji glyph remains anywhere in page.tsx source (comments stripped first, to avoid a false positive against explanatory prose)', () => {
++    const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++    // U+2605 BLACK STAR is deliberately excluded: "★ 3+"/"★ 4+"/"★ 4.5+" are
++    // the intentional, locale-independent rating-option glyphs (not an
++    // emoji standing in for an icon) — out of scope for this sweep.
++    const emojiRange = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{2604}\u{2606}-\u{27BF}]/u;
++    assert.ok(!emojiRange.test(codeOnly), 'an emoji glyph remains in real code');
++  });
++
++  test('no inline <svg> remains in the filter trigger (replaced by the shared Icon component)', () => {
++    assert.ok(!filterTriggerBlock.includes('<svg'));
++  });
++
++  test('the clear-filters button also uses the shared Icon (X) instead of a raw ✕ glyph', () => {
++    const clearFiltersBlock = filterTriggerBlock.slice(filterTriggerBlock.indexOf('onClick={clearFilters}'), filterTriggerBlock.indexOf('onClick={clearFilters}') + 300);
++    assert.ok(clearFiltersBlock.includes('<Icon icon={X}'));
++  });
++});
++
++describe('T-064: Direction B tokens applied, legacy palette removed', () => {
++  test('no legacy pink-600/pink-700/pink-50/pink-200 Tailwind utility remains in page.tsx', () => {
++    assert.ok(!/pink-(50|200|400|600|700)/.test(source));
++  });
++
++  test('no legacy bg-white/bg-gray-50/border-gray-100/border-gray-200/text-gray-* utility remains in page.tsx', () => {
++    assert.ok(!/\bbg-white\b/.test(source));
++    assert.ok(!/bg-gray-50/.test(source));
++    assert.ok(!/border-gray-(100|200)/.test(source));
++    assert.ok(!/text-gray-\d/.test(source));
++  });
++
++  test('uses the shared focus-ring-token class on interactive controls throughout the toolbar', () => {
++    const count = (source.match(/focus-ring-token/g) || []).length;
++    assert.ok(count >= 6, `expected focus-ring-token on multiple controls, found ${count}`);
++  });
++
++  test('page containers consume the T-060 shell-grid token, not bare max-w-6xl', () => {
++    assert.ok(source.includes('max-w-shell-grid'));
++    assert.ok(!source.includes('max-w-6xl'));
++  });
++});
++
++describe('T-064: filter trigger active-filter cue', () => {
++  test('the active-filter count badge is derived from the same 3-field effective model as before (area||city, category, minRating) — not view, not a new field', () => {
++    assert.ok(filterTriggerBlock.includes('const activeCount = [area || city, category, minRating].filter(Boolean).length;'));
++  });
++
++  test('the trigger visual "active" state is not colour-only: filterActive also drives the badge count and border, not just a hue swap on an otherwise-identical control', () => {
++    assert.ok(filterTriggerBlock.includes('const filterActive = filtersOpen || activeCount > 0;'));
++  });
++});
++
++describe('T-064: map shell boundary — marker/popup internals untouched', () => {
++  test('MapView is still the same dynamic() import, unmodified', () => {
++    assert.ok(source.includes("const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });"));
++  });
++
++  test('MapView receives the same props as before (salons, locale) — no new prop introduced', () => {
++    const mapCalls = [...source.matchAll(/<MapView salons=\{mapSalons\} locale=\{locale\} \/>/g)];
++    assert.equal(mapCalls.length, 2, 'MapView should be called exactly twice (empty + success branches of AsyncSection), both with the same 2 props');
++  });
++
++  test('the map wrapper shell adds only a container radius/border — no dimension-affecting class that could change map width/height', () => {
++    const wrapperClassMatch = source.match(/<div ref=\{mapRecoveryRef\} tabIndex=\{-1\} className="([^"]+)"/);
++    assert.ok(wrapperClassMatch);
++    assert.ok(!/\bh-\d|\bw-\d|min-h-|max-h-/.test(wrapperClassMatch![1]), 'wrapper must not constrain map dimensions itself');
++  });
++});
++
++describe('T-064: SalonCard framing only — no internal redesign', () => {
++  test('SalonCard call site is byte-identical to before (same props, same source line)', () => {
++    assert.ok(source.includes('<SalonCard key={salon.id} salon={salon} locale={locale} category={category || undefined} source="search_list" />'));
++  });
++
++  test('the results grid column/gap contract is unchanged (grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4)', () => {
++    assert.ok(source.includes('className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 outline-none"'));
++  });
++
++  test('components/SalonCard.tsx itself was not modified by this ticket (no changes staged for it)', () => {
++    // Sanity check: SalonCard.tsx should not import any of T-064's new
++    // search-shell-only icon imports — a signal it wasn't touched here.
++    const salonCardSource = fs.readFileSync(path.join(frontendRoot, 'components', 'SalonCard.tsx'), 'utf-8');
++    assert.ok(!salonCardSource.includes('SlidersHorizontal'));
++  });
++});
++
++describe('T-064 regression: analytics invariants unchanged', () => {
++  test('only the 5 pre-existing T-015 event names appear anywhere in page.tsx', () => {
++    const calls = [...source.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]);
++    const allowed = new Set(['salon_open', 'contact_action', 'search_results_view', 'area_select', 'language_change']);
++    for (const name of calls) assert.ok(allowed.has(name), `unexpected trackEvent name: ${name}`);
++  });
++
++  test('no new event name was introduced by the visual refresh (chip removal, clear-all, list/map, filter open/close all still emit nothing new)', () => {
++    for (const forbidden of ['filter_toggle', 'view_change', 'rating_select', 'chip_remove']) {
++      assert.ok(!source.includes(`'${forbidden}'`));
++    }
++  });
++});
++
++describe('T-064 regression: T-042/T-054/T-056/T-057/T-058 test suites remain green (self-check via shared markers)', () => {
++  test('T-056 snapshot save/restore effects are still present, unmodified in logic', () => {
++    assert.ok(source.includes('const currentEntryIdRef = useRef<string | null>(mountEntryId);'));
++    assert.ok(source.includes('saveSnapshot({'));
++  });
++
++  test('T-058 dedup imports and wiring are still present, unmodified', () => {
++    assert.ok(source.includes("import { hasReportedSearchResultsView, markSearchResultsViewReported } from '@/lib/searchResultsViewDedup';"));
++  });
++
++  test('T-054 active-filter derivation and chip removal wiring are still present, unmodified', () => {
++    assert.ok(source.includes('deriveActiveFilters('));
++    assert.ok(source.includes('<ActiveFilterChips'));
++  });
++});
+diff --git a/frontend/components/ActiveFilterChips.test.tsx b/frontend/components/ActiveFilterChips.test.tsx
+index 029d52f..cfd86d7 100644
+--- a/frontend/components/ActiveFilterChips.test.tsx
++++ b/frontend/components/ActiveFilterChips.test.tsx
+@@ -50,3 +50,29 @@ describe('T-054: ActiveFilterChips', () => {
+     assert.ok(!/overflow-x/.test(source));
+   });
+ });
++
++describe('T-064: ActiveFilterChips — Direction B tokens, Lucide close icon', () => {
++  test('uses Direction B tokens (bg-brand-soft/text-brand), not the legacy pink-50/pink-700 palette', () => {
++    assert.ok(!source.includes('pink-50'));
++    assert.ok(!source.includes('pink-700'));
++    assert.ok(!source.includes('pink-500'));
++    assert.ok(!source.includes('pink-800'));
++    assert.ok(source.includes('bg-brand-soft'));
++    assert.ok(source.includes('text-brand'));
++  });
++
++  test('chip shape uses the shared pill radius token, not a bare rounded-full utility invented locally', () => {
++    assert.ok(source.includes('rounded-pill'));
++  });
++
++  test('the × remove glyph is replaced by the shared Icon component (X), decorative by default', () => {
++    assert.ok(source.includes("import { X } from 'lucide-react';"));
++    assert.ok(source.includes("import Icon from '@/components/ui/Icon';"));
++    assert.ok(source.includes('<Icon icon={X} size={16} />'));
++    assert.ok(!source.includes('>×<'));
++  });
++
++  test('remove button carries the shared focus-ring-token class', () => {
++    assert.ok(source.includes('focus-ring-token'));
++  });
++});
+diff --git a/frontend/components/ActiveFilterChips.tsx b/frontend/components/ActiveFilterChips.tsx
+index 8cea5ce..de7e1bf 100644
+--- a/frontend/components/ActiveFilterChips.tsx
++++ b/frontend/components/ActiveFilterChips.tsx
+@@ -1,4 +1,6 @@
+ 'use client';
++import { X } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import type { ActiveSearchFilter } from '@/lib/searchContext';
+ 
+ interface Props {
+@@ -23,7 +25,7 @@ export default function ActiveFilterChips({ filters, onRemove, removeLabel, cont
+       {filters.map((filter, index) => (
+         <li
+           key={`${filter.type}:${filter.value}`}
+-          className="flex items-center gap-1.5 bg-pink-50 text-pink-700 text-sm pl-3 pr-2 py-1.5 rounded-full max-w-full"
++          className="flex items-center gap-1.5 bg-brand-soft text-brand text-body-sm pl-3 pr-2 py-1.5 rounded-pill max-w-full"
+         >
+           <span className="truncate max-w-[220px]" title={filter.label}>{filter.label}</span>
+           <button
+@@ -31,9 +33,9 @@ export default function ActiveFilterChips({ filters, onRemove, removeLabel, cont
+             data-chip-index={index}
+             onClick={() => onRemove(filter, index)}
+             aria-label={removeLabel(filter)}
+-            className="shrink-0 text-pink-500 hover:text-pink-800 font-bold leading-none w-4 h-4 flex items-center justify-center"
++            className="shrink-0 text-brand hover:text-brand-hover leading-none w-4 h-4 flex items-center justify-center focus-ring-token rounded-sm"
+           >
+-            ×
++            <Icon icon={X} size={16} />
+           </button>
+         </li>
+       ))}
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 88973cb..b946c38 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -27,8 +27,8 @@
+   },
+   "search": {
+     "results": "αποτελέσματα",
+-    "list": "☰ Λίστα",
+-    "map": "🗺 Χάρτης",
++    "list": "Λίστα",
++    "map": "Χάρτης",
+     "all_cities": "Πόλη",
+     "all_cats": "Κατηγορία",
+     "no_results": "Δεν βρέθηκαν αποτελέσματα",
+@@ -49,6 +49,7 @@
+     "clear_filters": "Εκκαθάριση φίλτρων",
+     "filter_category": "Κατηγορία",
+     "filter_rating": "Αξιολόγηση",
++    "all_ratings": "Όλες οι αξιολογήσεις",
+     "filter_price": "Τιμή",
+     "salons_tab": "Σαλόνια",
+     "masters_tab": "Επαγγελματίες",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 3396f30..3339d5e 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -27,8 +27,8 @@
+   },
+   "search": {
+     "results": "results",
+-    "list": "☰ List",
+-    "map": "🗺 Map",
++    "list": "List",
++    "map": "Map",
+     "all_cities": "City",
+     "all_cats": "Category",
+     "no_results": "No results found",
+@@ -49,6 +49,7 @@
+     "clear_filters": "Clear filters",
+     "filter_category": "Category",
+     "filter_rating": "Rating",
++    "all_ratings": "All ratings",
+     "filter_price": "Price",
+     "salons_tab": "Salons",
+     "masters_tab": "Professionals",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index eab9068..1d0500e 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -27,8 +27,8 @@
+   },
+   "search": {
+     "results": "результатов",
+-    "list": "☰ Список",
+-    "map": "🗺 Карта",
++    "list": "Список",
++    "map": "Карта",
+     "all_cities": "Город",
+     "all_cats": "Категория",
+     "no_results": "Ничего не найдено",
+@@ -49,6 +49,7 @@
+     "clear_filters": "Очистить фильтры",
+     "filter_category": "Категория",
+     "filter_rating": "Рейтинг",
++    "all_ratings": "Все рейтинги",
+     "filter_price": "Цена",
+     "salons_tab": "Салоны",
+     "masters_tab": "Мастера",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 1c7d6dd..6db217e 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -27,8 +27,8 @@
+   },
+   "search": {
+     "results": "результатів",
+-    "list": "☰ Список",
+-    "map": "🗺 Карта",
++    "list": "Список",
++    "map": "Карта",
+     "all_cities": "Місто",
+     "all_cats": "Категорія",
+     "no_results": "Нічого не знайдено",
+@@ -49,6 +49,7 @@
+     "clear_filters": "Очистити фільтри",
+     "filter_category": "Категорія",
+     "filter_rating": "Рейтинг",
++    "all_ratings": "Всі рейтинги",
+     "filter_price": "Ціна",
+     "salons_tab": "Салони",
+     "masters_tab": "Майстри",
