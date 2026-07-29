@@ -1,0 +1,901 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index ca6b0ac..c6d398e 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1637,6 +1637,43 @@ T-066 regressions: 0
+ 
+ ---
+ 
++### T-067 — Visual Baseline Consistency & Beta Baseline Verification
++**Priority:** P0 (seventh and final ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅, T-066 ✅
++**Reserved separately:** T-063 — Map Accessibility (explicitly untouched; a test asserts no keyboard/tabIndex work entered `MapView`)
++**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge, deploy, and the production smoke that fixes the Beta Baseline timestamp.
++
++**Ticket-identity note:** T-067 was confirmed genuinely unused before branching — no collision.
++
++**Scope:** `components/CookieConsent.tsx`, `app/[locale]/privacy/page.tsx`, `app/[locale]/cookies/page.tsx`, `app/[locale]/not-found.tsx`, `components/MapView.tsx` (overlay chrome only), `package.json` test script. Full contract: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-067 section.
++
++**Key changes:**
++- **CI test-coverage gap fixed (most consequential finding):** `npm test` enumerated 38 files by hand while 45 existed — **every visual regression suite from T-062/T-064/T-065/T-066 had never run in CI.** Replaced with filesystem discovery; suite count went 856 → 1071 on the same commit. A guard test blocks any return to a hardcoded list.
++- **Cookie consent:** Direction B tokens, Lucide `X` for the `×` glyph, focus rings added (there were none). Accept/Reject moved onto one shared class constant — equal visual weight is a GDPR requirement, not a style choice; the constant is asserted to carry no brand fill.
++- **Legal pages:** `max-w-shell-reading` (the token T-060 created for exactly this), typography scale, focus ring on the cross-link. Fixed a 320px overflow this ticket introduced by raising the h1 to 28px, which pushed the unbreakable Russian word "конфиденциальности" past the viewport — resolved with inherited `break-words` + `hyphens-auto`.
++- **MapView overlay:** two more hardcoded Greek strings found and fixed (`Εντοπισμός τοποθεσίας`, `Η θέση σας`) — the third and fourth instances of this bug class in four consecutive tickets. The quick-dial link was emoji-only with **no accessible name at all**; now named. Marker/popup/zoom logic untouched.
++- **Recorded, not silently fixed:** the real 404 users see is Next.js's built-in page (no root `app/not-found.tsx`); `SearchFilters.tsx` is dead code; `SalonCard`'s `♀`/`♂` glyphs need a product decision. Each is pinned by a test. Auth/dashboard/admin (~394 legacy utilities) confirmed out of phase scope.
++
++**Verification:** 51 new tests + 1 pre-existing T-018 test updated (locator only, guarantee strengthened). **1071/1071 passing**, and for the first time that covers every test file in the repo. Lint/build clean; bundle flat. Isolated Playwright: 32 combinations (4 locales × 2 legal pages × 4 breakpoints) — zero overflow, one h1, landmark present, 768px reading measure, zero console errors. Consent gating re-verified: zero GA4/GTM requests and no `dataLayer`/`gtag` globals with consent absent.
++
++**Beta Visual Baseline:** not yet started. Begins at the **production deployment timestamp after a successful smoke**, not at merge. Until recorded: analytics valid for instrumentation and preliminary observations only.
++
++**Acceptance Criteria:**
++- [x] Cookie consent UI on Direction B, with equal Accept/Reject weight preserved and enforced
++- [x] Legal pages at reading width with shared typography
++- [x] Shared `AsyncSection` states verified aligned (already tokenised — no change needed)
++- [x] Full cross-page consistency audit, with out-of-scope surfaces explicitly recorded
++- [x] All 4 locales × main breakpoints verified
++- [x] Accessibility verified (landmarks, single h1, accessible names, focus rings)
++- [x] Consent + GA4 invariants verified unchanged; no analytics taxonomy change
++- [x] T-063 Map Accessibility not started (asserted by test)
++- [x] No ranking experiments
++- [ ] Live production verification — pending merge/deploy
++- [ ] Beta Visual Baseline timestamp recorded — pending successful production smoke
++- [ ] Independent review — pending **APPROVE**
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+index 893d825..0d3c94d 100644
+--- a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -1,6 +1,6 @@
+ # Visual Baseline v1 — foundation specification
+ 
+-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), and T-066 (salon detail). All conversion-facing screens are now covered. Only a final consistency pass (cookie consent UI, legal pages, remaining shared `AsyncSection` states) and the official Beta Visual Baseline date remain. Do not treat this document as "Visual Baseline v1 complete" until that pass lands.
++**Status:** all seven tickets landed — T-059 (tokens, typography, icon system), T-060 (global shell), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), T-066 (salon detail), T-067 (consistency pass: cookie consent, legal pages, MapView overlay, 404, CI test-coverage fix). The **official Beta Visual Baseline begins at T-067's production deployment timestamp**, recorded in the T-067 section below — not at merge time. Until that timestamp is present, analytics remain valid for instrumentation and preliminary observations only.
+ 
+ **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
+ 
+@@ -164,7 +164,8 @@ Deliberately not generalized further — no abstract component library, no prema
+ | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
+ | SalonCard | ~~SalonCard visual refresh~~ — **done, T-065** | First ticket in the sequence allowed to touch the card's internal appearance, not just surrounding chrome |
+ | Salon detail (7-box consolidation, CTA hierarchy, gallery) | ~~Salon detail visual refresh~~ — **done, T-066** | Fixed the hardcoded Greek `+N φωτογραφίες` overlay; also found and fixed a real gallery-layout bug (see T-066 below) |
+-| Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
++| Cookie consent UI, legal pages, remaining AsyncSection states | ~~Shared async/legal/cookie alignment + final consistency pass~~ — **done, T-067** | `AsyncSection` needed no work (already tokenised). Also fixed two more hardcoded-Greek strings in `MapView`, the 320px legal-page overflow, and a CI gap where 7 test files never ran |
++| Auth / dashboard / admin / account pages | **Not in Visual Baseline v1** — separate future phase | ~394 legacy colour utilities across 12 files; deliberately out of scope (see T-067) |
+ 
+ ## T-060 — Global shell (header, footer, mobile navigation, language selector)
+ 
+@@ -615,6 +616,80 @@ Three tiers, replacing the flat 7-box stack:
+ T-066 regressions: 0
+ ```
+ 
++## T-067 — Visual Baseline Consistency & Beta Baseline Verification
++
++**Scope:** `components/CookieConsent.tsx`, `app/[locale]/privacy/page.tsx`, `app/[locale]/cookies/page.tsx`, `app/[locale]/not-found.tsx`, `components/MapView.tsx` (overlay chrome only), plus `package.json`'s test script. The final consistency pass of Visual Baseline v1 — no new surfaces, no product behaviour, no analytics changes.
++
++**Ticket identity:** T-067 was confirmed genuinely unused before branching — no collision. T-063 (Map Accessibility) remains reserved and untouched; see the explicit boundary note below.
++
++### Cookie consent UI
++
++Direction B tokens applied. The `×` glyph became a Lucide `X` with its existing accessible name preserved, and every control gained `focus-ring-token` (previously there was no visible focus state at all).
++
++**The one deliberate non-change, now enforced:** Accept and Reject share a *single* class constant rather than two matching literals. Equal visual weight between the two choices is a legal requirement, not a style preference — a more prominent "Accept" is the consent dark pattern that EDPB guidance and GDPR Art. 4(11) ("freely given") treat as invalidating consent. The constant carries a neutral surface, never a brand fill, since brand-filling either side tilts the pair. A pre-existing T-018 test already asserted this; it located the buttons by matching two inline `className="…"` literals, so the refactor to a shared constant broke its *locator* while strengthening the *guarantee*. The test was updated to accept either form and additionally assert the shared constant contains no `bg-brand` — the same "update how it locates, never what it checks" discipline used in T-064/T-065.
++
++Consent logic is untouched: `getAnalyticsConsent`/`setAnalyticsConsent`/`isAnalyticsConsentFeatureEnabled` wiring, the Escape-closes-settings-only rule, and the initial `'hidden'` state are byte-identical. `lib/consent.ts` and `lib/analytics.ts` were not modified at all.
++
++### Legal pages
++
++Both pages moved to `max-w-shell-reading` — T-060 defined that 768px token with legal pages as its stated use case, so this is the swap it was created for. Tokens and the typography scale applied throughout; the cookie→privacy cross-link gained a focus ring.
++
++**A regression found and fixed by this ticket's own sweep:** raising the `h1` from `text-2xl` (24px) to `text-page-title` (28px) pushed the Russian title "конфиденциальности" — a single 19-character unbreakable token — past the 320px viewport. Caught by the isolated breakpoint sweep, not by any test, and precisely located by comparing `scrollWidth` against `clientWidth` per element (the element *boxes* all measured within the viewport; only the text content overflowed, so a bounding-rect check alone reported nothing). Fixed with `break-words` on `<main>`: `overflow-wrap` is an inherited property, so one declaration covers the headings and every paragraph, including body literals like `_ga/_ga_<container-id>` and `«/account/messages»` that would overflow the same way. `hyphens-auto` was added alongside it for cleaner break points — `<html lang>` is correctly set per locale, so hyphenation dictionaries apply, with `break-words` remaining the guaranteed fallback. A regression test now pins the class.
++
++### MapView overlay — and the T-063 boundary
++
++Overlay chrome only: the status pill, the selected-salon preview card, and its two action links. Leaflet marker creation, popup binding, clustering, centre/zoom, and the preview link's navigation semantics (including the plain-`<a href>` behaviour T-056 documented as a known limitation) are all untouched. **No keyboard handlers and no `tabIndex` were added to any map internal** — that is T-063's scope and was deliberately not started; a test asserts their continued absence so this boundary cannot erode silently.
++
++**Two more hardcoded-locale bugs found, the third and fourth of this class:** after T-064's `Όλες οι αξιολογήσεις` and T-066's `+7 φωτογραφίες`, the sweep found `📍 Εντοπισμός τοποθεσίας...` (the geolocation status pill) and `📍 Η θέση σας` (the user-location marker tooltip, bound through Leaflet's `bindTooltip`) — both hardcoded Greek rendered in all four locales. Fixed with new `locating_position` / `your_location` keys across all four locales. This makes four instances of the same bug found in four consecutive tickets, in four different files, which is the strongest argument yet that the pattern is systemic rather than incidental.
++
++The quick-dial link was an **emoji-only control (`📞`) with no text and no `aria-label` — no accessible name whatsoever**. Swapping the emoji for a Lucide icon forced the fix: it now reuses the existing `callSalon` string rather than adding a key. The preview close button likewise had no accessible name (bare `×`) and gained `close_preview`.
++
++The user-location marker's blue (`#2563eb`/`#3b82f6`) was deliberately **not** tokenised to brand pink: blue is the cross-product convention for "your location" and must stay visually distinct from the pink salon markers. It is recorded below as an intentional exception, not outstanding debt.
++
++### Test coverage gap — the most consequential finding
++
++`npm test` enumerated **38 test files by hand while 45 existed on disk.** The seven omitted files were `homepage.test.ts`, `searchShellVisual.test.ts`, `SalonCardVisual.test.tsx`, `salonDetailVisual.test.ts`, `CategoryGrid.test.tsx`, `AreaGrid.test.tsx`, and `SearchBar.test.tsx` — that is, **every visual regression suite created by T-062, T-064, T-065 and T-066 had never run in CI.** Each of those tickets ran its suite manually via an explicit path list and correctly reported it green, and each PR's CI was also genuinely green — but CI was green on a subset, and nothing in the process would have revealed the divergence. Declaring a Beta Visual Baseline on top of that would have meant declaring it on unverified regression coverage.
++
++Fixed by replacing the hardcoded list with filesystem discovery (`find … -print0 | xargs -0 node --import tsx --test`; Node 18 does not support globs in `--test`, and npm runs scripts under `sh`, so shell globstar is unavailable). `xargs` propagates a non-zero exit, so a failing suite still fails CI — verified explicitly. Suite count went **856 → 1020** on the same commit, purely from files that were always there. A guard test now fails if the script ever returns to enumerating individual files.
++
++### Findings recorded, deliberately not "fixed"
++
++Three items were surfaced by the audit and left alone on purpose, each pinned by a test so it cannot spread unnoticed:
++
++- **The 404 page is not what users actually see.** `app/[locale]/not-found.tsx` was restyled and is correct if reached, but there is no root `app/not-found.tsx`, so unmatched paths (`/zz`, `/zz/search`) render Next.js's built-in unstyled error page — verified live. Adding a root 404 requires an i18n decision (which locale for a prefix-less URL?) that belongs in its own ticket. Separately, `/en/salons/<nonexistent>` returns **HTTP 200** with an in-page "not found" state — a pre-existing soft-404 with SEO implications, out of scope here. A test asserts the root file's continued absence so the note stays truthful.
++- **`components/SearchFilters.tsx` is dead code** (zero imports, first noted in T-007). Left on legacy tokens deliberately — restyling dead code implies it ships. A test fails if anything starts importing it.
++- **`SalonCard`'s `♀`/`♂` category glyphs** render as text. Replacing them is a product decision (what the marker means, how to name it for screen readers), not a token swap. A test pins them to the `CATEGORY_GENDER` map so they cannot spread.
++
++The rating filter's `★` inside `<option>` is **not** a missed migration: `<option>` may contain text only, so an SVG icon cannot be nested there. A test asserts `★` appears only on `<option>` lines.
++
++### Scope boundary — what this pass did not sweep
++
++Auth, dashboard, admin and account pages (~394 legacy colour utilities across 12 files) were **not** migrated. Visual Baseline v1 was scoped to the conversion funnel plus shared chrome and legal/consent surfaces; those pages are a separate, larger surface with their own flows and were never in this phase. They are listed under known remaining patterns below.
++
++### Verification
++
++51 new tests in `lib/visualBaselineConsistency.test.ts`; 1 pre-existing T-018 test updated (locator only). Full suite **1071/1071 passing** — and, for the first time, that number reflects every test file in the repository. Lint clean (the two remaining warnings, an `<img>` hint and an `exhaustive-deps` note in `reset-password/page.tsx`, are both pre-existing and in files this ticket did not touch). `next build` clean; bundle flat (`/privacy` 4.21kB, `/cookies` 4.22kB, `/search` 9.58kB).
++
++Isolated Playwright: 32 combinations (4 locales × {privacy, cookies} × {320, 375, 768, 1440}px) — zero horizontal overflow, exactly one `<h1>`, `#main-content` landmark present, reading measure confirmed at 768px, zero console/page errors. Consent gating re-verified with consent absent: **zero** requests to `google-analytics.com`/`googletagmanager.com`, and neither `window.dataLayer` nor `window.gtag` defined.
++
++**Live production verification:** pending — to be appended after merge and deploy.
++
++### Beta Visual Baseline — status
++
++**Not yet started.** Per the agreed protocol, the baseline begins at the **production deployment timestamp following a successful smoke test**, not at merge time. Until that timestamp is recorded here:
++
++> Analytics remain valid for instrumentation and preliminary observations only.
++
++After it is recorded:
++
++> Official Beta Visual Baseline begins; conversion data may be used as the primary post-refresh baseline.
++
++The exact timestamp is appended to this section once the deploy and smoke complete.
++
++```text
++T-067 regressions: 0
++```
++
+ ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
+ 
+ - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
+diff --git a/frontend/app/[locale]/cookies/page.tsx b/frontend/app/[locale]/cookies/page.tsx
+index e91648c..d589e75 100644
+--- a/frontend/app/[locale]/cookies/page.tsx
++++ b/frontend/app/[locale]/cookies/page.tsx
+@@ -23,28 +23,36 @@ export default async function CookiePolicyPage({ params }: { params: Promise<{ l
+   const prefix = resolved === 'el' ? '' : `/${resolved}`;
+ 
+   return (
+-    <div className="min-h-screen bg-gray-50">
++    <div className="min-h-screen bg-surface-subtle">
+       <Header locale={resolved} variant="legal" backHref={prefix || '/'} />
+ 
+-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-8">
+-        <h1 className="text-2xl font-bold text-gray-900 mb-1">{content.title}</h1>
+-        <p className="text-sm text-gray-400 mb-6">{content.lastUpdated}</p>
++      {/* T-067 — max-w-shell-reading is T-060's named 768px reading measure,
++          defined at the time with legal pages as its stated use case.
++          break-words is on the container deliberately: overflow-wrap is an
++          inherited property, so one declaration covers the headings and
++          every paragraph. Legal copy carries long unbreakable tokens that
++          overflow 320px otherwise — Russian/Ukrainian compounds such as
++          "конфиденциальности" at page-title size, and literals like
++          _ga/_ga_<container-id> inside the body text. */}
++      <main id="main-content" className="max-w-shell-reading mx-auto px-4 py-8 break-words hyphens-auto">
++        <h1 className="text-page-title text-text mb-1">{content.title}</h1>
++        <p className="text-caption text-text-muted mb-6">{content.lastUpdated}</p>
+ 
+         {content.intro.map((p, i) => (
+-          <p key={`intro-${i}`} className="text-gray-700 mb-4 leading-relaxed">{p}</p>
++          <p key={`intro-${i}`} className="text-body text-text-secondary mb-4 leading-relaxed">{p}</p>
+         ))}
+ 
+         {content.sections.map((section, si) => (
+           <section key={`section-${si}`} className="mt-8">
+-            <h2 className="text-lg font-semibold text-gray-900 mb-3">{section.heading}</h2>
++            <h2 className="text-section-title text-text mb-3">{section.heading}</h2>
+             {section.paragraphs.map((p, pi) => (
+-              <p key={`section-${si}-p-${pi}`} className="text-gray-700 mb-3 leading-relaxed">{p}</p>
++              <p key={`section-${si}-p-${pi}`} className="text-body text-text-secondary mb-3 leading-relaxed">{p}</p>
+             ))}
+           </section>
+         ))}
+ 
+-        <p className="text-gray-700 mt-8">
+-          <Link href={`${prefix}/privacy`} className="underline text-pink-600">
++        <p className="text-body text-text-secondary mt-8">
++          <Link href={`${prefix}/privacy`} className="underline text-brand hover:text-brand-hover focus-ring-token">
+             {resolved === 'el' ? 'Πολιτική Απορρήτου' : resolved === 'ru' ? 'Политика конфиденциальности' : resolved === 'uk' ? 'Політика конфіденційності' : 'Privacy Policy'}
+           </Link>
+         </p>
+diff --git a/frontend/app/[locale]/not-found.tsx b/frontend/app/[locale]/not-found.tsx
+index da9b1af..83f042c 100644
+--- a/frontend/app/[locale]/not-found.tsx
++++ b/frontend/app/[locale]/not-found.tsx
+@@ -1,6 +1,8 @@
+ 'use client';
+ import { useTranslations, useLocale } from 'next-intl';
+ import Link from 'next/link';
++import { Scissors } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ 
+ export default function NotFound() {
+   const t = useTranslations('common');
+@@ -8,12 +10,15 @@ export default function NotFound() {
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+ 
+   return (
+-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
++    <div className="min-h-screen flex items-center justify-center bg-surface-subtle">
+       <div className="text-center">
+-        <p className="text-6xl mb-4">💇</p>
+-        <h1 className="text-2xl font-bold text-gray-800 mb-2">404</h1>
+-        <p className="text-gray-500 mb-6">{t('not_found_title')}</p>
+-        <Link href={prefix || '/'} className="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700">
++        <Icon icon={Scissors} size={28} className="text-text-muted mx-auto mb-4" />
++        <h1 className="text-page-title text-text mb-2">404</h1>
++        <p className="text-body text-text-secondary mb-6">{t('not_found_title')}</p>
++        <Link
++          href={prefix || '/'}
++          className="inline-block px-4 py-2 bg-brand text-text-inverse rounded-md font-medium hover:bg-brand-hover transition-colors focus-ring-token"
++        >
+           {t('home')}
+         </Link>
+       </div>
+diff --git a/frontend/app/[locale]/privacy/page.tsx b/frontend/app/[locale]/privacy/page.tsx
+index f97f916..6857ca6 100644
+--- a/frontend/app/[locale]/privacy/page.tsx
++++ b/frontend/app/[locale]/privacy/page.tsx
+@@ -22,22 +22,30 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
+   const prefix = resolved === 'el' ? '' : `/${resolved}`;
+ 
+   return (
+-    <div className="min-h-screen bg-gray-50">
++    <div className="min-h-screen bg-surface-subtle">
+       <Header locale={resolved} variant="legal" backHref={prefix || '/'} />
+ 
+-      <main id="main-content" className="max-w-3xl mx-auto px-4 py-8">
+-        <h1 className="text-2xl font-bold text-gray-900 mb-1">{content.title}</h1>
+-        <p className="text-sm text-gray-400 mb-6">{content.lastUpdated}</p>
++      {/* T-067 — max-w-shell-reading is T-060's named 768px reading measure,
++          defined at the time with legal pages as its stated use case.
++          break-words is on the container deliberately: overflow-wrap is an
++          inherited property, so one declaration covers the headings and
++          every paragraph. Legal copy carries long unbreakable tokens that
++          overflow 320px otherwise — Russian/Ukrainian compounds such as
++          "конфиденциальности" at page-title size, and literals like
++          _ga/_ga_<container-id> inside the body text. */}
++      <main id="main-content" className="max-w-shell-reading mx-auto px-4 py-8 break-words hyphens-auto">
++        <h1 className="text-page-title text-text mb-1">{content.title}</h1>
++        <p className="text-caption text-text-muted mb-6">{content.lastUpdated}</p>
+ 
+         {content.intro.map((p, i) => (
+-          <p key={`intro-${i}`} className="text-gray-700 mb-4 leading-relaxed">{p}</p>
++          <p key={`intro-${i}`} className="text-body text-text-secondary mb-4 leading-relaxed">{p}</p>
+         ))}
+ 
+         {content.sections.map((section, si) => (
+           <section key={`section-${si}`} className="mt-8">
+-            <h2 className="text-lg font-semibold text-gray-900 mb-3">{section.heading}</h2>
++            <h2 className="text-section-title text-text mb-3">{section.heading}</h2>
+             {section.paragraphs.map((p, pi) => (
+-              <p key={`section-${si}-p-${pi}`} className="text-gray-700 mb-3 leading-relaxed">{p}</p>
++              <p key={`section-${si}-p-${pi}`} className="text-body text-text-secondary mb-3 leading-relaxed">{p}</p>
+             ))}
+           </section>
+         ))}
+diff --git a/frontend/components/CookieConsent.tsx b/frontend/components/CookieConsent.tsx
+index 5dbee64..d741a06 100644
+--- a/frontend/components/CookieConsent.tsx
++++ b/frontend/components/CookieConsent.tsx
+@@ -2,6 +2,8 @@
+ import { useCallback, useEffect, useRef, useState } from 'react';
+ import Link from 'next/link';
+ import { useTranslations, useLocale } from 'next-intl';
++import { X } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import {
+   getAnalyticsConsent,
+   setAnalyticsConsent,
+@@ -12,6 +14,22 @@ import {
+ 
+ type Mode = 'hidden' | 'banner' | 'settings';
+ 
++/**
++ * T-067 — Reject and Accept deliberately share ONE identical class string,
++ * not two similar ones. Equal visual weight between the two choices is a
++ * legal requirement, not a styling accident: making "Accept" more
++ * prominent (brand fill, larger, higher contrast) than "Reject" is the
++ * textbook consent dark pattern that EDPB guidance and GDPR Art. 4(11)
++ * "freely given" treat as invalidating consent altogether.
++ *
++ * A future visual pass may restyle this button — but must restyle BOTH by
++ * editing this single constant, and must never split it into a primary
++ * "accept" and a secondary "reject". The neutral (non-brand) surface is
++ * likewise intentional: brand fill on either choice would tilt the pair.
++ */
++const CHOICE_BUTTON_CLASS =
++  'px-4 py-2 rounded-md text-body-sm font-medium border border-border text-text-secondary hover:bg-surface-subtle hover:border-border-strong transition-colors focus-ring-token min-h-[44px]';
++
+ export default function CookieConsent() {
+   const t = useTranslations('cookieConsent');
+   const locale = useLocale();
+@@ -66,25 +84,25 @@ export default function CookieConsent() {
+     <div
+       role={isSettings ? 'dialog' : 'region'}
+       aria-label={isSettings ? t('settingsAriaLabel') : t('bannerAriaLabel')}
+-      className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 shadow-lg px-4 py-4"
++      className="fixed bottom-0 inset-x-0 z-50 bg-surface border-t border-border shadow-elevated px-4 py-4"
+     >
+-      <div className="max-w-3xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3">
+-        <p className="text-sm text-gray-700 flex-1">
++      <div className="max-w-shell-reading mx-auto flex flex-col sm:flex-row sm:items-center gap-3">
++        <p className="text-body-sm text-text-secondary flex-1">
+           {t('message')}{' '}
+-          <Link href={`${prefix}/cookies`} className="underline text-pink-600">{t('policyLink')}</Link>
++          <Link href={`${prefix}/cookies`} className="underline text-brand hover:text-brand-hover focus-ring-token">{t('policyLink')}</Link>
+         </p>
+         <div className="flex gap-2 shrink-0">
+           <button
+             type="button"
+             onClick={() => choose(false)}
+-            className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
++            className={CHOICE_BUTTON_CLASS}
+           >
+             {t('reject')}
+           </button>
+           <button
+             type="button"
+             onClick={() => choose(true)}
+-            className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
++            className={CHOICE_BUTTON_CLASS}
+           >
+             {t('accept')}
+           </button>
+@@ -93,9 +111,9 @@ export default function CookieConsent() {
+               type="button"
+               onClick={close}
+               aria-label={t('close')}
+-              className="px-2 text-gray-400 hover:text-gray-600 text-lg"
++              className="px-2 text-text-muted hover:text-text-secondary focus-ring-token rounded-sm"
+             >
+-              ×
++              <Icon icon={X} size={20} />
+             </button>
+           )}
+         </div>
+diff --git a/frontend/components/MapView.tsx b/frontend/components/MapView.tsx
+index b818c64..ff1875a 100644
+--- a/frontend/components/MapView.tsx
++++ b/frontend/components/MapView.tsx
+@@ -1,6 +1,8 @@
+ 'use client';
+ import { useEffect, useRef, useState } from 'react';
+ import { useTranslations } from 'next-intl';
++import { MapPin, X, Star, Phone } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import type { SalonMapItem } from '@/lib/api';
+ import { trackEvent } from '@/lib/analytics';
+ import type { Locale } from '@/i18n/request';
+@@ -109,7 +111,12 @@ export default function MapView({ salons, locale }: Props) {
+               fillColor: '#3b82f6',
+               fillOpacity: 0.9,
+               weight: 2,
+-            }).bindTooltip('📍 Η θέση σας', { permanent: false }).addTo(map);
++              // T-067 — was a hardcoded Greek string with an emoji
++              // ("📍 Η θέση σας") shown in every locale. The blue below is
++              // deliberately NOT a brand token: blue is the cross-product
++              // convention for "your location" and must stay distinct from
++              // the pink salon markers.
++            }).bindTooltip(t('your_location'), { permanent: false }).addTo(map);
+ 
+             // Show only nearby salons
+             refreshMarkers(L, getVisibleSalons(salons));
+@@ -144,20 +151,26 @@ export default function MapView({ salons, locale }: Props) {
+ 
+   return (
+     <div className="relative">
++      {/* T-067 — this status pill previously rendered a hardcoded Greek
++          string ("Εντοπισμός τοποθεσίας...") in every locale: the same
++          class of bug as T-064's rating filter and T-066's photo count,
++          found by this phase's final consistency sweep. */}
+       {locating && (
+-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 text-xs text-gray-600 px-3 py-1.5 rounded-full shadow-sm">
+-          📍 Εντοπισμός τοποθεσίας...
++        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-surface/90 text-caption text-text-secondary px-3 py-1.5 rounded-pill shadow-resting flex items-center gap-1.5">
++          <Icon icon={MapPin} size={16} className="text-text-muted" />
++          {t('locating_position')}
+         </div>
+       )}
+-      <div ref={mapRef} className="w-full rounded-xl overflow-hidden" style={{ height: '60vh', minHeight: 400 }} />
++      <div ref={mapRef} className="w-full rounded-md overflow-hidden" style={{ height: '60vh', minHeight: 400 }} />
+ 
+       {selected && (
+-        <div className="absolute bottom-4 left-4 right-4 bg-white rounded-xl shadow-lg p-4 z-[1000]">
++        <div className="absolute bottom-4 left-4 right-4 bg-surface rounded-md shadow-elevated p-4 z-[1000]">
+           <button
+             onClick={() => setSelected(null)}
+-            className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 text-lg leading-none"
++            aria-label={t('close_preview')}
++            className="absolute top-3 right-3 text-text-muted hover:text-text-secondary focus-ring-token rounded-sm leading-none"
+           >
+-            ×
++            <Icon icon={X} size={20} />
+           </button>
+           <div className="flex gap-3">
+             {selected.primary_photo && (
+@@ -168,29 +181,35 @@ export default function MapView({ salons, locale }: Props) {
+               />
+             )}
+             <div className="min-w-0">
+-              <h3 className="font-semibold text-gray-900 text-sm leading-tight">{selected.name}</h3>
+-              <p className="text-xs text-gray-500 mt-0.5">{selected.address_city}</p>
++              <h3 className="text-card-title text-text leading-tight">{selected.name}</h3>
++              <p className="text-caption text-text-muted mt-0.5">{selected.address_city}</p>
+               {selected.rating_google && (
+-                <p className="text-xs text-yellow-500 mt-1">
+-                  ★ {selected.rating_google.toFixed(1)}
++                <p className="text-caption text-text mt-1 flex items-center gap-1">
++                  <Icon icon={Star} size={16} className="fill-accent-strong text-accent-strong" />
++                  {selected.rating_google.toFixed(1)}
+                 </p>
+               )}
+               <div className="flex gap-2 mt-2">
+                 {/* T-015: this quick-dial button is not instrumented — contact_action's
+                     approved contract is scoped to page: 'salon_detail' only, and this
+                     is the search/map page. Out of scope for T-015's approved catalogue. */}
++                {/* T-067 — was an emoji-only link (📞) with no text and no
++                    aria-label, i.e. no accessible name at all. Swapping the
++                    emoji for an icon requires giving it one; reuses the
++                    existing callSalon string rather than adding a key. */}
+                 {selected.phone_primary && (
+                   <a
+                     href={`tel:${selected.phone_primary}`}
+-                    className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-lg"
++                    aria-label={t('callSalon')}
++                    className="bg-brand-soft text-brand px-2 py-1 rounded-sm hover:bg-brand hover:text-text-inverse transition-colors focus-ring-token flex items-center"
+                   >
+-                    📞
++                    <Icon icon={Phone} size={16} />
+                   </a>
+                 )}
+                 <a
+                   href={`${prefix}/salons/${selected.slug || selected.id}`}
+                   onClick={() => trackEvent('salon_open', { salon_id: String(selected.id), source: 'search_map', locale: locale as Locale })}
+-                  className="text-xs bg-pink-600 text-white px-3 py-1 rounded-lg font-medium"
++                  className="text-body-sm bg-brand text-text-inverse px-3 py-1 rounded-sm font-medium hover:bg-brand-hover transition-colors focus-ring-token"
+                 >
+                   {t('view')}
+                 </a>
+diff --git a/frontend/lib/cookieConsentUi.test.ts b/frontend/lib/cookieConsentUi.test.ts
+index 08a75b1..16e4147 100644
+--- a/frontend/lib/cookieConsentUi.test.ts
++++ b/frontend/lib/cookieConsentUi.test.ts
+@@ -35,10 +35,25 @@ describe('T-018: CookieConsent.tsx — banner gating and behaviour (source-patte
+   });
+ 
+   test('Accept and Reject buttons share an identical className (equal visual weight — no larger/brighter Accept)', () => {
+-    const buttonBlocks = [...source.matchAll(/onClick=\{\(\) => choose\((true|false)\)\}[\s\S]{0,200}?className="([^"]+)"/g)];
++    // Matches either an inline literal (className="...") or a shared
++    // constant reference (className={FOO}). T-067 moved both buttons onto
++    // one shared constant, which enforces this guarantee structurally
++    // rather than by two literals coincidentally matching — but the
++    // assertion below still holds either way, so neither form is favoured.
++    const buttonBlocks = [...source.matchAll(
++      /onClick=\{\(\) => choose\((?:true|false)\)\}[\s\S]{0,200}?className=(?:"([^"]+)"|\{([A-Za-z0-9_$]+)\})/g,
++    )];
+     assert.equal(buttonBlocks.length, 2, 'expected exactly one Accept and one Reject button block');
+-    const classNames = buttonBlocks.map(m => m[2]);
++    const classNames = buttonBlocks.map(m => m[1] ?? m[2]);
+     assert.equal(classNames[0], classNames[1], `Accept/Reject className must be identical — got ${JSON.stringify(classNames)}`);
++
++    // If they share a constant, that constant must not itself encode a
++    // brand fill — a brand-filled pair still tilts against a neutral page.
++    if (buttonBlocks[0][2]) {
++      const constDecl = new RegExp(`const ${buttonBlocks[0][2]}\\s*(?::[^=]+)?=\\s*'([^']+)'`).exec(source);
++      assert.ok(constDecl, `shared className constant ${buttonBlocks[0][2]} must be a string literal in this file`);
++      assert.ok(!/\bbg-brand\b/.test(constDecl[1]), 'shared choice button must not use a brand fill');
++    }
+   });
+ 
+   test('both actions call setAnalyticsConsent then close() — a single action closes the banner, no separate "continue without choosing" path', () => {
+diff --git a/frontend/lib/visualBaselineConsistency.test.ts b/frontend/lib/visualBaselineConsistency.test.ts
+new file mode 100644
+index 0000000..2a59f63
+--- /dev/null
++++ b/frontend/lib/visualBaselineConsistency.test.ts
+@@ -0,0 +1,334 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync, readdirSync, statSync } from 'node:fs';
++import { join } from 'node:path';
++
++/**
++ * T-067 — Visual Baseline Consistency & Beta Baseline Verification.
++ *
++ * Covers the final consistency pass: cookie-consent UI, legal pages,
++ * remaining shared surfaces, and the test-coverage guard that keeps this
++ * baseline honest going forward.
++ */
++
++const read = (p: string) => readFileSync(p, 'utf8');
++
++/** Strips comments so assertions never match a component's own prose. */
++const codeOnly = (s: string) =>
++  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
++
++const readMessages = (locale: string) =>
++  JSON.parse(read(`messages/${locale}.json`)) as Record<string, Record<string, string>>;
++
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++
++/** Legacy palette utilities that Direction B replaced. */
++const LEGACY_COLOR =
++  /\b(?:bg|text|border|ring|accent|from|to|via|divide|placeholder)-(?:gray|pink|white|black|blue|green|red|purple|slate|zinc|neutral|amber|yellow|indigo)(?:-\d{2,3})?\b/g;
++
++describe('T-067: test coverage guard — CI must run every test file on disk', () => {
++  // Regression guard for a real gap this ticket found: `npm test` had a
++  // hardcoded 38-file list while 45 test files existed, so every visual
++  // suite added by T-062/T-064/T-065/T-066 had never run in CI. The fix
++  // was file discovery; this test stops the list-based form coming back.
++  test('npm test uses filesystem discovery, not a hardcoded file enumeration', () => {
++    const pkg = JSON.parse(read('package.json'));
++    const script: string = pkg.scripts.test;
++
++    assert.ok(/\bfind\b/.test(script), 'test script must discover test files from the filesystem');
++
++    const hardcoded = script.match(/[\w[\]/.-]+\.test\.tsx?/g) ?? [];
++    assert.equal(
++      hardcoded.length,
++      0,
++      `test script must not enumerate individual test files (found ${JSON.stringify(hardcoded)}) — ` +
++        'a hardcoded list silently drops newly added suites from CI',
++    );
++  });
++
++  test('discovery pattern covers both .test.ts and .test.tsx', () => {
++    const script: string = JSON.parse(read('package.json')).scripts.test;
++    assert.ok(script.includes("*.test.ts'"), 'must match .test.ts');
++    assert.ok(script.includes("*.test.tsx'"), 'must match .test.tsx');
++  });
++
++  test('discovery excludes node_modules and .next', () => {
++    const script: string = JSON.parse(read('package.json')).scripts.test;
++    assert.ok(script.includes('node_modules'), 'must exclude node_modules');
++    assert.ok(script.includes('.next'), 'must exclude .next');
++  });
++});
++
++describe('T-067: legal pages — Direction B tokens and reading measure', () => {
++  const pages = ['app/[locale]/privacy/page.tsx', 'app/[locale]/cookies/page.tsx'];
++
++  for (const page of pages) {
++    test(`${page} uses the named reading-width container, not a bare max-w-3xl`, () => {
++      const src = codeOnly(read(page));
++      assert.ok(src.includes('max-w-shell-reading'), 'must use the T-060 reading token');
++      assert.ok(!/max-w-3xl/.test(src), 'must not keep the untokenized max-w-3xl');
++    });
++
++    test(`${page} carries no legacy palette utilities`, () => {
++      const found = codeOnly(read(page)).match(LEGACY_COLOR) ?? [];
++      assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
++    });
++
++    test(`${page} uses the typography scale for headings and body`, () => {
++      const src = codeOnly(read(page));
++      assert.ok(src.includes('text-page-title'), 'h1 must use the page-title token');
++      assert.ok(src.includes('text-section-title'), 'h2 must use the section-title token');
++      assert.ok(src.includes('text-body'), 'body copy must use the body token');
++    });
++
++    test(`${page} keeps its main landmark`, () => {
++      assert.ok(read(page).includes('id="main-content"'), 'main landmark must survive the restyle');
++    });
++
++    test(`${page} allows long tokens to wrap (320px overflow guard)`, () => {
++      // Regression guard: raising the h1 to text-page-title (28px) made the
++      // Russian title "конфиденциальности" overflow 320px, because it is a
++      // single unbreakable token. overflow-wrap is inherited, so this one
++      // class on <main> also protects body literals like
++      // _ga/_ga_<container-id> and «/account/messages».
++      const main = /<main[^>]*id="main-content"[^>]*className="([^"]+)"/.exec(read(page));
++      assert.ok(main, 'expected a main element with a className');
++      assert.ok(
++        main[1].includes('break-words'),
++        `main must allow long tokens to break — got "${main[1]}"`,
++      );
++    });
++  }
++});
++
++describe('T-067: CookieConsent — Direction B tokens, no consent-logic drift', () => {
++  const src = read('components/CookieConsent.tsx');
++
++  test('carries no legacy palette utilities', () => {
++    const found = codeOnly(src).match(LEGACY_COLOR) ?? [];
++    assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
++  });
++
++  test('close control is an icon with an accessible name, not a bare glyph', () => {
++    const code = codeOnly(src);
++    assert.ok(!/>\s*×\s*</.test(code), 'raw × glyph must be replaced by an icon');
++    assert.ok(/aria-label=\{t\('close'\)\}/.test(code), 'close control must keep its accessible name');
++  });
++
++  test('interactive controls expose a visible focus ring', () => {
++    const code = codeOnly(src);
++    assert.ok(code.includes('focus-ring-token'), 'must use the shared focus-ring class');
++  });
++
++  test('consent read/write contract is untouched', () => {
++    assert.ok(src.includes('getAnalyticsConsent()'), 'still reads consent');
++    assert.ok(src.includes('setAnalyticsConsent(granted)'), 'still writes consent via the shared helper');
++    assert.ok(
++      src.includes('if (!isAnalyticsConsentFeatureEnabled()) return;'),
++      'feature gate must be unchanged',
++    );
++  });
++
++  test('does not introduce analytics or tracking into the consent surface', () => {
++    assert.ok(!/trackEvent|gtag|dataLayer/.test(codeOnly(src)), 'consent UI must not emit analytics');
++  });
++});
++
++describe('T-067: MapView overlay — hardcoded-locale fix and accessible names', () => {
++  const src = read('components/MapView.tsx');
++  const code = codeOnly(src);
++
++  test('the locating status pill is translated, not a hardcoded Greek string', () => {
++    assert.ok(
++      !/Εντοπισμός τοποθεσίας/.test(code),
++      'hardcoded Greek status text must be gone from code',
++    );
++    assert.ok(code.includes("t('locating_position')"), 'must render the translated key');
++  });
++
++  test('locating_position exists in all four locales and differs per language', () => {
++    const values = LOCALES.map(l => readMessages(l).salon.locating_position);
++    for (const [i, v] of values.entries()) {
++      assert.ok(v && v.length > 0, `${LOCALES[i]} missing locating_position`);
++    }
++    assert.equal(new Set(values).size, LOCALES.length, 'each locale must have its own wording');
++  });
++
++  test('the user-location marker tooltip is translated, not hardcoded Greek + emoji', () => {
++    assert.ok(!/Η θέση σας/.test(code), 'hardcoded Greek location tooltip must be gone');
++    assert.ok(!/📍/.test(code), 'pin emoji must be gone');
++    assert.ok(code.includes("bindTooltip(t('your_location')"), 'must bind the translated key');
++    for (const l of LOCALES) {
++      assert.ok(readMessages(l).salon.your_location, `${l} missing your_location`);
++    }
++  });
++
++  test('preview close control has an accessible name', () => {
++    assert.ok(code.includes("aria-label={t('close_preview')}"), 'close must be named');
++    for (const l of LOCALES) {
++      assert.ok(readMessages(l).salon.close_preview, `${l} missing close_preview`);
++    }
++  });
++
++  test('the quick-dial link is no longer an emoji-only control with no accessible name', () => {
++    assert.ok(!/📞/.test(code), 'phone emoji must be replaced');
++    assert.ok(code.includes("aria-label={t('callSalon')}"), 'quick-dial must expose a name');
++  });
++
++  test('overlay chrome carries no legacy palette utilities', () => {
++    const found = code.match(LEGACY_COLOR) ?? [];
++    assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
++  });
++
++  test('T-063 boundary: no keyboard/marker accessibility work was introduced', () => {
++    // T-067 restyles overlay chrome only. Marker/popup keyboard navigation
++    // is reserved for T-063 and must not be started here.
++    assert.ok(!/tabIndex/i.test(code), 'no tabindex added to map internals');
++    assert.ok(!/keydown|onKeyDown/.test(code), 'no keyboard handlers added to map internals');
++  });
++
++  test('salon_open analytics from the map is unchanged in name, shape and source', () => {
++    assert.ok(
++      /trackEvent\('salon_open', \{ salon_id: String\(selected\.id\), source: 'search_map', locale: locale as Locale \}\)/.test(
++        code,
++      ),
++      'map salon_open call must be byte-identical',
++    );
++  });
++});
++
++describe('T-067: 404 page consistency', () => {
++  // NOTE — reachability finding, verified live in the isolated runtime:
++  // this component is NOT what users currently see for a bad URL. There is
++  // no root app/not-found.tsx, so unmatched paths (/zz, /zz/search) render
++  // Next.js's built-in unstyled error page instead. T-067 restyled this
++  // file so it is correct *if* reached, but did not add a root 404 — that
++  // needs an i18n decision (which locale for a prefix-less URL?) and is
++  // recorded in VISUAL_BASELINE_V1.md as follow-up work, not silently
++  // claimed as done here.
++  const src = 'app/[locale]/not-found.tsx';
++
++  test('no root app/not-found.tsx exists yet — pins the documented gap', () => {
++    let exists = true;
++    try {
++      statSync('app/not-found.tsx');
++    } catch {
++      exists = false;
++    }
++    assert.equal(
++      exists,
++      false,
++      'a root not-found.tsx now exists — update the T-067 reachability note and verify which 404 users actually see',
++    );
++  });
++
++  test('carries no legacy palette utilities', () => {
++    const found = codeOnly(read(src)).match(LEGACY_COLOR) ?? [];
++    assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
++  });
++
++  test('uses an icon rather than an emoji', () => {
++    const code = codeOnly(read(src));
++    assert.ok(!/💇/.test(code), 'emoji must be replaced by a Lucide icon');
++    assert.ok(code.includes('<Icon icon={Scissors}'), 'must render the shared Icon wrapper');
++  });
++
++  test('the home link has a visible focus ring', () => {
++    assert.ok(codeOnly(read(src)).includes('focus-ring-token'));
++  });
++});
++
++describe('T-067: cross-surface sweep — conversion-facing surfaces stay clean', () => {
++  // The Visual Baseline v1 phase scope: the conversion funnel plus the
++  // shared chrome and legal/consent surfaces. Auth/dashboard/admin are a
++  // separate, larger surface deliberately outside this phase (recorded in
++  // VISUAL_BASELINE_V1.md as known remaining work), so they are not swept.
++  const IN_SCOPE = [
++    'app/[locale]/page.tsx',
++    'app/[locale]/search/page.tsx',
++    'app/[locale]/salons/[slug]/SalonDetailClient.tsx',
++    'app/[locale]/privacy/page.tsx',
++    'app/[locale]/cookies/page.tsx',
++    'app/[locale]/not-found.tsx',
++    'components/Header.tsx',
++    'components/Footer.tsx',
++    'components/SalonCard.tsx',
++    'components/CookieConsent.tsx',
++    'components/MapView.tsx',
++    'components/AsyncSection.tsx',
++    'components/ContactButtons.tsx',
++    'components/SalonHours.tsx',
++    'components/ReportButton.tsx',
++    'components/ActiveFilterChips.tsx',
++    'components/LanguageSwitcher.tsx',
++  ];
++
++  for (const file of IN_SCOPE) {
++    test(`${file} has no legacy palette utilities`, () => {
++      const found = codeOnly(read(file)).match(LEGACY_COLOR) ?? [];
++      assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
++    });
++  }
++
++  test('no in-scope surface renders a pictographic emoji', () => {
++    // Pictographic emoji only. Two symbol-range characters are deliberately
++    // still in use and are NOT failures — see the two tests below, which
++    // pin each one explicitly so it cannot spread unnoticed.
++    const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u;
++    const offenders = IN_SCOPE.filter(f => EMOJI.test(codeOnly(read(f))));
++    assert.deepEqual(offenders, [], `emoji remain in: ${JSON.stringify(offenders)}`);
++  });
++
++  test('the rating filter keeps ★ inside <option> — an HTML constraint, not missed work', () => {
++    // <option> may contain text only; an SVG icon cannot be nested inside
++    // it. The ★ glyph is the correct solution here, unlike everywhere else
++    // in the codebase where star glyphs became Lucide icons (T-065/T-066).
++    const src = codeOnly(read('app/[locale]/search/page.tsx'));
++    const starLines = src.split('\n').filter(l => l.includes('★'));
++    assert.ok(starLines.length > 0, 'expected the rating options to still use ★');
++    for (const line of starLines) {
++      assert.ok(
++        /<option\b/.test(line),
++        `★ outside an <option> should be a Lucide icon instead: ${line.trim()}`,
++      );
++    }
++  });
++
++  test('SalonCard gender glyphs are contained to the category map (known open item)', () => {
++    // ♀/♂ in CATEGORY_GENDER are rendered as text. Replacing them is a
++    // product decision (what the marker means, how to name it for screen
++    // readers), not a token swap, so T-067 deliberately left them and
++    // recorded them in VISUAL_BASELINE_V1.md instead of redesigning them.
++    // This test pins the blast radius: they may only appear in that map.
++    const src = codeOnly(read('components/SalonCard.tsx'));
++    const genderLines = src.split('\n').filter(l => /[♀♂]/.test(l));
++    assert.ok(genderLines.length > 0, 'expected the CATEGORY_GENDER map to still exist');
++    for (const line of genderLines) {
++      assert.ok(
++        /^\s*\w+:\s*'[♀♂ ]+',?$/.test(line.trim()) || /CATEGORY_GENDER/.test(line),
++        `gender glyph escaped the CATEGORY_GENDER map: ${line.trim()}`,
++      );
++    }
++  });
++});
++
++describe('T-067: dead code is identified, not silently restyled', () => {
++  test('SearchFilters.tsx is confirmed unreferenced and therefore left untouched', () => {
++    // Documented in T-007 and re-confirmed here: this file is not imported
++    // anywhere. It still carries legacy tokens on purpose — restyling dead
++    // code would imply it ships. It is recorded for deletion, not migration.
++    const roots = ['app', 'components'];
++    const hits: string[] = [];
++    const walk = (dir: string) => {
++      for (const entry of readdirSync(dir)) {
++        const p = join(dir, entry);
++        if (statSync(p).isDirectory()) walk(p);
++        else if (/\.tsx?$/.test(p) && !p.endsWith('SearchFilters.tsx')) {
++          if (/from '@\/components\/SearchFilters'|from '\.\/SearchFilters'/.test(read(p))) hits.push(p);
++        }
++      }
++    };
++    roots.forEach(walk);
++    assert.deepEqual(hits, [], `SearchFilters is now imported by ${JSON.stringify(hits)} — migrate or delete it`);
++  });
++});
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index e6962ea..d4811e8 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -93,6 +93,9 @@
+     "reviews_count": "{count} αξιολογήσεις",
+     "minutes": "λεπτά",
+     "open_maps": "Άνοιγμα στο Google Maps →",
++    "locating_position": "Εντοπισμός τοποθεσίας...",
++    "close_preview": "Κλείσιμο προεπισκόπησης",
++    "your_location": "Η θέση σας",
+     "location": "Τοποθεσία",
+     "anonymous": "Ανώνυμος",
+     "data_updated": "Δεδομένα ενημερώθηκαν",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 70b0938..a624011 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -93,6 +93,9 @@
+     "reviews_count": "{count} reviews",
+     "minutes": "min",
+     "open_maps": "Open in Google Maps →",
++    "locating_position": "Locating your position...",
++    "close_preview": "Close preview",
++    "your_location": "Your location",
+     "location": "Location",
+     "anonymous": "Anonymous",
+     "data_updated": "Data updated",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index a0b71eb..a92a3cb 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -93,6 +93,9 @@
+     "reviews_count": "{count} отзывов",
+     "minutes": "мин",
+     "open_maps": "Открыть в Google Maps →",
++    "locating_position": "Определение местоположения...",
++    "close_preview": "Закрыть превью",
++    "your_location": "Ваше местоположение",
+     "location": "Расположение",
+     "anonymous": "Аноним",
+     "data_updated": "Данные обновлены",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 0c3e995..15b5f2e 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -93,6 +93,9 @@
+     "reviews_count": "{count} відгуків",
+     "minutes": "хв",
+     "open_maps": "Відкрити у Google Maps →",
++    "locating_position": "Визначення місцезнаходження...",
++    "close_preview": "Закрити попередній перегляд",
++    "your_location": "Ваше місцезнаходження",
+     "location": "Розташування",
+     "anonymous": "Анонім",
+     "data_updated": "Дані оновлено",
+diff --git a/frontend/package.json b/frontend/package.json
+index 25cc6d8..fbe94b1 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,7 +7,7 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "next lint",
+-    "test": "node --import tsx --test lib/areaGrid.test.ts lib/api.test.ts lib/apiInternalUrl.test.ts lib/contactActions.test.ts lib/reviewsSection.test.ts lib/verificationLabel.test.ts lib/robotsTxt.test.ts lib/privacyContent.test.ts lib/consent.test.ts lib/cookieConsentUi.test.ts lib/cookiePolicyContent.test.ts lib/analytics.test.ts lib/asyncState.test.ts lib/useFocusOnStatusRecovery.test.ts lib/searchContext.test.ts lib/resultsSummary.test.ts lib/useFilterChipFocus.test.ts lib/searchReturnState.test.ts lib/searchResultsViewDedup.test.ts lib/colorContrast.test.ts lib/visualBaselineTokens.test.ts lib/activeRoute.test.ts lib/localeSwitchHref.test.ts components/AsyncSection.test.tsx components/ActiveFilterChips.test.tsx components/SalonCard.test.tsx components/Header.test.tsx components/Footer.test.tsx components/LanguageSwitcher.test.tsx components/ui/Icon.test.tsx components/ui/Button.test.tsx \"app/[locale]/salons/[slug]/salonDetail.test.ts\" \"app/[locale]/search/searchPage.test.ts\" \"app/[locale]/search/searchReturnRestoration.test.ts\" \"app/[locale]/search/searchControlsA11y.test.ts\" \"app/[locale]/search/searchResultsViewDedupWiring.test.ts\" \"app/[locale]/design-system-preview/designSystemPreview.test.ts\" \"app/[locale]/globalShell.test.ts\""
++    "test": "find . \\( -name '*.test.ts' -o -name '*.test.tsx' \\) -not -path './node_modules/*' -not -path './.next/*' -print0 | xargs -0 node --import tsx --test"
+   },
+   "dependencies": {
+     "@tanstack/react-query": "^5.101.0",
