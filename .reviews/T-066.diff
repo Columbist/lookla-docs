@@ -1,0 +1,1163 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 267865e..d6c491b 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1592,6 +1592,49 @@ T-065 regressions: 0
+ 
+ ---
+ 
++### T-066 — Salon Detail Visual Refresh
++**Priority:** P0 (sixth and final conversion-facing ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-009 ✅, T-042 ✅, T-055 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅
++**Reserved separately:** T-063 — Map Accessibility (untouched by this ticket; salon-detail has no embedded map today, only a text address + external Google Maps link)
++**Status:** Implemented, isolated-Playwright-verified, branch pushed. Draft PR pending real CI. Not yet reviewed, merged, or deployed — awaiting independent **APPROVE** per standing workflow.
++
++**Ticket-identity note:** T-066 was confirmed genuinely unused before branching — no collision.
++
++**Scope:** `app/[locale]/salons/[slug]/SalonDetailClient.tsx` (full visual rewrite), `components/ContactButtons.tsx`, `components/SalonHours.tsx`, `components/ReportButton.tsx` (tokens/icons only in the latter three). `page.tsx` (metadata) untouched. Full contract and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-066 section.
++
++**Key changes:**
++- **Photo-count fix (the ticket's named bug):** the hardcoded Greek `+N φωτογραφίες` gallery overlay replaced with a proper ICU-pluralized `salon.more_photos` key, correct in all 4 locales.
++- **A real gallery-layout bug found and fixed:** the pre-existing 3-tile gallery used CSS Grid (`grid-cols-3` + `col-span-2`) inside a fixed-height, `overflow-hidden` container — ordinary grid auto-placement pushed the 3rd tile (carrying the "+N photos" button) onto an implicit second row that the fixed height silently clipped, making the affordance invisible to sighted users despite being DOM-correct. Not a T-066 regression (classes were carried over unchanged), but directly defeated the ticket's own required fix, so repaired here: grid replaced with flexbox, which cannot produce a silent implicit-row wrap.
++- **`is_open_now` now rendered** (previously fetched but never displayed anywhere on the page) — same `success`/`closed` semantic tokens as `SalonCard`.
++- **Visual hierarchy:** the old flat stack of 7 near-identical `bg-white rounded-xl p-5` panels replaced with 3 tiers — prominent identity+contact card (only surface with a shadow), mid-tier Services/Reviews/Hours cards, quiet card-less Description/social/location/report sections.
++- **Contact actions:** Call/WhatsApp/Website unified to one visual treatment (no invented channel priority), per the ticket's explicit instruction. `resolveContactActions`/`contact_action` tracking contract (T-010/T-015) unchanged.
++- **Fallback:** reused and extended T-065's `PhotoFallback` pattern with genuine failed-image-request handling (a real gap the original code lacked).
++- **Icons:** all emoji replaced with `lucide-react`; social-platform icons use generic stand-ins since the installed `lucide-react` version ships no brand/logo icons at all (`Instagram`/`Facebook`/`Youtube` confirmed absent from its exports).
++
++**Verification:** 73 tests — the pre-existing `salonDetail.test.ts` (28, unchanged, all pass) + new `salonDetailVisual.test.ts` (45: photo-count fix, gallery fallback, no-emoji sweep, identity block, contact-action consistency, services/reviews/hours, map-shell boundary, analytics invariants, SEO/structured-data, Direction B tokens). Full suite: 1020/1020 passing. Lint/build clean (one real TypeScript catch: `Instagram`/`Facebook`/`Youtube` not exported by the installed `lucide-react`, fixed with generic icons). Isolated Playwright: responsive × 4-locale sweep, the gallery-clipping bug found/fixed/re-verified via DOM inspection and screenshot, accessibility (keyboard focus ring screenshotted, landmarks, alt text), analytics (`contact_action` × phone/whatsapp channels via `gtag()` interception, confirmed zero events fire from loading the detail page directly, confirmed `salon_open` fires exactly once from the search card and never re-fires on detail mount), T-056 restoration (search → open → interact → Back, no errors), SEO metadata (title/description/schema/og:image unchanged), CLS 0.0029.
++
++```text
++T-066 regressions: 0
++```
++
++**Acceptance Criteria:**
++- [x] Hardcoded Greek `+N φωτογραφίες` fixed with proper ICU pluralization, all 4 locales
++- [x] `is_open_now` now rendered (previously fetched, never shown)
++- [x] Visual hierarchy replaces the 7-identical-panel layout with 3 deliberate surface tiers
++- [x] Call/WhatsApp/Website share one visual treatment; no new channel priority invented
++- [x] `contactActions`/`contact_action` contract preserved (T-010/T-015)
++- [x] No booking functionality, no map-marker accessibility work (T-063 scope preserved), no backend/DB/API changes
++- [x] No new or renamed GA4 events; `salon_open` still owned solely by the search card
++- [x] T-056 restoration preserved (re-verified live)
++- [x] Gallery layout bug (implicit-row clipping) found and fixed, re-verified via DOM inspection + screenshot
++- [x] Four locales verified at 3 breakpoints (mobile/tablet/desktop)
++- [x] Accessibility: single h1, landmark, alt text, aria-labels, visible focus ring
++- [x] Performance measured (CLS/bundle)
++- [ ] Live production verification — pending merge/deploy
++- [ ] Independent review — pending **APPROVE**
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+index a913253..2f40318 100644
+--- a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -1,6 +1,6 @@
+ # Visual Baseline v1 — foundation specification
+ 
+-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), and T-065 (SalonCard). Not yet the complete Visual Baseline — salon-detail content is consumed by a later, independently reviewable ticket. Do not treat this document as "Visual Baseline v1 complete."
++**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), and T-066 (salon detail). All conversion-facing screens are now covered. Only a final consistency pass (cookie consent UI, legal pages, remaining shared `AsyncSection` states) and the official Beta Visual Baseline date remain. Do not treat this document as "Visual Baseline v1 complete" until that pass lands.
+ 
+ **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
+ 
+@@ -163,7 +163,7 @@ Deliberately not generalized further — no abstract component library, no prema
+ | Homepage (hero, category/area tiles, "how it works") | ~~Homepage visual refresh~~ — **done, T-062** | Included the "Book" step copy fix and the SearchBar 320px overflow fix (see below) |
+ | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
+ | SalonCard | ~~SalonCard visual refresh~~ — **done, T-065** | First ticket in the sequence allowed to touch the card's internal appearance, not just surrounding chrome |
+-| Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
++| Salon detail (7-box consolidation, CTA hierarchy, gallery) | ~~Salon detail visual refresh~~ — **done, T-066** | Fixed the hardcoded Greek `+N φωτογραφίες` overlay; also found and fixed a real gallery-layout bug (see T-066 below) |
+ | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+ 
+ ## T-060 — Global shell (header, footer, mobile navigation, language selector)
+@@ -548,6 +548,73 @@ Isolated standalone measurement (`en/search`, 1440px, `networkidle`, two separat
+ T-065 regressions: 0
+ ```
+ 
++## T-066 — Salon Detail Visual Refresh
++
++**Scope:** `app/[locale]/salons/[slug]/SalonDetailClient.tsx` (full visual rewrite), `components/ContactButtons.tsx`, `components/SalonHours.tsx`, `components/ReportButton.tsx` (tokens/icons only in the latter three — no logic changes). `app/[locale]/salons/[slug]/page.tsx` (server component, metadata) untouched. T-063 (Map Accessibility) remains a separate, untouched, reserved placeholder — this ticket confirmed during inventory that salon-detail has no embedded map/Leaflet widget at all today (only a text address + an external Google Maps link), so T-063 has nothing to own here yet. This is the last conversion-facing screen in the Visual Baseline v1 sequence (T-059 → T-060 → T-062 → T-064 → T-065 → **T-066**).
++
++**Ticket identity:** no collision — T-066 was genuinely unused.
++
++### Inventory findings (Steps 1–2)
++
++Two real, pre-existing gaps found during inventory, both addressed by this ticket:
++- **The hardcoded Greek `+N φωτογραφίες` overlay** — the exact bug named in the ticket. The gallery's "show more photos" affordance always rendered this literal Greek string regardless of locale. Fixed with a proper ICU-pluralized `salon.more_photos` key across all 4 locales (`el`/`en` use `=0/one/other`; `ru`/`uk` use the full Slavic `=0/one/few/many/other` set, matching the existing `search.results_summary` precedent even though all Russian/Ukrainian categories render identically for "фото").
++- **`is_open_now` was fetched but never rendered anywhere on the page**, despite being available data (and already driving `SalonCard`'s open/closed badge on the search results page). Added a matching open/closed badge here too, using the same `bg-success`/`bg-closed` semantic tokens T-065 introduced.
++
++Every visible surface used the identical `bg-white rounded-xl p-5` panel treatment (7 near-identical white boxes stacked down the page), giving photo gallery, identity, description, services, reviews, hours, and social links all equal visual weight — no hierarchy, no indication of which action (Call/WhatsApp/Website) mattered most.
++
++### Visual hierarchy & surface levels (Steps 3–4)
++
++Three tiers, replacing the flat 7-box stack:
++1. **Prominent** — the identity+contact card (name, address, rating, status, verified badge, Call/WhatsApp/Website buttons): `bg-surface rounded-md border border-border shadow-resting p-5`. The only card carrying a shadow — deliberately the page's single loudest surface, since it's the primary conversion point.
++2. **Mid-tier** — Services/Reviews/Hours: `bg-surface rounded-md border border-border p-5`, no shadow. Real content sections, but subordinate to identity+contact.
++3. **Quiet, card-less** — Description, social links, location/map-link, data-freshness note, report link: no surface at all, just typography and spacing. These are supporting information, not decision points.
++
++### Gallery, fallback, and a layout bug found during implementation (Steps 5–7)
++
++**Photo-count fix:** see Inventory findings above.
++
++**Fallback:** reused T-065's `PhotoFallback` contract (decorative `Building2` icon on `bg-surface-subtle`, non-category-specific) and extended it with genuine per-image failed-request handling — a new `GalleryImage` component tracks `onError` via `useState` so a photo that fails to load converges on the identical fallback UI as a missing URL, rather than leaving a blank/broken tile. The original code had no such handling at all (a real gap, not a regression).
++
++**A real bug found and fixed during implementation, not introduced by this ticket but exposed by it:** the gallery's 3-tile layout used CSS Grid (`grid-cols-3`, first tile `col-span-2`) inside a fixed-height (`h-56 md:h-72`), `overflow-hidden` container. With tile 1 spanning 2 of 3 columns and tile 2 filling the remaining column, row 1 is completely full (2+1=3 units) — ordinary CSS Grid auto-placement therefore pushes tile 3 (the one carrying the "+N photos" button) onto an *implicit second row*, which the fixed-height, overflow-hidden container then silently clips out of view. Confirmed via direct DOM inspection of a real 10-photo salon: 3 grid children genuinely existed, with tile 3 positioned at `y: 464.4` — a full row below tiles 1–2 at `y: 81` — and confirmed via screenshot that the "+7 photos" affordance was completely invisible to sighted users despite being correct, present, and keyboard-reachable in the DOM. Since this container's classes were carried over unchanged from the pre-T-066 implementation, this was a **pre-existing, previously-unnoticed bug**, not a regression — but it directly defeated the very feature (the photo-count fix) this ticket was required to deliver, so it was in-scope to fix here. Replaced the grid with flexbox (`flex` + `flex-[2]`/`flex-1` + `min-w-0` per tile) — a single flex row cannot silently wrap to an implicit second row the way grid auto-placement can, so it cannot reproduce this clipping. Re-verified via DOM inspection (all 3 tiles now at the same `y`) and screenshot (the "+7 photos" tile clearly visible and clickable) after the fix. Zero CLS impact measured (0.0029, isolated standalone).
++
++### Identity block, contact actions, sections (Steps 8–18)
++
++**Identity:** name (`.text-page-title`), address with decorative `MapPin`, rating as one filled Lucide `Star` + numeric value + count (replacing any prior star-glyph pattern, matching T-065's SalonCard precedent), open/closed badge (semantic tokens, newly rendered — see Inventory findings), verified badge (`BadgeCheck`, neutral `bg-surface-subtle` pill, same restrained treatment as T-065's SalonCard verified badge, using the existing `getVerificationLabelKey` two-string contract unchanged).
++
++**Contact actions:** Call/WhatsApp/Website deliberately share one identical visual treatment (`bg-brand-soft text-brand hover:bg-brand hover:text-text-inverse`, `min-h-[48px]` touch target) — per the ticket's explicit instruction not to invent a new channel priority among the three. `resolveContactActions`/`hasAnyContactAction` (T-010) and the `contact_action` tracking contract (T-015, single owner in `ContactButtons.tsx`'s `trackContact`) are byte-for-byte unchanged. The no-contact-info state (`contactInfoUnavailable` message + `ReportButton`) is unchanged.
++
++**Services/Reviews:** unchanged lazy-load (`IntersectionObserver` + `AsyncSection`) architecture; only surface tokens and the per-review star treatment changed (single `Star` icon + numeric rating, replacing a repeat()-based Unicode star row).
++
++**Hours:** `SalonHours.tsx` — tokens only; the today-detection (`(new Date().getDay()+6)%7`) and sort logic are byte-identical.
++
++**Social links & location:** social-platform icons use generic `lucide-react` stand-ins (`Camera`/`Users`/`Send`/`MessageCircle`/`Music`/`Video`) — the installed `lucide-react` version ships **zero brand/logo icons** (`Instagram`/`Facebook`/`Youtube` all confirmed absent from the package's exports), a real upstream constraint, not a design choice made carelessly. Location section is a quiet text address + external Google Maps link — no embedded map exists on this page (see Scope note on T-063).
++
++### Verification (Steps 20–26, 28)
++
++**Responsive:** mobile (375px), tablet (768px), desktop (1280px) all render cleanly, isolated standalone build, real 10-photo salon.
++
++**Four locales:** `more_photos` and the new `location` heading both confirmed correctly localized and non-overflowing in all 4 locales (`el`: `+7 φωτογραφίες`, `en`: `+7 photos`, `ru`/`uk`: `+7 фото`); Greek's longer plural form wraps to two lines within the gallery tile without clipping or overflow.
++
++**Accessibility:** exactly one `<h1>`, `#main-content` landmark present, all `<img>` have `alt`, gallery button and contact links carry descriptive `aria-label`s, visible focus ring confirmed via real keyboard `Tab` + screenshot (not a `:focus-visible` computed-style query, which doesn't work as a pseudo-class probe — verified with an actual keyboard-driven focus + screenshot instead).
++
++**Analytics:** `contact_action` re-verified live via `gtag()`-call interception (with the `lookla_consent` cookie set to `'1'`, the real granted-value the consent module writes — not the string `'granted'`) — fires exactly the T-015 shape (`salon_id`, `channel`, `page: 'salon_detail'`, `locale`) for both `phone` and `whatsapp` clicks, with no salon name, phone number, or URL in the payload. Confirmed loading the detail page directly fires **zero** events (no `salon_open` — that event remains solely owned by the originating search-card link, per T-015/T-058). Confirmed the full search→detail cycle: `search_results_view` fires once on the search page, `salon_open` fires exactly once on the card click, and does not re-fire when the detail page mounts.
++
++**T-056 restoration:** search → open a salon → interact with the gallery → browser Back — search results correctly restored with no console errors.
++
++**SEO:** title/description/`BeautySalon` structured data (`aggregateRating`, address, telephone)/`og:image` all confirmed unchanged (server-component `page.tsx` metadata untouched; the `SalonDetailClient` schema.org block preserved as-is).
++
++**Performance:** isolated standalone measurement — CLS **0.0029**, confirming the gallery's grid→flexbox rewrite introduced no layout shift. Bundle: salon-detail route stayed essentially flat (6.83kB First Load JS).
++
++### Verification summary
++
++73 tests: the pre-existing `salonDetail.test.ts` (28 tests, all pass unchanged — every structural marker it slices on, e.g. `{/* CTA buttons */}`/`{/* Description */}`, preserved verbatim) + a new `salonDetailVisual.test.ts` (45 tests: photo-count fix, gallery fallback, no-emoji sweep, identity block, contact-action consistency, services/reviews/hours, map-shell boundary, analytics invariants, SEO/structured-data, Direction B tokens). Full regression suite green throughout (1020/1020, then re-confirmed green again after the lucide-react brand-icon build fix). Lint clean. `next build` clean (one real TypeScript catch: `Instagram`/`Facebook`/`Youtube` aren't exported by the installed `lucide-react` — corrected to generic icons, see Social links above). Isolated Playwright: responsive × locale sweep, the gallery-clipping bug found/fixed/re-verified, accessibility (focus ring, landmarks, alt text), analytics (`contact_action` × 2 channels, `salon_open` single-fire dedup), T-056 restoration, SEO metadata, and CLS/LCP measurement — all pass.
++
++**Live production verification:** pending — to be appended after merge and deploy, per the standing workflow (draft PR → real CI → explicit APPROVE → merge → rebuild `beauty_web` alone → verify on `https://lookla.gr`).
++
++```text
++T-066 regressions: 0
++```
++
+ ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
+ 
+ - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
+diff --git a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+index ce54f1e..5f9d594 100644
+--- a/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
++++ b/frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx
+@@ -2,6 +2,8 @@
+ import Link from 'next/link';
+ import { useState, useEffect, useRef, useCallback } from 'react';
+ import { useTranslations } from 'next-intl';
++import { Star, MapPin, BadgeCheck, Building2, Globe, Camera, Users, MessageCircle, Send, Video, Music } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import type { SalonDetail, ServiceItem, ReviewItem } from '@/lib/api';
+ import Header from '@/components/Header';
+ import ReportButton from '@/components/ReportButton';
+@@ -13,7 +15,19 @@ import { useFocusOnStatusRecovery } from '@/lib/useFocusOnStatusRecovery';
+ import { shouldShowReviewSourceLabel } from '@/lib/reviewsSection';
+ import { getVerificationLabelKey } from '@/lib/verificationLabel';
+ 
+-const SOCIAL_ICONS: Record<string, string> = { instagram: '📷', facebook: '👥', facebook_messenger: '💬', viber: '📲', whatsapp: '💬', tiktok: '🎵', youtube: '▶️' };
++// T-066 — decorative-only, one Lucide glyph per platform (was an emoji
++// map). lucide-react intentionally carries no brand/logo glyphs (no
++// Instagram/Facebook/YouTube marks exist in this icon set at all — a
++// licensing/consistency choice upstream, confirmed by inspecting the
++// package's actual exports), so every mapping below is a generic,
++// non-branded stand-in (camera for a photo platform, people for a social
++// network, a messaging-family icon for chat apps) rather than an
++// unavailable logo — restrained is a source-of-icons constraint here, not
++// only a design preference.
++const SOCIAL_ICONS: Record<string, typeof Globe> = {
++  instagram: Camera, facebook: Users, facebook_messenger: Send,
++  viber: MessageCircle, whatsapp: MessageCircle, tiktok: Music, youtube: Video,
++};
+ const SOCIAL_LABELS: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', facebook_messenger: 'Messenger', viber: 'Viber', whatsapp: 'WhatsApp', tiktok: 'TikTok', youtube: 'YouTube' };
+ 
+ interface Props { salon: SalonDetail | null; locale: string; slug: string; }
+@@ -24,12 +38,41 @@ const TRANSLATED_LABEL: Record<string, string> = {
+ 
+ function TranslatedBadge({ locale }: { locale: string }) {
+   return (
+-    <span className="inline-flex items-center gap-1 text-xs text-gray-400 ml-1.5">
+-      🌐 {TRANSLATED_LABEL[locale] ?? 'Translated'}
++    <span className="inline-flex items-center gap-1 text-caption text-text-muted ml-1.5">
++      <Icon icon={Globe} size={16} />
++      {TRANSLATED_LABEL[locale] ?? 'Translated'}
+     </span>
+   );
+ }
+ 
++/**
++ * T-066/T-065 — the same honest, decorative, non-category-specific
++ * fallback contract as SalonCard's PhotoFallback: a generic storefront
++ * glyph, never an emoji, never implying a real photo exists.
++ */
++function PhotoFallback({ className = '' }: { className?: string }) {
++  return (
++    <div className={`flex items-center justify-center h-full w-full bg-surface-subtle ${className}`}>
++      <Icon icon={Building2} size={28} className="text-text-muted" />
++    </div>
++  );
++}
++
++/** T-066 — tracks per-photo load failure so a failed request converges on the same fallback as a missing URL, instead of leaving a blank tile. */
++function GalleryImage({ url, alt, priority, className = '' }: { url: string; alt: string; priority?: boolean; className?: string }) {
++  const [failed, setFailed] = useState(false);
++  if (failed) return <PhotoFallback className={className} />;
++  return (
++    <img
++      src={url}
++      alt={alt}
++      className={`w-full h-full object-cover ${className}`}
++      loading={priority ? 'eager' : 'lazy'}
++      onError={() => setFailed(true)}
++    />
++  );
++}
++
+ interface LazySectionResult<T> {
+   data: T[];
+   loading: boolean;
+@@ -93,11 +136,11 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+ 
+   if (!salon) {
+     return (
+-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
++      <div className="min-h-screen flex items-center justify-center bg-surface-subtle">
+         <div className="text-center">
+-          <p className="text-5xl mb-4">💈</p>
+-          <h1 className="text-xl font-bold text-gray-800 mb-2">{t('not_found')}</h1>
+-          <Link href={`${prefix}/search`} className="text-pink-600 hover:underline text-sm">{t('back')}</Link>
++          <Icon icon={Building2} size={28} className="text-text-muted mx-auto mb-4" />
++          <h1 className="text-page-title text-text mb-2">{t('not_found')}</h1>
++          <Link href={`${prefix}/search`} className="text-brand hover:underline text-body-sm focus-ring-token">{t('back')}</Link>
+         </div>
+       </div>
+     );
+@@ -108,6 +151,20 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+   const desc = descMap[locale] || salon.description;
+   const isTranslated = desc && desc !== (salon.description_el || salon.description) && locale !== 'el';
+ 
++  // T-066: is_open_now was already fetched as part of SalonDetail (shared
++  // with SalonCard's list contract) but never rendered on this page at
++  // all — a real gap, not new data. Presentation mirrors T-065's SalonCard
++  // badge exactly (same tokens, same "text always present, not colour-
++  // only" rule), so search and detail agree visually. Calculation itself
++  // is untouched — this file never computes is_open_now, only displays it.
++  const statusLabel = salon.is_open_now !== undefined && salon.is_open_now !== null
++    ? (salon.is_open_now ? t('open_now') : t('closed'))
++    : undefined;
++
++  const verificationLabel = salon.is_verified
++    ? t(getVerificationLabelKey(salon.is_owner_claimed))
++    : undefined;
++
+   // Schema.org
+   const schema = {
+     '@context': 'https://schema.org', '@type': 'BeautySalon',
+@@ -118,23 +175,33 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+   };
+ 
+   return (
+-    <div className="min-h-screen bg-gray-50">
++    <div className="min-h-screen bg-surface-subtle">
+       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} />
+ 
+       <Header locale={locale} variant="detail" backHref={`${prefix}/search`} />
+ 
+-      <main id="main-content" className="max-w-4xl mx-auto px-4 py-6">
++      <main id="main-content" className="max-w-shell-content mx-auto px-4 py-6">
+         {/* Photo gallery */}
+         {salon.photos.length > 0 ? (
+-          <div className="mb-6">
+-            <div className={`grid gap-1.5 rounded-xl overflow-hidden h-56 ${salon.photos.length >= 3 ? 'grid-cols-3' : salon.photos.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
++          <div className="mb-4">
++            {/* T-066 fix — this was a CSS Grid (grid-cols-3 + col-span-2 on
++                tile 1) inside a fixed-height, overflow-hidden container.
++                With tile 1 spanning 2 of 3 columns, tile 2 fills the
++                remaining column and row 1 is already full (2+1=3), so tile
++                3 — the one carrying the "+N photos" affordance — was
++                pushed by ordinary grid auto-placement onto an implicit
++                second row that the fixed height then clipped out of view.
++                Flexbox (single row, no wrap) can't produce that implicit
++                second row, so it can't silently clip a tile this way. */}
++            <div className={`flex gap-1.5 rounded-md overflow-hidden h-56 md:h-72`}>
+               {salon.photos.slice(0, 3).map((photo, i) => (
+-                <div key={photo.id} className={`relative bg-gray-100 ${i === 0 && salon.photos.length >= 3 ? 'col-span-2' : ''}`}>
+-                  <img src={photo.url} alt={salon.name} className="w-full h-full object-cover" loading={i === 0 ? 'eager' : 'lazy'} />
++                <div key={photo.id} className={`relative bg-surface-subtle min-w-0 ${i === 0 && salon.photos.length >= 3 ? 'flex-[2]' : 'flex-1'}`}>
++                  <GalleryImage url={photo.url} alt={salon.name} priority={i === 0} />
+                   {i === 2 && salon.photos.length > 3 && !showAllPhotos && (
+                     <button onClick={() => setShowAllPhotos(true)}
+-                      className="absolute inset-0 bg-black/50 text-white flex items-center justify-center text-sm font-semibold hover:bg-black/60 transition-colors">
+-                      +{salon.photos.length - 3} φωτογραφίες
++                      aria-label={t('more_photos', { count: salon.photos.length - 3 })}
++                      className="absolute inset-0 bg-text/50 text-text-inverse flex items-center justify-center text-body-sm font-semibold hover:bg-text/60 transition-colors focus-ring-token">
++                      {t('more_photos', { count: salon.photos.length - 3 })}
+                     </button>
+                   )}
+                 </div>
+@@ -143,43 +210,54 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+             {showAllPhotos && salon.photos.length > 3 && (
+               <div className="grid grid-cols-3 gap-1.5 mt-1.5">
+                 {salon.photos.slice(3).map((photo) => (
+-                  <div key={photo.id} className="relative bg-gray-100 h-32 rounded-lg overflow-hidden">
+-                    <img src={photo.url} alt={salon.name} className="w-full h-full object-cover" loading="lazy" />
++                  <div key={photo.id} className="relative bg-surface-subtle h-32 rounded-sm overflow-hidden">
++                    <GalleryImage url={photo.url} alt={salon.name} />
+                   </div>
+                 ))}
+               </div>
+             )}
+           </div>
+         ) : (
+-          <div className="h-48 rounded-xl bg-gradient-to-br from-pink-50 to-purple-50 flex items-center justify-center text-6xl mb-6">💈</div>
++          <div className="h-48 rounded-md bg-surface-subtle flex items-center justify-center mb-4">
++            <Icon icon={Building2} size={28} className="text-text-muted" />
++          </div>
+         )}
+ 
+-        {/* Title + meta */}
+-        <div className="bg-white rounded-xl p-5 mb-4">
+-          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
++        {/* Identity + contact — the primary, most prominent surface on the page */}
++        <div className="bg-surface rounded-md border border-border shadow-resting p-5 mb-4">
++          <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+             <div>
+-              <h1 className="text-2xl font-bold text-gray-900 mb-1">{salon.name}</h1>
+-              <p className="text-gray-500 text-base">
++              <h1 className="text-page-title text-text mb-1">{salon.name}</h1>
++              <p className="flex items-center gap-1 text-body text-text-secondary">
++                <Icon icon={MapPin} size={16} className="text-text-muted shrink-0" />
+                 {[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(' ')}
+               </p>
+-              {salon.rating_google && (
+-                <div className="flex items-center gap-2 mt-2">
+-                  <span className="text-yellow-400">★</span>
+-                  <span className="font-bold text-base text-gray-800">{parseFloat(salon.rating_google).toFixed(1)}</span>
+-                  <span className="text-gray-400 text-sm">({t('reviews_count', { count: salon.rating_count })})</span>
+-                </div>
+-              )}
++              <div className="flex flex-wrap items-center gap-3 mt-2">
++                {salon.rating_google && (
++                  <div className="flex items-center gap-1.5">
++                    <Icon icon={Star} size={16} className="fill-accent-strong text-accent-strong" />
++                    <span className="font-bold text-body text-text">{parseFloat(salon.rating_google).toFixed(1)}</span>
++                    <span className="text-body-sm text-text-muted">({t('reviews_count', { count: salon.rating_count })})</span>
++                  </div>
++                )}
++                {statusLabel && (
++                  <span className={`text-caption px-2.5 py-1 rounded-pill font-medium ${salon.is_open_now ? 'bg-success text-text-inverse' : 'bg-closed text-text-inverse'}`}>
++                    {statusLabel}
++                  </span>
++                )}
++              </div>
+             </div>
+-            {salon.is_verified && (
+-              <span className="shrink-0 bg-blue-50 text-blue-600 text-sm px-3 py-1.5 rounded-full font-medium">
+-                {t(getVerificationLabelKey(salon.is_owner_claimed))}
++            {verificationLabel && (
++              <span className="shrink-0 flex items-center gap-1 bg-surface-subtle text-text-secondary text-body-sm px-3 py-1.5 rounded-pill font-medium">
++                <Icon icon={BadgeCheck} size={16} />
++                {verificationLabel}
+               </span>
+             )}
+           </div>
+ 
+           {/* Address detail */}
+           {(salon.address_region || salon.address_postal) && (
+-            <p className="text-sm text-gray-400 mt-1">
++            <p className="text-body-sm text-text-muted mt-1">
+               {[salon.address_postal, salon.address_region].filter(Boolean).join(' · ')}
+             </p>
+           )}
+@@ -196,10 +274,13 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+ 
+         {/* Description */}
+         {desc && (
+-          <div className="bg-white rounded-xl p-5 mb-4">
+-            <p className="text-gray-700 text-base leading-relaxed">{desc}</p>
++          <div className="mb-4">
++            <p className="text-body text-text-secondary leading-relaxed">{desc}</p>
+             {isTranslated && (
+-              <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">🌐 {t('translated')} Greek</p>
++              <p className="text-caption text-text-muted mt-3 flex items-center gap-1">
++                <Icon icon={Globe} size={16} />
++                {t('translated')} Greek
++              </p>
+             )}
+           </div>
+         )}
+@@ -209,40 +290,40 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+           <AsyncSection
+             status={servicesStatus}
+             loading={
+-              <div className="bg-white rounded-xl p-5 mb-4 space-y-3" aria-hidden="true">
+-                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
++              <div className="bg-surface rounded-md border border-border p-5 mb-4 space-y-3" aria-hidden="true">
++                {[1,2,3].map(i => <div key={i} className="h-10 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none" />)}
+               </div>
+             }
+             empty={
+-              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
+-                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
+-                <p className="text-sm text-gray-500">{t('servicesNotAvailable')}</p>
++              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none" role="status" aria-live="polite">
++                <h2 className="text-section-title text-text mb-2">{t('services')}</h2>
++                <p className="text-body-sm text-text-muted">{t('servicesNotAvailable')}</p>
+               </div>
+             }
+             error={
+-              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
+-                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('services')}</h2>
+-                <p className="text-sm text-gray-500 mb-2">{t('servicesLoadError')}</p>
+-                <button onClick={retryServices} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++              <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none" role="alert" aria-live="assertive">
++                <h2 className="text-section-title text-text mb-2">{t('services')}</h2>
++                <p className="text-body-sm text-text-muted mb-2">{t('servicesLoadError')}</p>
++                <button onClick={retryServices} className="text-body-sm text-brand hover:text-brand-hover font-medium focus-ring-token">
+                   {t('retry')}
+                 </button>
+               </div>
+             }
+           >
+-            <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none">
+-              <h2 className="text-lg font-bold text-gray-800 mb-3">{t('services')}</h2>
+-              <div className="divide-y divide-gray-100">
++            <div ref={servicesRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none">
++              <h2 className="text-section-title text-text mb-3">{t('services')}</h2>
++              <div className="divide-y divide-border">
+                 {services.map(svc => (
+                   <div key={svc.id} className="py-3.5 flex items-center justify-between">
+                     <div>
+-                      <p className="text-base text-gray-800">
++                      <p className="text-body text-text">
+                         {svc.name}
+                         {svc.is_translated && <TranslatedBadge locale={locale} />}
+                       </p>
+-                      {svc.duration_min && <p className="text-sm text-gray-400 mt-0.5">{svc.duration_min} {t('minutes')}</p>}
++                      {svc.duration_min && <p className="text-body-sm text-text-muted mt-0.5">{svc.duration_min} {t('minutes')}</p>}
+                     </div>
+                     {svc.price_from && (
+-                      <span className="text-base font-semibold text-gray-700 ml-4 shrink-0">
++                      <span className="text-body font-semibold text-text ml-4 shrink-0">
+                         {svc.price_to && String(svc.price_to) !== String(svc.price_from) ? `${svc.price_from}–${svc.price_to}€` : `${svc.price_from}€`}
+                       </span>
+                     )}
+@@ -258,58 +339,63 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+           <AsyncSection
+             status={reviewsStatus}
+             loading={
+-              <div className="bg-white rounded-xl p-5 mb-4 space-y-4" aria-hidden="true">
++              <div className="bg-surface rounded-md border border-border p-5 mb-4 space-y-4" aria-hidden="true">
+                 {[1,2,3].map(i => (
+                   <div key={i} className="space-y-2">
+-                    <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+-                    <div className="h-12 bg-gray-100 rounded animate-pulse" />
++                    <div className="h-3 w-32 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none" />
++                    <div className="h-12 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none" />
+                   </div>
+                 ))}
+               </div>
+             }
+             empty={
+-              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="status" aria-live="polite">
+-                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
+-                <p className="text-sm text-gray-500">{t('reviewsNotAvailable')}</p>
++              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none" role="status" aria-live="polite">
++                <h2 className="text-section-title text-text mb-2">{t('reviews')}</h2>
++                <p className="text-body-sm text-text-muted">{t('reviewsNotAvailable')}</p>
+               </div>
+             }
+             error={
+-              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none" role="alert" aria-live="assertive">
+-                <h2 className="text-lg font-bold text-gray-800 mb-2">{t('reviews')}</h2>
+-                <p className="text-sm text-gray-500 mb-2">{t('reviewsLoadError')}</p>
+-                <button onClick={retryReviews} className="text-sm text-pink-600 hover:text-pink-700 font-medium">
++              <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none" role="alert" aria-live="assertive">
++                <h2 className="text-section-title text-text mb-2">{t('reviews')}</h2>
++                <p className="text-body-sm text-text-muted mb-2">{t('reviewsLoadError')}</p>
++                <button onClick={retryReviews} className="text-body-sm text-brand hover:text-brand-hover font-medium focus-ring-token">
+                   {t('retry')}
+                 </button>
+               </div>
+             }
+           >
+-            <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-white rounded-xl p-5 mb-4 outline-none">
++            <div ref={reviewsRecoveryRef} tabIndex={-1} className="bg-surface rounded-md border border-border p-5 mb-4 outline-none">
+               <div className="flex items-center justify-between mb-3">
+-                <h2 className="text-lg font-bold text-gray-800">{t('reviews')}</h2>
++                <h2 className="text-section-title text-text">{t('reviews')}</h2>
+                 {salon.review_count > reviews.length && (
+-                  <span className="text-sm text-gray-400">{t('reviews_count', { count: salon.review_count })}</span>
++                  <span className="text-body-sm text-text-muted">{t('reviews_count', { count: salon.review_count })}</span>
+                 )}
+               </div>
+               {shouldShowReviewSourceLabel(reviewsLoading, reviews.length) && (
+-                <p className="text-xs text-gray-400 mb-3">{t('googleReviewsSourceLabel')}</p>
++                <p className="text-caption text-text-muted mb-3">{t('googleReviewsSourceLabel')}</p>
+               )}
+               <div className="space-y-4">
+                 {reviews.map(rev => (
+-                  <div key={rev.id} className="border-b border-gray-50 last:border-0 pb-4 last:pb-0">
++                  <div key={rev.id} className="border-b border-border last:border-0 pb-4 last:pb-0">
+                     <div className="flex items-center justify-between mb-1.5">
+                       <div className="flex items-center gap-2">
+-                        <span className="font-medium text-sm text-gray-800">{rev.author_name || t('anonymous')}</span>
++                        <span className="font-medium text-body-sm text-text">{rev.author_name || t('anonymous')}</span>
+                         {rev.source !== 'google' && (
+-                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full capitalize">{rev.source}</span>
++                          <span className="text-caption bg-surface-subtle text-text-muted px-2 py-0.5 rounded-pill capitalize">{rev.source}</span>
+                         )}
+                         {rev.is_translated && <TranslatedBadge locale={locale} />}
+                       </div>
+                       <div className="flex items-center gap-1.5">
+-                        {rev.rating && <span className="text-yellow-400 text-sm">{'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}</span>}
+-                        {rev.published_at && <span className="text-xs text-gray-400">{rev.published_at.slice(0, 7)}</span>}
++                        {rev.rating && (
++                          <span className="flex items-center gap-0.5">
++                            <Icon icon={Star} size={16} className="fill-accent-strong text-accent-strong" />
++                            <span className="text-body-sm text-text-secondary">{rev.rating}</span>
++                          </span>
++                        )}
++                        {rev.published_at && <span className="text-caption text-text-muted">{rev.published_at.slice(0, 7)}</span>}
+                       </div>
+                     </div>
+-                    {rev.text && <p className="text-sm text-gray-600 leading-relaxed">{rev.text}</p>}
++                    {rev.text && <p className="text-body-sm text-text-secondary leading-relaxed">{rev.text}</p>}
+                   </div>
+                 ))}
+               </div>
+@@ -319,20 +405,20 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+ 
+         {/* Hours */}
+         {salon.hours.length > 0 && (
+-          <div className="bg-white rounded-xl p-5 mb-4">
+-            <h2 className="text-lg font-bold text-gray-800 mb-3">{t('hours')}</h2>
++          <div className="bg-surface rounded-md border border-border p-5 mb-4">
++            <h2 className="text-section-title text-text mb-3">{t('hours')}</h2>
+             <SalonHours hours={salon.hours} locale={locale} />
+           </div>
+         )}
+ 
+-        {/* Social links */}
++        {/* Social links — quiet, secondary section */}
+         {salon.social_links.length > 0 && (
+-          <div className="bg-white rounded-xl p-5 mb-4">
++          <div className="mb-4">
+             <div className="flex flex-wrap gap-3">
+               {salon.social_links.map(sl => (
+                 <a key={sl.platform} href={sl.url} target="_blank" rel="noopener noreferrer"
+-                   className="flex items-center gap-2 text-base text-gray-600 hover:text-pink-600 border border-gray-100 px-4 py-2.5 rounded-full hover:border-pink-200 transition-colors">
+-                  <span>{SOCIAL_ICONS[sl.platform] || '🔗'}</span>
++                   className="flex items-center gap-2 text-body text-text-secondary hover:text-brand border border-border px-4 py-2.5 rounded-pill hover:border-border-strong transition-colors focus-ring-token">
++                  <Icon icon={SOCIAL_ICONS[sl.platform] ?? Globe} size={16} />
+                   <span>{SOCIAL_LABELS[sl.platform] || sl.platform}</span>
+                 </a>
+               ))}
+@@ -340,20 +426,28 @@ export default function SalonDetailClient({ salon, locale, slug }: Props) {
+           </div>
+         )}
+ 
+-        {/* Map placeholder */}
++        {/* Location — quiet, secondary section (a text repeat of the address
++            plus one external Google Maps link; there is no embedded map
++            widget on this page today, unlike the search page's MapView —
++            confirmed during inventory. T-063 (map accessibility) therefore
++            has nothing to own here yet; nothing map-related is touched). */}
+         {salon.lat && salon.lng && (
+-          <div className="bg-white rounded-xl p-5 mb-4">
+-            <p className="text-base text-gray-500">📍 {[salon.address_street, salon.address_number, salon.address_city, salon.address_postal].filter(Boolean).join(', ')}</p>
+-            {salon.address_region && <p className="text-sm text-gray-400 mt-0.5">{salon.address_region}</p>}
++          <div className="mb-4">
++            <h2 className="text-section-title text-text mb-2">{t('location')}</h2>
++            <p className="flex items-start gap-1.5 text-body text-text-secondary">
++              <Icon icon={MapPin} size={16} className="text-text-muted shrink-0 mt-0.5" />
++              {[salon.address_street, salon.address_number, salon.address_city, salon.address_postal].filter(Boolean).join(', ')}
++            </p>
++            {salon.address_region && <p className="text-body-sm text-text-muted mt-0.5 ml-[22px]">{salon.address_region}</p>}
+             <a href={`https://www.google.com/maps/search/?api=1&query=${salon.lat},${salon.lng}`}
+                target="_blank" rel="noopener noreferrer"
+-               className="text-base text-blue-600 hover:underline mt-1.5 block">{t('open_maps')}</a>
++               className="text-body text-brand hover:text-brand-hover hover:underline mt-1.5 inline-block focus-ring-token">{t('open_maps')}</a>
+           </div>
+         )}
+ 
+         {/* Data freshness */}
+         {salon.data_verified_at && (
+-          <p className="text-center text-xs text-gray-300 mb-4">
++          <p className="text-center text-caption text-text-muted mb-4">
+             {t('data_updated')} {new Date(salon.data_verified_at).toLocaleDateString(locale === 'el' ? 'el-GR' : locale, { year: 'numeric', month: 'long' })}
+           </p>
+         )}
+diff --git a/frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts b/frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts
+new file mode 100644
+index 0000000..31ca7c8
+--- /dev/null
++++ b/frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts
+@@ -0,0 +1,316 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..', '..', '..', '..');
++const source = fs.readFileSync(path.join(here, 'SalonDetailClient.tsx'), 'utf-8');
++const contactSource = fs.readFileSync(path.join(frontendRoot, 'components', 'ContactButtons.tsx'), 'utf-8');
++
++function codeOnly(src: string): string {
++  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++}
++
++function readMessages(locale: string): any {
++  return JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'));
++}
++
++const LOCALES = ['el', 'en', 'ru', 'uk'];
++
++describe('T-066: hard-coded photo-count text — fixed', () => {
++  test('the literal Greek string φωτογραφίες no longer appears anywhere in code (comments/JSDoc stripped first)', () => {
++    assert.ok(!codeOnly(source).includes('φωτογραφίες'));
++  });
++
++  test('the more-photos button uses a localization key with dynamic count, not a concatenated string', () => {
++    assert.ok(source.includes("t('more_photos', { count: salon.photos.length - 3 })"));
++  });
++
++  test('more_photos is defined with correct ICU plural categories in all 4 locales', () => {
++    for (const locale of LOCALES) {
++      const value = readMessages(locale).salon.more_photos;
++      assert.ok(typeof value === 'string' && value.includes('plural'), `${locale}.salon.more_photos must use ICU plural syntax`);
++      assert.ok(value.includes('one {') && value.includes('other {'), `${locale}.salon.more_photos missing one/other categories`);
++    }
++  });
++
++  test('Russian and Ukrainian more_photos additionally define few/many categories (matching the established search.results_summary precedent)', () => {
++    for (const locale of ['ru', 'uk']) {
++      const value = readMessages(locale).salon.more_photos;
++      assert.ok(value.includes('few {') && value.includes('many {'), `${locale}.salon.more_photos missing few/many categories`);
++    }
++  });
++
++  test('no English fallback leakage: el/ru/uk more_photos are not copies of the English string', () => {
++    const en = readMessages('en').salon.more_photos;
++    for (const locale of ['el', 'ru', 'uk']) {
++      assert.notEqual(readMessages(locale).salon.more_photos, en);
++    }
++  });
++
++  test('the button accessible name (aria-label) uses the same localized, pluralized text as the visible label', () => {
++    const btnBlock = source.slice(source.indexOf('{i === 2 && salon.photos.length > 3'), source.indexOf('{i === 2 && salon.photos.length > 3') + 500);
++    const ariaCount = (btnBlock.match(/t\('more_photos', \{ count: salon\.photos\.length - 3 \}\)/g) || []).length;
++    assert.equal(ariaCount, 2, 'both aria-label and the visible text must use the same t() call');
++  });
++
++  test('existing click-to-reveal behaviour (setShowAllPhotos) is unchanged', () => {
++    assert.ok(source.includes('onClick={() => setShowAllPhotos(true)}'));
++  });
++
++  test('no new lightbox/carousel behaviour was added alongside the fix', () => {
++    assert.ok(!/lightbox|carousel|swiper/i.test(source));
++  });
++});
++
++describe('T-066: gallery — fallback contract reused from T-065, per-image failure handling', () => {
++  test('a shared GalleryImage component tracks per-photo load failure, converging on the same PhotoFallback used for a missing URL', () => {
++    assert.ok(source.includes('function GalleryImage('));
++    assert.ok(source.includes('const [failed, setFailed] = useState(false);'));
++    assert.ok(source.includes('if (failed) return <PhotoFallback'));
++    assert.ok(source.includes('onError={() => setFailed(true)}'));
++  });
++
++  test('PhotoFallback is decorative (Building2 icon, aria-hidden by Icon default), not an emoji, not category-specific', () => {
++    const fallbackFn = source.slice(source.indexOf('function PhotoFallback('), source.indexOf('function GalleryImage('));
++    assert.ok(fallbackFn.includes('<Icon icon={Building2}'));
++    assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(codeOnly(fallbackFn)));
++    assert.ok(!fallbackFn.includes('decorative={false}'));
++  });
++
++  test('the no-photos-at-all state also uses the same Building2 fallback, not the old emoji/gradient', () => {
++    const noPhotosBlock = source.slice(source.indexOf(') : (\n          <div className="h-48'), source.indexOf(') : (\n          <div className="h-48') + 250);
++    assert.ok(noPhotosBlock.includes('Building2'));
++    assert.ok(!/bg-gradient-to-br/.test(noPhotosBlock));
++    assert.ok(!/💈/.test(noPhotosBlock));
++  });
++
++  test('the primary (first) gallery image is eager-loaded, the rest stay lazy — unchanged priority contract', () => {
++    assert.ok(source.includes('priority={i === 0}'));
++    assert.ok(source.includes("loading={priority ? 'eager' : 'lazy'}"));
++  });
++
++  test('no new image fetch/dependency: still the existing salon.photos array, still plain <img> via GalleryImage', () => {
++    assert.ok(!source.includes("from 'next/image'"));
++    assert.ok(source.includes('salon.photos.slice(0, 3)'));
++    assert.ok(source.includes('salon.photos.slice(3)'));
++  });
++});
++
++describe('T-066: no emoji remains in salon-detail-owned components (code, not comments)', () => {
++  test('SalonDetailClient.tsx is emoji-free', () => {
++    const emojiRange = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{2604}\u{2606}-\u{27BF}]/u; // excludes U+2605 BLACK STAR if ever reintroduced deliberately
++    assert.ok(!emojiRange.test(codeOnly(source)));
++  });
++
++  test('ContactButtons.tsx is emoji-free', () => {
++    const emojiRange = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
++    assert.ok(!emojiRange.test(codeOnly(contactSource)));
++  });
++
++  test('ReportButton.tsx is emoji-free', () => {
++    const reportSource = fs.readFileSync(path.join(frontendRoot, 'components', 'ReportButton.tsx'), 'utf-8');
++    const emojiRange = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
++    assert.ok(!emojiRange.test(codeOnly(reportSource)));
++  });
++
++  test('no Unicode star glyphs anywhere (rating and per-review stars both migrated to the Lucide Star icon)', () => {
++    assert.ok(!/[★✩☆]/.test(codeOnly(source)));
++    const starIconCount = (source.match(/<Icon icon=\{Star\}/g) || []).length;
++    assert.ok(starIconCount >= 2, 'expected at least 2 Star icon usages: the summary rating and the per-review rating');
++  });
++});
++
++describe('T-066: identity block — H1, rating, status, verification', () => {
++  test('exactly one H1 on the page at any given render (not_found and the success path are mutually exclusive early-return branches, each with its own single h1)', () => {
++    // The component has two early-return branches (if (!salon) ... vs the
++    // success path below it) — each renders exactly one <h1>, but they
++    // never render simultaneously. Check each branch independently rather
++    // than a flat whole-file count, which would double-count.
++    const notFoundBranch = source.slice(source.indexOf('if (!salon) {'), source.indexOf('// Pick best description'));
++    const successBranch = source.slice(source.indexOf('// Pick best description'));
++    assert.equal((codeOnly(notFoundBranch).match(/<h1\b/g) || []).length, 1, 'not-found branch must render exactly one h1');
++    assert.equal((codeOnly(successBranch).match(/<h1\b/g) || []).length, 1, 'success branch must render exactly one h1');
++    assert.ok(source.includes('<h1 className="text-page-title text-text mb-1">{salon.name}</h1>'));
++  });
++
++  test('is_open_now is now rendered (a real, pre-existing gap: the field was fetched but never displayed) using the T-065 success/closed token pattern, logic untouched', () => {
++    assert.ok(source.includes("salon.is_open_now !== undefined && salon.is_open_now !== null"));
++    assert.ok(source.includes("salon.is_open_now ? t('open_now') : t('closed')"));
++    assert.ok(source.includes('bg-success text-text-inverse'));
++    assert.ok(source.includes('bg-closed text-text-inverse'));
++    assert.ok(!/bg-green-500|bg-black\//.test(source));
++  });
++
++  test('status text is always rendered alongside the colour (never colour-only)', () => {
++    const statusBlock = source.slice(source.indexOf('{statusLabel && ('), source.indexOf('{statusLabel && (') + 300);
++    assert.ok(statusBlock.includes('{statusLabel}'));
++  });
++
++  test('verification meaning is unchanged: is_verified still gates presence, getVerificationLabelKey still picks the label, no new claim wording', () => {
++    assert.ok(source.includes('salon.is_verified'));
++    assert.ok(source.includes('getVerificationLabelKey(salon.is_owner_claimed)'));
++    assert.ok(!/lookla verified/i.test(source));
++    assert.ok(!/guarantee|trusted|premium/i.test(source));
++  });
++
++  test('verified badge accessible content includes the state at most once (one BadgeCheck icon, one text label, no duplication)', () => {
++    const badgeBlock = source.slice(source.indexOf('{verificationLabel && ('), source.indexOf('{verificationLabel && (') + 300);
++    assert.equal((badgeBlock.match(/<Icon icon=\{BadgeCheck\}/g) || []).length, 1);
++    assert.equal((badgeBlock.match(/\{verificationLabel\}/g) || []).length, 1);
++  });
++
++  test('address composition (street + number + city) is byte-identical to before, MapPin icon is decorative', () => {
++    assert.ok(source.includes("{[salon.address_street, salon.address_number, salon.address_city].filter(Boolean).join(' ')}"));
++    const addressBlock = source.slice(source.indexOf('<Icon icon={MapPin}'), source.indexOf('<Icon icon={MapPin}') + 200);
++    assert.ok(!addressBlock.includes('decorative={false}'));
++  });
++});
++
++describe('T-066: contact-action section — no invented channel hierarchy', () => {
++  test('all 3 contact buttons share one identical BUTTON_CLASS — no per-channel colour distinguishing importance', () => {
++    const aTagCount = (contactSource.match(/className=\{BUTTON_CLASS\}/g) || []).length;
++    assert.equal(aTagCount, 3, 'all 3 <a> tags must use the exact same class reference, not per-channel variants');
++    assert.ok(!/bg-green-50|bg-emerald-50|bg-blue-50/.test(contactSource), 'the old per-channel colour distinction must be gone');
++  });
++
++  test('existing action order (call, whatsapp, website) and grid layout are unchanged', () => {
++    const callIdx = contactSource.indexOf('actions.callHref &&');
++    const waIdx = contactSource.indexOf('actions.whatsappHref &&');
++    const webIdx = contactSource.indexOf('actions.websiteHref &&');
++    assert.ok(callIdx < waIdx && waIdx < webIdx);
++    assert.ok(contactSource.includes('<div className="grid grid-cols-2 gap-2">'));
++  });
++
++  test('no booking/reservation/appointment language introduced anywhere in ContactButtons.tsx', () => {
++    assert.ok(!/\bbook\b|reservation|appointment|schedule/i.test(contactSource));
++  });
++
++  test('touch targets remain >=48px (min-h-[48px] unchanged) and carry focus-ring-token', () => {
++    assert.ok(contactSource.includes('min-h-[48px]'));
++    assert.ok(contactSource.includes('focus-ring-token'));
++  });
++
++  test('icons are decorative (Icon default aria-hidden) — the visible/aria-label text carries the channel identity, not the glyph', () => {
++    assert.ok(!contactSource.includes('decorative={false}'));
++  });
++
++  test('no-contact state is unchanged: same message key, same ReportButton fallback, no fake disabled buttons', () => {
++    assert.ok(contactSource.includes("t('contactInfoUnavailable')"));
++    assert.ok(contactSource.includes('<ReportButton'));
++    assert.ok(!/disabled(?!\})/.test(contactSource.slice(contactSource.indexOf('hasAnyContactAction'), contactSource.indexOf('return (\n    <div'))));
++  });
++});
++
++describe('T-066: services/reviews/hours — data and logic untouched, tokens only', () => {
++  test('service rendering (name, translated badge, duration, price range) is unchanged in logic', () => {
++    assert.ok(source.includes('svc.name'));
++    assert.ok(source.includes('svc.is_translated && <TranslatedBadge'));
++    assert.ok(source.includes('svc.duration_min &&'));
++    assert.ok(source.includes("svc.price_to && String(svc.price_to) !== String(svc.price_from)"));
++  });
++
++  test('review rendering (author, source badge, translated badge, rating, date, text) is unchanged in logic', () => {
++    assert.ok(source.includes("rev.author_name || t('anonymous')"));
++    assert.ok(source.includes("rev.source !== 'google'"));
++    assert.ok(source.includes('rev.is_translated && <TranslatedBadge'));
++    assert.ok(source.includes('rev.published_at.slice(0, 7)'));
++  });
++
++  test('per-review rating uses the Lucide Star + numeric value, not a repeated star-row', () => {
++    const reviewRatingBlock = source.slice(source.indexOf('{rev.rating && ('), source.indexOf('{rev.rating && (') + 400);
++    assert.ok(reviewRatingBlock.includes('<Icon icon={Star}'));
++    assert.ok(reviewRatingBlock.includes('{rev.rating}'));
++    assert.ok(!/repeat\(/.test(reviewRatingBlock));
++  });
++
++  test('SalonHours receives the same hours/locale props, sort and today-highlight logic untouched', () => {
++    assert.ok(source.includes('<SalonHours hours={salon.hours} locale={locale} />'));
++    const hoursSource = fs.readFileSync(path.join(frontendRoot, 'components', 'SalonHours.tsx'), 'utf-8');
++    assert.ok(hoursSource.includes('const today = (new Date().getDay() + 6) % 7;'));
++    assert.ok(hoursSource.includes('sorted = [...hours].sort((a, b) => a.day_of_week - b.day_of_week)'));
++  });
++
++  test('googleReviewsSourceLabel disclosure condition is unchanged', () => {
++    assert.ok(source.includes('shouldShowReviewSourceLabel(reviewsLoading, reviews.length)'));
++  });
++});
++
++describe('T-066: location/map shell boundary — no embedded map exists, nothing map-related touched', () => {
++  test('SalonDetailClient does not import MapView — there is no embedded Leaflet map on this page (inventory-confirmed)', () => {
++    // codeOnly() strips comments — one explains this exact finding in
++    // prose ("...unlike the search page's MapView...."), which would
++    // otherwise false-positive as a real reference.
++    assert.ok(!codeOnly(source).includes('MapView'));
++  });
++
++  test('the location section is a plain address repeat + external Google Maps link — coordinates and query construction unchanged', () => {
++    assert.ok(source.includes('https://www.google.com/maps/search/?api=1&query=${salon.lat},${salon.lng}'));
++    assert.ok(source.includes("target=\"_blank\""));
++    assert.ok(source.includes('rel="noopener noreferrer"'));
++  });
++
++  test('no new map provider, no new coordinates exposure beyond the existing query string', () => {
++    assert.ok(!/leaflet|mapbox|google\.maps\.Map\(/i.test(source));
++  });
++});
++
++describe('T-066: analytics invariants — no new event, no PII, salon_open still page-external', () => {
++  test('SalonDetailClient itself never calls trackEvent (salon_open only ever fires from the originating card/link, unchanged T-015 contract)', () => {
++    assert.ok(!source.includes('trackEvent'));
++    assert.ok(!source.includes("from '@/lib/analytics'"));
++  });
++
++  test('ContactButtons trackContact payload is unchanged: salon_id/channel/page/locale only', () => {
++    const fn = contactSource.slice(contactSource.indexOf('function trackContact'), contactSource.indexOf('export default function'));
++    assert.ok(fn.includes('salon_id: String(salonId)'));
++    assert.ok(fn.includes("page: 'salon_detail'"));
++    // 'phone' here is deliberately excluded from the "must not appear" set —
++    // it's the channel *enum* literal (channel: 'phone' | 'whatsapp' |
++    // 'website'), not a reference to an actual phone-number variable. The
++    // real guard is against salonName/websiteUrl/callHref-style *value*
++    // references, matching the equivalent pre-existing check in
++    // lib/analytics.test.ts.
++    assert.ok(!/salonName|websiteUrl|callHref|whatsappHref|websiteHref/.test(fn));
++  });
++
++  test('no new event names introduced by this ticket', () => {
++    for (const forbidden of ['gallery_open', 'photo_view', 'hours_view', 'map_open']) {
++      assert.ok(!source.includes(`'${forbidden}'`));
++      assert.ok(!contactSource.includes(`'${forbidden}'`));
++    }
++  });
++});
++
++describe('T-066: SEO/structured data — unchanged', () => {
++  test('schema.org BeautySalon JSON-LD block is byte-identical in structure', () => {
++    assert.ok(source.includes("'@context': 'https://schema.org', '@type': 'BeautySalon',"));
++    assert.ok(source.includes('aggregateRating'));
++    assert.ok(source.includes("salon.rating_google ? { aggregateRating:"));
++  });
++
++  test('no fake/invented structured-data field added (no price range, no availability, no offers)', () => {
++    assert.ok(!/priceRange|availability|Offer|hasOfferCatalog/i.test(source));
++  });
++});
++
++describe('T-066: Direction B tokens — no legacy palette remains', () => {
++  test('SalonDetailClient.tsx has no legacy bg-white/bg-gray-*/text-gray-*/bg-pink-*/text-pink-* utilities', () => {
++    const clean = codeOnly(source);
++    assert.ok(!/\bbg-white\b/.test(clean));
++    assert.ok(!/bg-gray-\d|text-gray-\d/.test(clean));
++    assert.ok(!/bg-pink-\d|text-pink-\d/.test(clean));
++  });
++
++  test('page containers consume the T-060 shell-content token, not bare max-w-4xl', () => {
++    assert.ok(source.includes('max-w-shell-content'));
++    assert.ok(!/max-w-4xl/.test(source));
++  });
++
++  test('card surfaces use the shared rounded-md/border-border tokens, not the legacy rounded-xl/border-gray-100', () => {
++    assert.ok(!/rounded-xl/.test(codeOnly(source)));
++    assert.ok(!/border-gray-100/.test(source));
++  });
++});
+diff --git a/frontend/components/ContactButtons.tsx b/frontend/components/ContactButtons.tsx
+index cee2214..e0330ef 100644
+--- a/frontend/components/ContactButtons.tsx
++++ b/frontend/components/ContactButtons.tsx
+@@ -1,5 +1,7 @@
+ 'use client';
+ import { useTranslations } from 'next-intl';
++import { Phone, MessageCircle, Globe } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import ReportButton from '@/components/ReportButton';
+ import { resolveContactActions, hasAnyContactAction } from '@/lib/contactActions';
+ import { trackEvent } from '@/lib/analytics';
+@@ -13,7 +15,17 @@ interface ContactButtonsProps {
+   locale: string;
+ }
+ 
+-const BUTTON_CLASS = 'flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl text-base font-semibold min-h-[48px]';
++/**
++ * T-066 — Call/WhatsApp/Website deliberately share one identical visual
++ * treatment (icon + label only differ). The ticket's own boundary is
++ * explicit: no new product-level channel priority may be invented here —
++ * "use visual consistency rather than silently selecting a winner." Soft
++ * brand fill at rest (prominent against the page's neutral surfaces,
++ * signalling "this is the primary conversion group") inverting to a solid
++ * brand fill on hover, reusing T-059's existing primary/soft token pair
++ * rather than a new one-off colour.
++ */
++const BUTTON_CLASS = 'flex items-center justify-center gap-2 px-4 py-3.5 rounded-md text-body font-semibold min-h-[48px] focus-ring-token transition-colors bg-brand-soft text-brand hover:bg-brand hover:text-text-inverse';
+ 
+ /**
+  * T-015: fires immediately before navigation/deep-link activation — never
+@@ -40,7 +52,7 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+   if (!hasAnyContactAction(actions)) {
+     return (
+       <div className="text-center py-2">
+-        <p className="text-sm text-gray-500 mb-2">{t('contactInfoUnavailable')}</p>
++        <p className="text-body-sm text-text-muted mb-2">{t('contactInfoUnavailable')}</p>
+         <ReportButton salonId={salonId} locale={locale} label={t('report')} />
+       </div>
+     );
+@@ -53,10 +65,11 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+           href={actions.callHref}
+           onClick={() => trackContact(salonId, 'phone', locale)}
+           aria-label={`${t('callSalon')} ${salonName}`}
+-          className={`${BUTTON_CLASS} bg-green-50 text-green-700 hover:bg-green-100`}
++          className={BUTTON_CLASS}
+         >
+-          📞 {t('callSalon')}
+-          {phone && <span className="hidden sm:inline text-green-600 font-normal">· {phone}</span>}
++          <Icon icon={Phone} size={20} />
++          {t('callSalon')}
++          {phone && <span className="hidden sm:inline font-normal">· {phone}</span>}
+         </a>
+       )}
+       {actions.whatsappHref && (
+@@ -66,9 +79,10 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+           rel="noopener noreferrer"
+           onClick={() => trackContact(salonId, 'whatsapp', locale)}
+           aria-label={`${t('messageWhatsApp')} ${salonName}`}
+-          className={`${BUTTON_CLASS} bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}
++          className={BUTTON_CLASS}
+         >
+-          💬 {t('messageWhatsApp')}
++          <Icon icon={MessageCircle} size={20} />
++          {t('messageWhatsApp')}
+         </a>
+       )}
+       {actions.websiteHref && (
+@@ -78,9 +92,10 @@ export default function ContactButtons({ phone, websiteUrl, salonName, salonId,
+           rel="noopener noreferrer"
+           onClick={() => trackContact(salonId, 'website', locale)}
+           aria-label={`${t('visitWebsite')} ${salonName}`}
+-          className={`${BUTTON_CLASS} bg-blue-50 text-blue-700 hover:bg-blue-100`}
++          className={BUTTON_CLASS}
+         >
+-          🌐 {t('visitWebsite')}
++          <Icon icon={Globe} size={20} />
++          {t('visitWebsite')}
+         </a>
+       )}
+     </div>
+diff --git a/frontend/components/ReportButton.tsx b/frontend/components/ReportButton.tsx
+index 66e4a65..5f76d09 100644
+--- a/frontend/components/ReportButton.tsx
++++ b/frontend/components/ReportButton.tsx
+@@ -1,6 +1,8 @@
+ 'use client';
+ import { useState } from 'react';
+ import { useTranslations } from 'next-intl';
++import { Flag } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ 
+ const REASON_KEYS = ['closed', 'wrong_phone', 'wrong_address', 'wrong_hours', 'duplicate', 'inappropriate', 'other'] as const;
+ 
+@@ -23,23 +25,24 @@ export default function ReportButton({ salonId, locale: _locale, label }: Props)
+     setSent(true);
+   };
+ 
+-  if (sent) return <p className="text-xs text-gray-400">{t('thanks')}</p>;
++  if (sent) return <p className="text-caption text-text-muted">{t('thanks')}</p>;
+ 
+   return (
+     <>
+-      <button onClick={() => setOpen(true)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+-        ⚠️ {label}
++      <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1 text-caption text-text-muted hover:text-text-secondary underline focus-ring-token">
++        <Icon icon={Flag} size={16} />
++        {label}
+       </button>
+ 
+       {open && (
+-        <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-4">
+-          <div className="bg-white rounded-xl p-5 w-full max-w-sm shadow-xl">
+-            <h3 className="font-semibold text-gray-800 mb-4">{t('title')}</h3>
++        <div className="fixed inset-0 bg-text/40 z-50 flex items-end sm:items-center justify-center p-4">
++          <div className="bg-surface rounded-md p-5 w-full max-w-sm shadow-elevated">
++            <h3 className="font-semibold text-text mb-4">{t('title')}</h3>
+             <div className="space-y-2 mb-4">
+               {REASON_KEYS.map(key => (
+-                <label key={key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
++                <label key={key} className="flex items-center gap-2 text-body-sm text-text-secondary cursor-pointer">
+                   <input type="radio" name="reason" value={key} checked={reason === key}
+-                    onChange={() => setReason(key)} className="accent-pink-600" />
++                    onChange={() => setReason(key)} className="accent-brand" />
+                   {t(key)}
+                 </label>
+               ))}
+@@ -47,12 +50,12 @@ export default function ReportButton({ salonId, locale: _locale, label }: Props)
+             {reason === 'other' && (
+               <textarea value={desc} onChange={e => setDesc(e.target.value)}
+                 placeholder={t('other')}
+-                className="w-full border border-gray-200 rounded-lg p-2 text-sm resize-none h-20 focus:outline-none focus:ring-1 focus:ring-pink-300 mb-3" />
++                className="w-full border border-border rounded-sm p-2 text-body-sm resize-none h-20 focus-ring-token mb-3" />
+             )}
+             <div className="flex gap-2">
+-              <button onClick={() => setOpen(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">{t('cancel')}</button>
++              <button onClick={() => setOpen(false)} className="flex-1 py-2 border border-border rounded-sm text-body-sm text-text-secondary hover:bg-surface-subtle focus-ring-token">{t('cancel')}</button>
+               <button onClick={submit} disabled={!reason}
+-                className="flex-1 py-2 bg-pink-600 text-white rounded-lg text-sm font-medium hover:bg-pink-700 disabled:opacity-50">{t('submit')}</button>
++                className="flex-1 py-2 bg-brand text-text-inverse rounded-sm text-body-sm font-medium hover:bg-brand-hover disabled:opacity-50 focus-ring-token">{t('submit')}</button>
+             </div>
+           </div>
+         </div>
+diff --git a/frontend/components/SalonHours.tsx b/frontend/components/SalonHours.tsx
+index 94a07b1..c9ea2df 100644
+--- a/frontend/components/SalonHours.tsx
++++ b/frontend/components/SalonHours.tsx
+@@ -17,11 +17,11 @@ export default function SalonHours({ hours, locale }: { hours: SalonHour[]; loca
+     <div className="space-y-1.5">
+       {sorted.map(h => (
+         <div key={h.day_of_week}
+-             className={`flex justify-between text-sm px-2 py-1 rounded-lg ${h.day_of_week === today ? 'bg-pink-50 font-medium' : ''}`}>
+-          <span className={h.day_of_week === today ? 'text-pink-700' : 'text-gray-600'}>
++             className={`flex justify-between text-body-sm px-2 py-1 rounded-sm ${h.day_of_week === today ? 'bg-brand-soft font-medium' : ''}`}>
++          <span className={h.day_of_week === today ? 'text-brand' : 'text-text-secondary'}>
+             {names[h.day_of_week]}
+           </span>
+-          <span className={h.is_closed ? 'text-gray-400' : h.day_of_week === today ? 'text-pink-700' : 'text-gray-800'}>
++          <span className={h.is_closed ? 'text-text-muted' : h.day_of_week === today ? 'text-brand' : 'text-text'}>
+             {h.is_closed ? (CLOSED[locale] ?? 'Closed') : `${h.open_time} – ${h.close_time}`}
+           </span>
+         </div>
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index b946c38..e6962ea 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -76,6 +76,7 @@
+     "hours": "Ώρες λειτουργίας",
+     "services": "Υπηρεσίες",
+     "photos": "Φωτογραφίες",
++    "more_photos": "{count, plural, one {+# φωτογραφία} other {+# φωτογραφίες}}",
+     "reviews": "Αξιολογήσεις",
+     "googleReviewsSourceLabel": "Πηγή: Google Reviews / Εισήχθη: Ναι / Πρωτότυπο: Όχι",
+     "translated": "Μεταφράστηκε από τα",
+@@ -92,6 +93,7 @@
+     "reviews_count": "{count} αξιολογήσεις",
+     "minutes": "λεπτά",
+     "open_maps": "Άνοιγμα στο Google Maps →",
++    "location": "Τοποθεσία",
+     "anonymous": "Ανώνυμος",
+     "data_updated": "Δεδομένα ενημερώθηκαν",
+     "servicesNotAvailable": "Δεν υπάρχουν διαθέσιμες πληροφορίες υπηρεσιών για αυτό το σαλόνι",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index 3339d5e..70b0938 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -76,6 +76,7 @@
+     "hours": "Opening hours",
+     "services": "Services",
+     "photos": "Photos",
++    "more_photos": "{count, plural, one {+# photo} other {+# photos}}",
+     "reviews": "Reviews",
+     "googleReviewsSourceLabel": "Source: Google Reviews / Imported: Yes / Original: No",
+     "translated": "Translated from",
+@@ -92,6 +93,7 @@
+     "reviews_count": "{count} reviews",
+     "minutes": "min",
+     "open_maps": "Open in Google Maps →",
++    "location": "Location",
+     "anonymous": "Anonymous",
+     "data_updated": "Data updated",
+     "servicesNotAvailable": "Service information not available for this salon",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index 1d0500e..a0b71eb 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -76,6 +76,7 @@
+     "hours": "Часы работы",
+     "services": "Услуги",
+     "photos": "Фото",
++    "more_photos": "{count, plural, one {+# фото} few {+# фото} many {+# фото} other {+# фото}}",
+     "reviews": "Отзывы",
+     "googleReviewsSourceLabel": "Источник: Google Reviews / Импортировано: Да / Оригинал: Нет",
+     "translated": "Переведено с",
+@@ -92,6 +93,7 @@
+     "reviews_count": "{count} отзывов",
+     "minutes": "мин",
+     "open_maps": "Открыть в Google Maps →",
++    "location": "Расположение",
+     "anonymous": "Аноним",
+     "data_updated": "Данные обновлены",
+     "servicesNotAvailable": "Информация об услугах для этого салона недоступна",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 6db217e..0c3e995 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -76,6 +76,7 @@
+     "hours": "Години роботи",
+     "services": "Послуги",
+     "photos": "Фото",
++    "more_photos": "{count, plural, one {+# фото} few {+# фото} many {+# фото} other {+# фото}}",
+     "reviews": "Відгуки",
+     "googleReviewsSourceLabel": "Джерело: Google Reviews / Імпортовано: Так / Оригінал: Ні",
+     "translated": "Перекладено з",
+@@ -92,6 +93,7 @@
+     "reviews_count": "{count} відгуків",
+     "minutes": "хв",
+     "open_maps": "Відкрити у Google Maps →",
++    "location": "Розташування",
+     "anonymous": "Анонім",
+     "data_updated": "Дані оновлено",
+     "servicesNotAvailable": "Інформація про послуги для цього салону недоступна",
