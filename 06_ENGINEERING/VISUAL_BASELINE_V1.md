@@ -1,6 +1,6 @@
 # Visual Baseline v1 — foundation specification
 
-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), and T-065 (SalonCard). Not yet the complete Visual Baseline — salon-detail content is consumed by a later, independently reviewable ticket. Do not treat this document as "Visual Baseline v1 complete."
+**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), and T-066 (salon detail). All conversion-facing screens are now covered. Only a final consistency pass (cookie consent UI, legal pages, remaining shared `AsyncSection` states) and the official Beta Visual Baseline date remain. Do not treat this document as "Visual Baseline v1 complete" until that pass lands.
 
 **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
 
@@ -163,7 +163,7 @@ Deliberately not generalized further — no abstract component library, no prema
 | Homepage (hero, category/area tiles, "how it works") | ~~Homepage visual refresh~~ — **done, T-062** | Included the "Book" step copy fix and the SearchBar 320px overflow fix (see below) |
 | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
 | SalonCard | ~~SalonCard visual refresh~~ — **done, T-065** | First ticket in the sequence allowed to touch the card's internal appearance, not just surrounding chrome |
-| Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
+| Salon detail (7-box consolidation, CTA hierarchy, gallery) | ~~Salon detail visual refresh~~ — **done, T-066** | Fixed the hardcoded Greek `+N φωτογραφίες` overlay; also found and fixed a real gallery-layout bug (see T-066 below) |
 | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
 
 ## T-060 — Global shell (header, footer, mobile navigation, language selector)
@@ -546,6 +546,73 @@ Isolated standalone measurement (`en/search`, 1440px, `networkidle`, two separat
 
 ```text
 T-065 regressions: 0
+```
+
+## T-066 — Salon Detail Visual Refresh
+
+**Scope:** `app/[locale]/salons/[slug]/SalonDetailClient.tsx` (full visual rewrite), `components/ContactButtons.tsx`, `components/SalonHours.tsx`, `components/ReportButton.tsx` (tokens/icons only in the latter three — no logic changes). `app/[locale]/salons/[slug]/page.tsx` (server component, metadata) untouched. T-063 (Map Accessibility) remains a separate, untouched, reserved placeholder — this ticket confirmed during inventory that salon-detail has no embedded map/Leaflet widget at all today (only a text address + an external Google Maps link), so T-063 has nothing to own here yet. This is the last conversion-facing screen in the Visual Baseline v1 sequence (T-059 → T-060 → T-062 → T-064 → T-065 → **T-066**).
+
+**Ticket identity:** no collision — T-066 was genuinely unused.
+
+### Inventory findings (Steps 1–2)
+
+Two real, pre-existing gaps found during inventory, both addressed by this ticket:
+- **The hardcoded Greek `+N φωτογραφίες` overlay** — the exact bug named in the ticket. The gallery's "show more photos" affordance always rendered this literal Greek string regardless of locale. Fixed with a proper ICU-pluralized `salon.more_photos` key across all 4 locales (`el`/`en` use `=0/one/other`; `ru`/`uk` use the full Slavic `=0/one/few/many/other` set, matching the existing `search.results_summary` precedent even though all Russian/Ukrainian categories render identically for "фото").
+- **`is_open_now` was fetched but never rendered anywhere on the page**, despite being available data (and already driving `SalonCard`'s open/closed badge on the search results page). Added a matching open/closed badge here too, using the same `bg-success`/`bg-closed` semantic tokens T-065 introduced.
+
+Every visible surface used the identical `bg-white rounded-xl p-5` panel treatment (7 near-identical white boxes stacked down the page), giving photo gallery, identity, description, services, reviews, hours, and social links all equal visual weight — no hierarchy, no indication of which action (Call/WhatsApp/Website) mattered most.
+
+### Visual hierarchy & surface levels (Steps 3–4)
+
+Three tiers, replacing the flat 7-box stack:
+1. **Prominent** — the identity+contact card (name, address, rating, status, verified badge, Call/WhatsApp/Website buttons): `bg-surface rounded-md border border-border shadow-resting p-5`. The only card carrying a shadow — deliberately the page's single loudest surface, since it's the primary conversion point.
+2. **Mid-tier** — Services/Reviews/Hours: `bg-surface rounded-md border border-border p-5`, no shadow. Real content sections, but subordinate to identity+contact.
+3. **Quiet, card-less** — Description, social links, location/map-link, data-freshness note, report link: no surface at all, just typography and spacing. These are supporting information, not decision points.
+
+### Gallery, fallback, and a layout bug found during implementation (Steps 5–7)
+
+**Photo-count fix:** see Inventory findings above.
+
+**Fallback:** reused T-065's `PhotoFallback` contract (decorative `Building2` icon on `bg-surface-subtle`, non-category-specific) and extended it with genuine per-image failed-request handling — a new `GalleryImage` component tracks `onError` via `useState` so a photo that fails to load converges on the identical fallback UI as a missing URL, rather than leaving a blank/broken tile. The original code had no such handling at all (a real gap, not a regression).
+
+**A real bug found and fixed during implementation, not introduced by this ticket but exposed by it:** the gallery's 3-tile layout used CSS Grid (`grid-cols-3`, first tile `col-span-2`) inside a fixed-height (`h-56 md:h-72`), `overflow-hidden` container. With tile 1 spanning 2 of 3 columns and tile 2 filling the remaining column, row 1 is completely full (2+1=3 units) — ordinary CSS Grid auto-placement therefore pushes tile 3 (the one carrying the "+N photos" button) onto an *implicit second row*, which the fixed-height, overflow-hidden container then silently clips out of view. Confirmed via direct DOM inspection of a real 10-photo salon: 3 grid children genuinely existed, with tile 3 positioned at `y: 464.4` — a full row below tiles 1–2 at `y: 81` — and confirmed via screenshot that the "+7 photos" affordance was completely invisible to sighted users despite being correct, present, and keyboard-reachable in the DOM. Since this container's classes were carried over unchanged from the pre-T-066 implementation, this was a **pre-existing, previously-unnoticed bug**, not a regression — but it directly defeated the very feature (the photo-count fix) this ticket was required to deliver, so it was in-scope to fix here. Replaced the grid with flexbox (`flex` + `flex-[2]`/`flex-1` + `min-w-0` per tile) — a single flex row cannot silently wrap to an implicit second row the way grid auto-placement can, so it cannot reproduce this clipping. Re-verified via DOM inspection (all 3 tiles now at the same `y`) and screenshot (the "+7 photos" tile clearly visible and clickable) after the fix. Zero CLS impact measured (0.0029, isolated standalone).
+
+### Identity block, contact actions, sections (Steps 8–18)
+
+**Identity:** name (`.text-page-title`), address with decorative `MapPin`, rating as one filled Lucide `Star` + numeric value + count (replacing any prior star-glyph pattern, matching T-065's SalonCard precedent), open/closed badge (semantic tokens, newly rendered — see Inventory findings), verified badge (`BadgeCheck`, neutral `bg-surface-subtle` pill, same restrained treatment as T-065's SalonCard verified badge, using the existing `getVerificationLabelKey` two-string contract unchanged).
+
+**Contact actions:** Call/WhatsApp/Website deliberately share one identical visual treatment (`bg-brand-soft text-brand hover:bg-brand hover:text-text-inverse`, `min-h-[48px]` touch target) — per the ticket's explicit instruction not to invent a new channel priority among the three. `resolveContactActions`/`hasAnyContactAction` (T-010) and the `contact_action` tracking contract (T-015, single owner in `ContactButtons.tsx`'s `trackContact`) are byte-for-byte unchanged. The no-contact-info state (`contactInfoUnavailable` message + `ReportButton`) is unchanged.
+
+**Services/Reviews:** unchanged lazy-load (`IntersectionObserver` + `AsyncSection`) architecture; only surface tokens and the per-review star treatment changed (single `Star` icon + numeric rating, replacing a repeat()-based Unicode star row).
+
+**Hours:** `SalonHours.tsx` — tokens only; the today-detection (`(new Date().getDay()+6)%7`) and sort logic are byte-identical.
+
+**Social links & location:** social-platform icons use generic `lucide-react` stand-ins (`Camera`/`Users`/`Send`/`MessageCircle`/`Music`/`Video`) — the installed `lucide-react` version ships **zero brand/logo icons** (`Instagram`/`Facebook`/`Youtube` all confirmed absent from the package's exports), a real upstream constraint, not a design choice made carelessly. Location section is a quiet text address + external Google Maps link — no embedded map exists on this page (see Scope note on T-063).
+
+### Verification (Steps 20–26, 28)
+
+**Responsive:** mobile (375px), tablet (768px), desktop (1280px) all render cleanly, isolated standalone build, real 10-photo salon.
+
+**Four locales:** `more_photos` and the new `location` heading both confirmed correctly localized and non-overflowing in all 4 locales (`el`: `+7 φωτογραφίες`, `en`: `+7 photos`, `ru`/`uk`: `+7 фото`); Greek's longer plural form wraps to two lines within the gallery tile without clipping or overflow.
+
+**Accessibility:** exactly one `<h1>`, `#main-content` landmark present, all `<img>` have `alt`, gallery button and contact links carry descriptive `aria-label`s, visible focus ring confirmed via real keyboard `Tab` + screenshot (not a `:focus-visible` computed-style query, which doesn't work as a pseudo-class probe — verified with an actual keyboard-driven focus + screenshot instead).
+
+**Analytics:** `contact_action` re-verified live via `gtag()`-call interception (with the `lookla_consent` cookie set to `'1'`, the real granted-value the consent module writes — not the string `'granted'`) — fires exactly the T-015 shape (`salon_id`, `channel`, `page: 'salon_detail'`, `locale`) for both `phone` and `whatsapp` clicks, with no salon name, phone number, or URL in the payload. Confirmed loading the detail page directly fires **zero** events (no `salon_open` — that event remains solely owned by the originating search-card link, per T-015/T-058). Confirmed the full search→detail cycle: `search_results_view` fires once on the search page, `salon_open` fires exactly once on the card click, and does not re-fire when the detail page mounts.
+
+**T-056 restoration:** search → open a salon → interact with the gallery → browser Back — search results correctly restored with no console errors.
+
+**SEO:** title/description/`BeautySalon` structured data (`aggregateRating`, address, telephone)/`og:image` all confirmed unchanged (server-component `page.tsx` metadata untouched; the `SalonDetailClient` schema.org block preserved as-is).
+
+**Performance:** isolated standalone measurement — CLS **0.0029**, confirming the gallery's grid→flexbox rewrite introduced no layout shift. Bundle: salon-detail route stayed essentially flat (6.83kB First Load JS).
+
+### Verification summary
+
+73 tests: the pre-existing `salonDetail.test.ts` (28 tests, all pass unchanged — every structural marker it slices on, e.g. `{/* CTA buttons */}`/`{/* Description */}`, preserved verbatim) + a new `salonDetailVisual.test.ts` (45 tests: photo-count fix, gallery fallback, no-emoji sweep, identity block, contact-action consistency, services/reviews/hours, map-shell boundary, analytics invariants, SEO/structured-data, Direction B tokens). Full regression suite green throughout (1020/1020, then re-confirmed green again after the lucide-react brand-icon build fix). Lint clean. `next build` clean (one real TypeScript catch: `Instagram`/`Facebook`/`Youtube` aren't exported by the installed `lucide-react` — corrected to generic icons, see Social links above). Isolated Playwright: responsive × locale sweep, the gallery-clipping bug found/fixed/re-verified, accessibility (focus ring, landmarks, alt text), analytics (`contact_action` × 2 channels, `salon_open` single-fire dedup), T-056 restoration, SEO metadata, and CLS/LCP measurement — all pass.
+
+**Live production verification (`https://lookla.gr`, 2026-07-29, post-deploy):** all 4 locales × {320, 375, 390, 768, 1024, 1440}px (24 combinations, one interrupted mid-run by a harness timeout but with an identical, fully consistent result across the other 23) — zero horizontal overflow, all 3 gallery tiles rendered at the same vertical position (the grid→flexbox clipping fix confirmed live), `+N photos` correctly localized and visible/clickable in every locale (`+7 φωτογραφίες`/`+7 photos`/`+7 фото`), exactly one `<h1>` at every combination, zero console/page errors. Analytics re-verified live via `dataLayer.push` interception (production runs a real, configured GA4 — unlike the isolated local build — so verification here intercepts the actual `gtag.js` transport rather than a stub): `contact_action` fires the exact T-015 shape for both `phone` and `whatsapp` clicks, no PII in the payload; loading the detail page directly fires zero `salon_open`/`contact_action` events; the full search→click→detail cycle fires `salon_open` exactly once (correct shape, `source: "search_list"`), with no duplicate on detail-page mount. T-056 restoration re-confirmed live: search → open a salon → Back — cards restored, zero errors. Live CLS measured at 0.0029, matching the isolated measurement exactly.
+
+```text
+T-066 regressions: 0
 ```
 
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)

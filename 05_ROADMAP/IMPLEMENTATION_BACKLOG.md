@@ -1592,6 +1592,51 @@ T-065 regressions: 0
 
 ---
 
+### T-066 — Salon Detail Visual Refresh
+**Priority:** P0 (sixth and final conversion-facing ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-009 ✅, T-042 ✅, T-055 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅
+**Reserved separately:** T-063 — Map Accessibility (untouched by this ticket; salon-detail has no embedded map today, only a text address + external Google Maps link)
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #61 (`537981b` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
+
+**Ticket-identity note:** T-066 was confirmed genuinely unused before branching — no collision.
+
+**Scope:** `app/[locale]/salons/[slug]/SalonDetailClient.tsx` (full visual rewrite), `components/ContactButtons.tsx`, `components/SalonHours.tsx`, `components/ReportButton.tsx` (tokens/icons only in the latter three). `page.tsx` (metadata) untouched. Full contract and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-066 section.
+
+**Key changes:**
+- **Photo-count fix (the ticket's named bug):** the hardcoded Greek `+N φωτογραφίες` gallery overlay replaced with a proper ICU-pluralized `salon.more_photos` key, correct in all 4 locales.
+- **A real gallery-layout bug found and fixed:** the pre-existing 3-tile gallery used CSS Grid (`grid-cols-3` + `col-span-2`) inside a fixed-height, `overflow-hidden` container — ordinary grid auto-placement pushed the 3rd tile (carrying the "+N photos" button) onto an implicit second row that the fixed height silently clipped, making the affordance invisible to sighted users despite being DOM-correct. Not a T-066 regression (classes were carried over unchanged), but directly defeated the ticket's own required fix, so repaired here: grid replaced with flexbox, which cannot produce a silent implicit-row wrap.
+- **`is_open_now` now rendered** (previously fetched but never displayed anywhere on the page) — same `success`/`closed` semantic tokens as `SalonCard`.
+- **Visual hierarchy:** the old flat stack of 7 near-identical `bg-white rounded-xl p-5` panels replaced with 3 tiers — prominent identity+contact card (only surface with a shadow), mid-tier Services/Reviews/Hours cards, quiet card-less Description/social/location/report sections.
+- **Contact actions:** Call/WhatsApp/Website unified to one visual treatment (no invented channel priority), per the ticket's explicit instruction. `resolveContactActions`/`contact_action` tracking contract (T-010/T-015) unchanged.
+- **Fallback:** reused and extended T-065's `PhotoFallback` pattern with genuine failed-image-request handling (a real gap the original code lacked).
+- **Icons:** all emoji replaced with `lucide-react`; social-platform icons use generic stand-ins since the installed `lucide-react` version ships no brand/logo icons at all (`Instagram`/`Facebook`/`Youtube` confirmed absent from its exports).
+
+**Verification:** 73 tests — the pre-existing `salonDetail.test.ts` (28, unchanged, all pass) + new `salonDetailVisual.test.ts` (45: photo-count fix, gallery fallback, no-emoji sweep, identity block, contact-action consistency, services/reviews/hours, map-shell boundary, analytics invariants, SEO/structured-data, Direction B tokens). Full suite: 1020/1020 passing. Lint/build clean (one real TypeScript catch: `Instagram`/`Facebook`/`Youtube` not exported by the installed `lucide-react`, fixed with generic icons). Isolated Playwright: responsive × 4-locale sweep, the gallery-clipping bug found/fixed/re-verified via DOM inspection and screenshot, accessibility (keyboard focus ring screenshotted, landmarks, alt text), analytics (`contact_action` × phone/whatsapp channels via `gtag()` interception, confirmed zero events fire from loading the detail page directly, confirmed `salon_open` fires exactly once from the search card and never re-fires on detail mount), T-056 restoration (search → open → interact → Back, no errors), SEO metadata (title/description/schema/og:image unchanged), CLS 0.0029.
+
+**Live production verification (`https://lookla.gr`, 2026-07-29, post-deploy):** 23/24 breakpoint×locale combinations completed (24th interrupted mid-run by a harness timeout, with fully consistent results across the rest) — zero overflow, all 3 gallery tiles at the same vertical position (clipping fix confirmed live), `+N photos` correctly localized in all 4 locales, exactly one `<h1>`, zero console errors. `contact_action` (phone + whatsapp) and `salon_open` single-fire dedup re-verified live via `dataLayer.push` interception against production's real GA4 — correct shapes, no PII, no duplicates, zero events from a direct detail-page load. T-056 restoration re-confirmed live. CLS 0.0029, matching the isolated measurement.
+
+```text
+T-066 regressions: 0
+```
+
+**Acceptance Criteria:**
+- [x] Hardcoded Greek `+N φωτογραφίες` fixed with proper ICU pluralization, all 4 locales
+- [x] `is_open_now` now rendered (previously fetched, never shown)
+- [x] Visual hierarchy replaces the 7-identical-panel layout with 3 deliberate surface tiers
+- [x] Call/WhatsApp/Website share one visual treatment; no new channel priority invented
+- [x] `contactActions`/`contact_action` contract preserved (T-010/T-015)
+- [x] No booking functionality, no map-marker accessibility work (T-063 scope preserved), no backend/DB/API changes
+- [x] No new or renamed GA4 events; `salon_open` still owned solely by the search card
+- [x] T-056 restoration preserved (re-verified live)
+- [x] Gallery layout bug (implicit-row clipping) found and fixed, re-verified via DOM inspection + screenshot
+- [x] Four locales verified at 3 breakpoints (mobile/tablet/desktop)
+- [x] Accessibility: single h1, landmark, alt text, aria-labels, visible focus ring
+- [x] Performance measured (CLS/bundle)
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
