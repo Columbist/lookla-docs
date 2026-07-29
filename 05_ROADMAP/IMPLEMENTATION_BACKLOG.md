@@ -1596,7 +1596,7 @@ T-065 regressions: 0
 **Priority:** P0 (sixth and final conversion-facing ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-009 ✅, T-042 ✅, T-055 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅
 **Reserved separately:** T-063 — Map Accessibility (untouched by this ticket; salon-detail has no embedded map today, only a text address + external Google Maps link)
-**Status:** Implemented, isolated-Playwright-verified, branch pushed. Draft PR pending real CI. Not yet reviewed, merged, or deployed — awaiting independent **APPROVE** per standing workflow.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #61 (`537981b` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
 
 **Ticket-identity note:** T-066 was confirmed genuinely unused before branching — no collision.
 
@@ -1612,6 +1612,8 @@ T-065 regressions: 0
 - **Icons:** all emoji replaced with `lucide-react`; social-platform icons use generic stand-ins since the installed `lucide-react` version ships no brand/logo icons at all (`Instagram`/`Facebook`/`Youtube` confirmed absent from its exports).
 
 **Verification:** 73 tests — the pre-existing `salonDetail.test.ts` (28, unchanged, all pass) + new `salonDetailVisual.test.ts` (45: photo-count fix, gallery fallback, no-emoji sweep, identity block, contact-action consistency, services/reviews/hours, map-shell boundary, analytics invariants, SEO/structured-data, Direction B tokens). Full suite: 1020/1020 passing. Lint/build clean (one real TypeScript catch: `Instagram`/`Facebook`/`Youtube` not exported by the installed `lucide-react`, fixed with generic icons). Isolated Playwright: responsive × 4-locale sweep, the gallery-clipping bug found/fixed/re-verified via DOM inspection and screenshot, accessibility (keyboard focus ring screenshotted, landmarks, alt text), analytics (`contact_action` × phone/whatsapp channels via `gtag()` interception, confirmed zero events fire from loading the detail page directly, confirmed `salon_open` fires exactly once from the search card and never re-fires on detail mount), T-056 restoration (search → open → interact → Back, no errors), SEO metadata (title/description/schema/og:image unchanged), CLS 0.0029.
+
+**Live production verification (`https://lookla.gr`, 2026-07-29, post-deploy):** 23/24 breakpoint×locale combinations completed (24th interrupted mid-run by a harness timeout, with fully consistent results across the rest) — zero overflow, all 3 gallery tiles at the same vertical position (clipping fix confirmed live), `+N photos` correctly localized in all 4 locales, exactly one `<h1>`, zero console errors. `contact_action` (phone + whatsapp) and `salon_open` single-fire dedup re-verified live via `dataLayer.push` interception against production's real GA4 — correct shapes, no PII, no duplicates, zero events from a direct detail-page load. T-056 restoration re-confirmed live. CLS 0.0029, matching the isolated measurement.
 
 ```text
 T-066 regressions: 0
@@ -1630,8 +1632,8 @@ T-066 regressions: 0
 - [x] Four locales verified at 3 breakpoints (mobile/tablet/desktop)
 - [x] Accessibility: single h1, landmark, alt text, aria-labels, visible focus ring
 - [x] Performance measured (CLS/bundle)
-- [ ] Live production verification — pending merge/deploy
-- [ ] Independent review — pending **APPROVE**
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
 
 ---
 
