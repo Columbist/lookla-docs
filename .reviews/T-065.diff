@@ -1,0 +1,703 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 8a32560..8c83327 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1545,6 +1545,47 @@ T-064 regressions: 0
+ 
+ ---
+ 
++### T-065 — SalonCard Visual Refresh
++**Priority:** P0 (fifth ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-055 ✅, T-056 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅
++**Reserved separately:** T-063 — Map Accessibility (untouched by this ticket)
++**Status:** 🔶 Implemented, isolated verification complete — pending independent review. **Not merged, not deployed.**
++
++**Ticket-identity note:** T-065 was confirmed genuinely unused before branching — no collision. T-063 remains reserved only for the future Map Accessibility ticket and was not modified.
++
++**Scope:** `components/SalonCard.tsx` — the first ticket in this sequence allowed to change the card's *internal* visual presentation (T-059/T-060/T-062/T-064 all deliberately left it untouched). Plus the search page's loading-skeleton markup, updated to match the card's new geometry. Salon-detail, map markers/popups, ranking, and the entire T-055/T-056/T-058 functional/analytics contract are untouched. `SalonCard` has exactly one real consumer today (`search/page.tsx`) — the `'homepage'|'masters'` `source` values remain reserved/unused. Full contract and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-065 section.
++
++**Key changes:**
++- **Image:** fixed `h-44` (176px, a different crop ratio at every card width) replaced with a deliberate `aspect-[4/3]`, consistent at every breakpoint.
++- **Fallback — a real gap found and fixed:** the old `onError` handler only hid the broken image, leaving a blank box on a *failed* request (the emoji fallback only ever covered a *missing* URL, not a failed one). Fixed with `useState` tracking load failure; both states now show the same honest fallback — a generic, decorative `Building2` icon (not category-specific, since `category` is a page-level filter, not verified per-salon data; not an emoji, not a stock photo, not AI-generated).
++- **Rating:** the old 5-glyph Unicode star row (`★★★★☆`, redundant with the adjacent numeric value) replaced with **one** filled Lucide `Star` icon + the numeric value + review count — less visual noise, same information, coloured with T-059's text-safe `accent-strong` token instead of brand pink.
++- **Open/closed:** `bg-green-500`/`bg-black/50` replaced with T-059's semantic `success`/`closed` tokens (defined but never consumed by an earlier ticket) — logic unchanged.
++- **Verified badge:** documented what the field actually means first (`is_verified` gates presence; `is_owner_claimed` picks between the two already-restrained existing labels, "Owner verified"/"Information reviewed" — DEC-014). Restyled to a neutral (not brand/success-coloured) pill with a decorative `BadgeCheck` icon — the claim's strength is unchanged, only the surface.
++- **Address:** a decorative `MapPin` icon added; address composition byte-identical.
++- **Surface:** `rounded-md`/`shadow-resting`/`hover:shadow-elevated`/`focus-ring-token` — consolidates onto the same radius token already used elsewhere (was a 4th, one-off `rounded-xl`), and is the first component to actually use T-059's 2-level shadow system (resting default + elevated hover) as originally designed. Verified empirically (isolated HTML/CSS test, screenshotted) that `overflow-hidden` and the focus ring can safely live on the same element — an element's own outline is not clipped by its own overflow.
++- **Skeleton:** updated to mirror the real card's new aspect-ratio-driven geometry (image placeholder + title/address/rating-price bars) instead of one fixed-height block that no longer matched.
++
++**Verification:** 61 tests in the existing `SalonCard.test.tsx` (5 pre-existing T-055 assertions updated to locate their guarantee inside the refreshed markup) + 37 new tests in `SalonCardVisual.test.tsx` (image/fallback/failure states, tokens, all 6 metadata contracts, DOM integrity, no-new-data/no-new-analytics sweep). Full suite: 975/975 passing (all T-042–T-064 regression suites green — including one more pre-existing assertion in `lib/analytics.test.ts` fixed for the same reason). Lint/build clean (one real TypeScript catch: an icon size wasn't a valid enum member, fixed). Isolated Playwright: 24 breakpoint×locale combinations (0 overflow, real card dimensions, 0 console/hydration errors), DOM-integrity inspection across 24 live cards (exactly one link, zero nested interactive elements, zero tabindex), accessible names free of star glyphs with all decorative icons `aria-hidden`, focus-visible confirmed unclipped (screenshotted), 3 image states including a simulated failed request, reduced-motion, keyboard activation firing exactly one `salon_open`, zero events from hover/focus, T-056 restoration with the new design intact, and a List→Map→List transition. CLS 0 (both measurement runs); LCP timing (5.2–6.6s) overlaps T-064's own baseline range on this same noisy isolated host — read as host noise, not a regression, since CLS/bytes/request-count are all unchanged.
++
++**Acceptance Criteria:**
++- [x] Exactly one outer Link; no nested interactive controls added
++- [x] SalonCard accessible-name contract preserved (rating/status announced once, no star-glyph pollution)
++- [x] Price conditional-rendering contract preserved (no reserved blank row)
++- [x] Verification meaning not strengthened (documented first; restyled only)
++- [x] No contact/booking/favourite/compare/share controls added
++- [x] Map marker behaviour unchanged; map accessibility not implemented (T-063 scope preserved)
++- [x] Salon-detail not redesigned
++- [x] No new or changed GA4 event; `salon_open` unchanged
++- [x] T-056 restoration preserved (re-verified live with the new design)
++- [x] T-058 analytics dedup preserved
++- [x] Four locales verified at 6 breakpoints
++- [x] 320px overflow absent
++- [x] Image performance measured (CLS/LCP/bundle/requests)
++- [ ] Live production verification — not yet run (pending merge)
++- [ ] Independent review — pending
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+index 81f10cd..92e44c4 100644
+--- a/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
++++ b/docs/06_ENGINEERING/VISUAL_BASELINE_V1.md
+@@ -1,6 +1,6 @@
+ # Visual Baseline v1 — foundation specification
+ 
+-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), and T-064 (search shell). Not yet the complete Visual Baseline — SalonCard and salon-detail content are consumed by later, independently reviewable tickets. Do not treat this document as "Visual Baseline v1 complete."
++**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), and T-065 (SalonCard). Not yet the complete Visual Baseline — salon-detail content is consumed by a later, independently reviewable ticket. Do not treat this document as "Visual Baseline v1 complete."
+ 
+ **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
+ 
+@@ -162,7 +162,7 @@ Deliberately not generalized further — no abstract component library, no prema
+ | Footer | ~~Header/footer global-shell ticket~~ — **done, T-060** | — |
+ | Homepage (hero, category/area tiles, "how it works") | ~~Homepage visual refresh~~ — **done, T-062** | Included the "Book" step copy fix and the SearchBar 320px overflow fix (see below) |
+ | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
+-| SalonCard | SalonCard visual refresh | Untouched by T-059 |
++| SalonCard | ~~SalonCard visual refresh~~ — **done, T-065** | First ticket in the sequence allowed to touch the card's internal appearance, not just surrounding chrome |
+ | Salon detail (7-box consolidation, CTA hierarchy, gallery) | Salon detail visual refresh | Untouched by T-059; includes fixing the hardcoded Greek `+N φωτογραφίες` overlay (known bug, bundled here per the user's own direction) |
+ | Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+ 
+@@ -447,6 +447,101 @@ Metadata/canonical/locale-alternates/indexability: untouched (no changes to any
+ T-064 regressions: 0
+ ```
+ 
++## T-065 — SalonCard Visual Refresh
++
++**Scope:** `components/SalonCard.tsx` only, plus the search page's loading-skeleton markup (`app/[locale]/search/page.tsx`) updated to match the card's new geometry. First ticket in the Visual Baseline v1 sequence permitted to change the card's *internal* appearance — T-059/T-060/T-062/T-064 all deliberately left `SalonCard.tsx` untouched. Salon-detail, map markers/popups, ranking, and the entire T-055/T-056/T-058 functional/analytics contract are untouched.
++
++**Consumer map:** `SalonCard` has exactly **one real consumer** today — `app/[locale]/search/page.tsx`. The `source` prop's `'homepage' | 'masters'` values exist in the type but are not currently exercised by any call site (homepage has no salon previews per T-062; `/masters` is a specialties/CTA page per T-060, not a card grid) — reserved, unused, unchanged by this ticket.
++
++### Step 2 — Data-state matrix
++
++Every state below is possible with real production data and was verified live: photo present / absent (both occur — not every salon has `primary_photo`) / request fails (simulated via route interception); long salon names (line-clamp-2 already handles this per T-055); rating + reviews present / rating absent (`rating_google` is optional); address present (near-universal) / partial (missing `address_number` collapses cleanly via the existing `.filter(Boolean)` join); open / closed / status-unknown (`is_open_now` undefined/null — the existing gate gap gates it correctly); verified / unverified (`is_verified` is `false` on effectively all ~6320 salons today, per the T-055 audit — the conditional branch exists and was exercised via a forced-true test fixture, not live production data, since no real verified salon currently exists to screenshot); price present / absent (`min_price` is null for most salons). No impossible state was designed for.
++
++### Step 3 — Visual hierarchy (final)
++
++1. Photo (or honest fallback) — full-width, `aspect-[4/3]`, dominant.
++2. Salon name — `.text-card-title`, line-clamp-2.
++3. Address — one line, decorative `MapPin` icon, secondary tone.
++4. Rating + review count — one filled star, numeric value, count in parens.
++5. Price (conditional) — right-aligned alongside rating, subordinate to identity.
++6. Open/closed + verified — overlaid on the photo (unchanged position from before this ticket; this is a deliberate, high-scannability placement matching common marketplace-card conventions, not a literal DOM-order restatement of the numbered list above).
++
++This matches the ticket's recommended hierarchy; the only interpretation applied was keeping status/verification as photo overlays (already the pre-existing pattern, and more scannable there than inline text) rather than moving them into the text block.
++
++### Step 4 — Surface & shape
++
++`bg-surface rounded-md border border-border overflow-hidden shadow-resting hover:shadow-elevated hover:border-border-strong transition-shadow focus-ring-token` — was `bg-white rounded-xl border-gray-100 hover:shadow-md hover:border-pink-100`. `rounded-md` (10px) replaces the old `rounded-xl` (12px) to align with the radius token already standardized on Header/Footer/search-toolbar/filter-panel — not a fourth radius value. `shadow-resting` is now the card's *default* surface treatment (not hover-only), with `hover:shadow-elevated` for the lift — the actual intended use of T-059's 2-level shadow system, which no earlier ticket had consumed yet. `overflow-hidden` and `focus-ring-token` deliberately live on the *same* outer `<Link>` element — verified empirically (an isolated HTML/CSS test, screenshotted) that an element's own `overflow: hidden` does **not** clip that same element's own `outline` (only descendant content is clipped); the focus ring renders fully, unclipped, confirmed both in the isolated test and live on the search page.
++
++### Step 5–6 — Image & fallback
++
++**Aspect ratio:** `aspect-[4/3]` replaces the old fixed `h-44` (176px). The old fixed-height approach produced a *different* visual crop ratio at every card width (since height was constant but width was responsive); `aspect-[4/3]` keeps a single, deliberate ratio at every breakpoint. `object-cover` unchanged (crops rather than stretches). `loading="lazy"` preserved unchanged — priority/eager loading for above-the-fold cards was considered (Step 5 explicitly allows it) but not implemented: it would require threading an index/priority prop through the search page's call site, expanding this ticket's file boundary for a marginal, unmeasured LCP gain: deferred, not started, noted here as a real future option rather than silently dropped.
++
++**Fallback — a real gap found and fixed:** the old `onError` handler only set `style.display = 'none'`, leaving a blank pink-gradient box with *nothing* in it on a failed image request (the `💈` emoji fallback only ever rendered for a *missing URL*, never for a *failed* one — two different states the old code didn't actually distinguish correctly). Fixed with `useState<boolean>` (`imageFailed`) set in `onError`; `showPhoto = salon.primary_photo && !imageFailed` now covers both "no URL" and "URL present but failed" with the identical, honest fallback UI — a generic `Building2` (storefront) icon on `bg-surface-subtle`, decorative/`aria-hidden`. Deliberately *not* category-specific (e.g. `Scissors` for a hair salon): the `category` prop reflects the page's current search filter, not verified per-salon data, so a specific service icon risked misrepresenting a salon that doesn't actually offer it. Verified live: simulating a blocked image request shows the fallback icon, not broken-image browser UI, with the card height unchanged (392px, matching a normal photo card at the same breakpoint).
++
++### Step 7 — Salon name
++
++`.text-card-title` (T-059's 16px/600/1.4 token — literally named for this use case) replaces the ad hoc `font-semibold text-gray-900 text-sm leading-tight`. `line-clamp-2` and `title={salon.name}` both preserved unchanged from T-055 — full name remains in `aria-label` regardless of visual truncation (unchanged T-055 guarantee). No uppercase transform, no tooltip-as-accessibility-substitute.
++
++### Step 8 — Rating
++
++**Real visual change, explicitly invited by the ticket:** the old `STARS()` helper rendered a 5-glyph Unicode row (`★★★★☆`, decorative/`aria-hidden`) alongside the *same* numeric value directly next to it — redundant information (both convey the identical rating), adding visual noise without adding meaning. Replaced with **one** filled Lucide `Star` icon (`fill-accent-strong text-accent-strong`, decorative) + the numeric value + review count in parens — the numeric value alone already fully conveys the rating; one icon anchors it visually without competing for attention. Colour: `accent-strong` (T-059's text-safe gold/amber variant, explicitly designed for exactly this "text-adjacent decorative gold" case) — not brand pink, matching the ticket's explicit "not universal brand pink" requirement. Missing rating still shows a neutral `—`, never a fabricated `0.0`. Accessible name: unchanged — rating is announced exactly once, via `buildCardAriaLabel`'s `rating` clause; the star icon, numeric span, and review-count span all stay outside or correctly excluded from double-announcing (verified via the updated T-055 test suite plus a new live check).
++
++### Step 9 — Address
++
++A decorative `MapPin` icon (16px, `text-text-muted`, `aria-hidden`) added before the address text — a restrained scan-aid, per the ticket's "only if it improves scanning" allowance. Address *composition* (`[street, number].filter(Boolean).join(' ')` + conditional `, city`) is byte-identical to before — no new fallback rule, no city/area inference, no coordinates exposed, no map deep-link added. Still `line-clamp-1`, still only reachable via the single outer Link (no nested link).
++
++### Step 10 — Open/closed status
++
++Logic completely unchanged (`is_open_now !== undefined && !== null` gate, same two-value label lookup). Visual-only: `bg-green-500`/`bg-black/50` replaced with the semantic `bg-success`/`bg-closed` tokens — tokens T-059 defined with (in retrospect) exactly this use case in mind, never consumed by an earlier ticket. Status text remains visible alongside the colour (never colour-only). No new "closing soon" state, no assumed-open default.
++
++### Step 11 — Verified state
++
++**Documented meaning (first, as the ticket requires):** `is_verified` is a boolean *gate* — when `false` (currently true for effectively 0 of ~6320 salons, per the T-055 audit), no badge renders at all. When `true`, `is_owner_claimed` picks between exactly two existing, already-restrained strings: "Owner verified" or "Information reviewed" (`lib/verificationLabel.ts`, `DEC-014`) — neither implies quality, safety, or a recommendation; both were already this restrained before T-065. Visual-only: badge moved from a blue (`text-blue-600`) pill to a neutral `bg-surface/95 text-text-secondary` pill — deliberately *not* brand or success-coloured, since a verified badge is informational, not a positive-status or primary-action signal. A decorative `BadgeCheck` icon was added (a modest checkmark, not `ShieldCheck`, which reads closer to "safety-certified" — too strong for what this field actually means). Unverified cards render no negative/warning element (unchanged — the conditional stays a pure show/hide, no else-branch).
++
++### Step 12 — Price
++
++Conditional gate (`min_price != null && > 0`), rounding (`Math.round`), currency (`€`, hardcoded — the product is Greece-only, not a formatting change without evidence), and the `fromLabel` prefix are all byte-identical to before. Visual-only: token colours. Price remains plain text with no border/background/padding that could read as a button, staying subordinate to the salon identity above it.
++
++### Step 13 — Metadata composition examples
++
++- **Minimal-data card** (no photo, no rating, no address components, no price): fallback icon fills the photo frame; name; a bare address line if *any* address fragment exists (city alone still renders); a lone `—` where rating would be; no price row content (the flex container itself still renders, empty on the price side — unchanged from T-055's "no reserved blank row" guarantee, since the price `<div>` itself is conditionally absent, not present-but-empty).
++- **Typical card** (photo, rating+reviews, address, open/closed, no verification, no price): the common real-data shape, screenshotted extensively above.
++- **Full-data card** (photo, rating, address, status, verified, price): every element present — visually confirmed no collision between the verified badge and status badge (opposite corners of the photo) and no crowding in the bottom metadata row.
++
++### Step 14–15 — Interaction states & DOM integrity
++
++**Hover:** `shadow-resting`→`shadow-elevated` and `border-border`→`border-border-strong` on the card; the photo scales `1.05×` *inside its own `overflow-hidden` frame* — text and layout never move; the scale is on the `<img>` only, not the outer Link (verified: the outer Link's own className carries no `hover:scale-*`). **Focus-visible:** `focus-ring-token`'s standard 2px `--focus`-coloured outline, confirmed rendered and unclipped (see Step 4). **Active:** no scale/persistent-selected state was ever added by any prior ticket; T-065 introduces none. **Reduced motion:** `motion-reduce:transition-none motion-reduce:transform-none` on the image disables the hover-zoom transition under `prefers-reduced-motion: reduce`, confirmed live (page renders cleanly, zero errors, under a reduced-motion browser context).
++
++**DOM integrity, verified live via direct DOM inspection across 24 rendered cards:** exactly one `<a>` per card (the outer Link), zero nested `<a>`/`<button>`/`<input>`/`<select>`, zero descendant `tabindex`, zero click handlers outside the single outer `onClick={handleOpen}`.
++
++### Step 16 — Analytics invariants
++
++`salon_open`'s ownership, parameter shape (`salon_id: String(salon.id)`, never `salon.slug`), and single call site are byte-identical to T-055. Verified live: keyboard `Enter` on a focused card activates navigation and fires exactly one `salon_open`; hovering and focusing a card (without activating) fires **zero** analytics events of any kind (a `gtag()`-call-interception check, with the page's own normal load-time `search_results_view` call explicitly excluded from the measurement window so it isn't mistaken for a hover/focus side effect). No new event names, no new payload parameters, no PII.
++
++### Step 17 — T-056 restoration
++
++Live regression: load 48 cards → open a salon → Back — 48/48 cards restored, and the restored cards render with the *new* visual design immediately (icons present, zero legacy Unicode star glyphs) — no flash back to an old/fallback structure, confirmed by inspecting the first restored card's rendered markup right after restoration.
++
++### Step 18–19 — Search-grid compatibility & skeleton alignment
++
++Grid column/gap contract (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`) in `search/page.tsx` is untouched. The loading skeleton *was* updated — it previously used a single fixed `h-64` block, which no longer approximates the real card's height now that the image uses a responsive `aspect-[4/3]` instead of a fixed pixel height (the real card's total height now genuinely varies by breakpoint, tracking the image's aspect-ratio math). The new skeleton mirrors the real structure directly (an `aspect-[4/3]` placeholder + title/address/rating-price placeholder bars in the same `p-3` padding), so it tracks the same height automatically at every breakpoint rather than needing a hand-tuned fixed value per width. Skeleton stays `aria-hidden`, no fake readable text, `animate-pulse` given `motion-reduce:animate-none`. Skeleton count (6) and the overall async-state contract from T-042/T-064 are untouched.
++
++### Step 20–21 — Responsive & four-locale verification
++
++Isolated standalone build, all 4 locales × {320, 375, 390, 768, 1024, 1440}px (24 combinations): zero horizontal overflow at every one; card renders with real, non-zero dimensions at every combination; zero console/hydration errors. Russian (longest average string length of the 4 locales) confirmed clean at 375px — status badge, truncated address, and 2-line title all render without overflow or clipping.
++
++### Step 22 — Accessibility
++
++Exactly one focusable element per card (the outer Link — re-confirmed via live DOM inspection). Accessible name confirmed free of star glyphs, confirmed present, confirmed correctly built from `buildCardAriaLabel` (unchanged T-055 function). All decorative icons (star, map pin, badge-check, photo-fallback) confirmed `aria-hidden` live, across every rendered card on the page, not just a single sample. Rating and status are each announced exactly once (T-055's original invariant, re-verified against the new markup). No ARIA was added beyond what already existed (`aria-label` on the Link) — no per-row ARIA was introduced for the individual metadata lines, per the ticket's own "do not add ARIA to every internal visual row" instruction.
++
++### Step 23 — Performance
++
++Isolated standalone measurement (`en/search`, 1440px, `networkidle`, two separate runs): CLS **0** in both runs (the `aspect-[4/3]` container reserves its own space before the image loads, same as the old fixed-height approach — no regression). LCP element unchanged in nature — still a `SalonCard` photo (`<img>` from `cdn.lookla.gr`) — LCP timing itself ranged 5.2–6.6s across two runs on this same isolated host, overlapping with T-064's own 5.6s baseline measurement; given CLS stayed perfectly 0 and total transferred bytes (~3.83MB) and image-request count (19, no duplicates) were essentially unchanged from the T-064 baseline, this range reads as this shared, memory-constrained host's known measurement noise (documented repeatedly across this project's prior tickets), not a real regression introduced by this ticket. Search-page bundle: 9.46kB → 9.98kB First Load JS (+0.52kB, from the new icon imports) — a small, expected cost for genuinely removing a 5-glyph Unicode star row and adding 4 real Lucide icons per card.
++
++### Verification summary
++
++61 tests in the existing `SalonCard.test.tsx` (updated: 5 pre-existing T-055 assertions rewritten to locate their same literal-string-pinned guarantee inside the refreshed markup — including fixing two comment-vs-code false positives introduced by my own new JSDoc prose, the same recurring class of bug this project has hit and fixed repeatedly) + 37 new tests in `SalonCardVisual.test.tsx` (image/fallback/failure handling, surface tokens, rating/address/status/verified/price contracts, DOM integrity, and a no-new-data/no-new-analytics regression sweep). Full suite: 975/975 passing (all T-042–T-064 regression suites green, unmodified — including one more comment-false-positive fix in the *pre-existing* `lib/analytics.test.ts`'s own SalonCard-related assertion, found and fixed the same way). Lint/`next build` clean (one real TypeScript catch during the build: an icon `size={14}` isn't a member of the fixed `IconSize` enum — corrected to `16`, the nearest valid value). Isolated Playwright: 24 breakpoint×locale combinations, DOM-integrity inspection across 24 live cards, accessible-name + decorative-icon verification, focus-visible (screenshotted, confirmed unclipped), 3 image states (valid/missing/failed — including a route-interception-simulated failed request), reduced-motion, keyboard activation + single `salon_open`, zero hover/focus events, T-056 restoration with the new design, and a List→Map→List transition — all pass.
++
+ ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
+ 
+ - 641 literal Tailwind colour-utility occurrences across `app`/`components` (e.g. `text-pink-600` ×47, `bg-gray-50` ×41) — none swept; each surface's own ticket migrates its own occurrences.
+@@ -465,4 +560,4 @@ T-064 regressions: 0
+ 
+ ## Protected contracts — explicitly verified unaffected
+ 
+-Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these were touched by any page-content file, across T-060's two rounds, T-062, or T-064. The T-060 unification fix touched `search/page.tsx` and `SalonDetailClient.tsx` strictly at the chrome boundary (inline header/logo → `<Header variant="..." />`, `div`→`main` retag, no class changes below that boundary — confirmed via `git diff`). T-062 touched only `page.tsx`/`SearchBar.tsx`/`CategoryGrid.tsx`/`AreaGrid.tsx`/`Icon.tsx` — none of which any other protected surface imports or depends on; `area_select`'s call site lives in `AreaGrid.tsx`, re-verified byte-identical in shape and call count. T-064 touched `search/page.tsx`'s render section only (the state/effects/handlers block governing T-054/T-056/T-057/T-058 is byte-for-byte unmodified) and `ActiveFilterChips.tsx`'s presentation only (props/logic unmodified) — `MapView.tsx` and `SalonCard.tsx` were not touched at all. Confirmed by: (1) the full pre-existing T-042/T-054–T-062 test suites passing unchanged (938/938 total after T-064's own new/updated tests — a handful of T-057-era tests needed their literal-string/fixed-offset markers updated to locate the same guarantee inside the refreshed markup, not weakened), since no protected source file's logic was modified; (2) isolated Playwright verification across all 6 unified-shell pages (T-060), all 4 locales × 6 breakpoints of the homepage (T-062) and now the search page specifically (T-064), plus live-equivalent re-verification of search initial load, T-056 Back-restoration (including toolbar integrity after the remount), the search map view's unchanged width/dimensions, `area_select` firing exactly once, and the filter-popover open/close cycle firing no analytics at all — all showing zero console/hydration errors and no regression beyond each ticket's own intended changes.
++Search (query submission, filter behaviour, List/Map URL state, result count, infinite scroll, T-056 restoration), SalonCard (single outer link, accessible name, all data fields, `salon_open`, conditional price/verified — as of T-065, these are contracts *preserved through a visual refresh*, not an untouched file — see below), Salon detail (contact destinations, `contact_action`, service/review loading, opening-hours logic), analytics/consent (GA4 event names and parameters, consent gating, cookie behaviour, T-058 deduplication), and accessibility (landmark structure, accessible names, `aria-expanded`/`aria-pressed`, keyboard interactions, 44px touch targets, async-state roles, focus restoration) — none of these contracts were broken by any page-content file, across T-060's two rounds, T-062, T-064, or T-065. The T-060 unification fix touched `search/page.tsx` and `SalonDetailClient.tsx` strictly at the chrome boundary. T-062 touched only `page.tsx`/`SearchBar.tsx`/`CategoryGrid.tsx`/`AreaGrid.tsx`/`Icon.tsx`. T-064 touched `search/page.tsx`'s render section and `ActiveFilterChips.tsx`'s presentation only (state/effects/handlers block byte-for-byte unmodified) — `MapView.tsx` and `SalonCard.tsx` were not touched at all under T-064. **T-065 is the first ticket to modify `SalonCard.tsx` itself** — its own `handleOpen`/`buildCardAriaLabel` logic, the `salon_open` call site and parameter shape, the accessible-name-building strategy, and every conditional-rendering gate (price, verified, status) are all byte-for-byte unchanged; only surrounding JSX/className (tokens, icons, image-fallback state) changed. `MapView.tsx` and `SalonDetailClient.tsx` remain untouched by T-065. Confirmed by: (1) the full pre-existing T-042/T-054–T-064 test suites passing unchanged (975/975 total after T-065's own new/updated tests — several T-055-era and one T-015-era assertion needed their literal-string/fixed-offset markers updated to locate the same guarantee inside the refreshed markup, including fixing comment-vs-code false positives introduced by T-065's own new JSDoc prose, not a weakening of what they check), since no protected source file's logic was modified; (2) isolated Playwright verification across all 6 unified-shell pages (T-060), the homepage (T-062), the search page (T-064), and now SalonCard specifically across 24 breakpoint×locale combinations plus DOM-integrity/accessible-name/focus/image-state/reduced-motion/keyboard/analytics/T-056-restoration checks (T-065) — all showing zero console/hydration errors and no regression beyond each ticket's own intended changes.
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index 295f133..bdd51d1 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -713,8 +713,25 @@ function SearchContent({ locale }: { locale: string }) {
+                 status={listStatus}
+                 loading={
+                   <>
++                    {/* T-065: geometry mirrors the real SalonCard (aspect-[4/3]
++                        image + 2-line title + 1-line address + rating/price
++                        row) so it tracks the same height at every breakpoint,
++                        rather than a single fixed h-64 that no longer matches
++                        once the image moved from a fixed height to a
++                        responsive aspect-ratio. */}
+                     {Array.from({ length: 6 }).map((_, i) => (
+-                      <div key={i} className="bg-surface rounded-md h-64 animate-pulse border border-border" aria-hidden="true" />
++                      <div key={i} className="bg-surface rounded-md border border-border overflow-hidden" aria-hidden="true">
++                        <div className="aspect-[4/3] w-full bg-surface-subtle animate-pulse motion-reduce:animate-none" />
++                        <div className="p-3">
++                          <div className="h-4 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none mb-1.5 w-full" />
++                          <div className="h-4 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none mb-2 w-2/3" />
++                          <div className="h-3 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none mb-2 w-1/2" />
++                          <div className="flex items-center justify-between">
++                            <div className="h-3 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none w-1/4" />
++                            <div className="h-3 bg-surface-subtle rounded animate-pulse motion-reduce:animate-none w-1/5" />
++                          </div>
++                        </div>
++                      </div>
+                     ))}
+                   </>
+                 }
+diff --git a/frontend/components/SalonCard.test.tsx b/frontend/components/SalonCard.test.tsx
+index d17a5d6..0d1ab16 100644
+--- a/frontend/components/SalonCard.test.tsx
++++ b/frontend/components/SalonCard.test.tsx
+@@ -69,7 +69,9 @@ describe('T-055 regression: single outer <Link>, no nested interactive elements
+   });
+ 
+   test('no nested <a>, <button>, <input>, or <select> inside the card', () => {
+-    const linkOpen = source.indexOf('<Link');
++    // '<Link\n' targets the real JSX tag, not the JSDoc comment above it
++    // that mentions "<Link>'s accessible name" in prose.
++    const linkOpen = source.indexOf('<Link\n');
+     const linkClose = source.lastIndexOf('</Link>');
+     const body = source.slice(linkOpen, linkClose);
+     assert.ok(!/<a\s|<button|<input|<select/.test(body));
+@@ -80,7 +82,14 @@ describe('T-055 regression: single outer <Link>, no nested interactive elements
+   });
+ 
+   test('onClick={handleOpen} wired on the single outer Link — one click still fires exactly one salon_open event', () => {
+-    assert.ok(/<Link href=\{href\} onClick=\{handleOpen\}/.test(source));
++    // '<Link\n' (not bare '<Link') deliberately targets the real JSX tag —
++    // the file's own JSDoc comment above mentions "<Link>'s accessible
++    // name" in prose, which a bare indexOf('<Link') would match first.
++    const linkTagStart = source.indexOf('<Link\n');
++    assert.ok(linkTagStart > -1, 'real JSX <Link opening tag not found');
++    const linkOpenTag = source.slice(linkTagStart, source.indexOf('>', linkTagStart));
++    assert.ok(linkOpenTag.includes('href={href}'));
++    assert.ok(linkOpenTag.includes('onClick={handleOpen}'));
+   });
+ });
+ 
+@@ -93,13 +102,16 @@ describe('T-055: accessible-name wiring on the card', () => {
+     assert.ok(/const cardAriaLabel = buildCardAriaLabel\(\{[\s\S]*?name: salon\.name,[\s\S]*?city: salon\.address_city,[\s\S]*?rating: ratingValue,[\s\S]*?statusLabel,[\s\S]*?locale,[\s\S]*?\}\);/.test(source));
+   });
+ 
+-  test('decorative star glyphs are aria-hidden (not part of the accessible name, not double-announced)', () => {
+-    assert.ok(source.includes('<span className="text-yellow-400 text-xs" aria-hidden="true">{STARS(salon.rating_google)}</span>'));
++  test('the star icon is decorative (Icon defaults to aria-hidden), not a Unicode glyph — not part of the accessible name, not double-announced', () => {
++    assert.ok(source.includes('<Icon icon={Star}'));
++    assert.ok(!source.includes('decorative={false}'), 'the star Icon must stay at its decorative default — never opt out of aria-hidden');
+   });
+ 
+   test('numeric rating and review count remain plain accessible text (not hidden)', () => {
+-    assert.ok(source.includes('<span className="text-xs text-gray-600 font-medium">{parseFloat(salon.rating_google).toFixed(1)}</span>'));
+-    assert.ok(source.includes('<span className="text-xs text-gray-400">({salon.rating_count})</span>'));
++    const ratingValueLine = source.slice(source.indexOf('{parseFloat(salon.rating_google).toFixed(1)}') - 80, source.indexOf('{parseFloat(salon.rating_google).toFixed(1)}'));
++    const reviewCountLine = source.slice(source.indexOf('({salon.rating_count})') - 60, source.indexOf('({salon.rating_count})'));
++    assert.ok(!ratingValueLine.includes('aria-hidden'), 'the numeric rating value must stay in the accessibility tree');
++    assert.ok(!reviewCountLine.includes('aria-hidden'), 'the review count must stay in the accessibility tree');
+   });
+ 
+   test('img alt is unchanged (salon.name, no new decoration)', () => {
+@@ -109,11 +121,14 @@ describe('T-055: accessible-name wiring on the card', () => {
+ 
+ describe('T-055: salon name — full name reachable, visual truncation improved', () => {
+   test('name heading uses line-clamp-2 (not -1) and exposes title= for pointer users', () => {
+-    assert.ok(source.includes('className="font-semibold text-gray-900 text-sm leading-tight mb-1 line-clamp-2" title={salon.name}'));
++    const h3Block = source.slice(source.indexOf('<h3'), source.indexOf('</h3>'));
++    assert.ok(/className="[^"]*\bline-clamp-2\b/.test(h3Block));
++    assert.ok(h3Block.includes('title={salon.name}'));
+   });
+ 
+-  test('address line is unchanged (still single-line line-clamp-1) — only the name treatment changed', () => {
+-    assert.ok(source.includes('className="text-xs text-gray-500 mb-2 line-clamp-1"'));
++  test('address line remains single-line (line-clamp-1) — only the name treatment and an added decorative location icon changed', () => {
++    const addressBlock = source.slice(source.indexOf('<p '), source.indexOf('</p>'));
++    assert.ok(/className="[^"]*\bline-clamp-1\b/.test(addressBlock));
+   });
+ });
+ 
+diff --git a/frontend/components/SalonCard.tsx b/frontend/components/SalonCard.tsx
+index 0359a34..e011c66 100644
+--- a/frontend/components/SalonCard.tsx
++++ b/frontend/components/SalonCard.tsx
+@@ -1,17 +1,13 @@
+ 'use client';
++import { useState } from 'react';
+ import Link from 'next/link';
++import { Star, MapPin, BadgeCheck, Building2 } from 'lucide-react';
++import Icon from '@/components/ui/Icon';
+ import type { SalonListItem } from '@/lib/api';
+ import { getVerificationLabelKey } from '@/lib/verificationLabel';
+ import { trackEvent } from '@/lib/analytics';
+ import type { Locale } from '@/i18n/request';
+ 
+-const STARS = (r?: string) => {
+-  const n = parseFloat(r || '0');
+-  const full = Math.floor(n);
+-  const half = n - full >= 0.5 ? 1 : 0;
+-  return '★'.repeat(full) + (half ? '✩' : '') + '☆'.repeat(5 - full - half);
+-};
+-
+ // Gender audience per category slug — used to show who the price applies to
+ const CATEGORY_GENDER: Record<string, string> = {
+   barbershop:      '♂',
+@@ -98,9 +94,25 @@ interface Props {
+   source: 'search_list' | 'homepage' | 'masters';
+ }
+ 
++/**
++ * T-065 — honest, decorative-only fallback for a missing or failed photo.
++ * Deliberately generic (a storefront glyph, not a category-specific icon
++ * like Scissors) — `category` here is the page's own search-filter
++ * context, not verified per-salon data, so a specific service icon would
++ * risk misrepresenting a salon that doesn't actually offer it.
++ */
++function PhotoFallback() {
++  return (
++    <div className="flex items-center justify-center h-full w-full bg-surface-subtle">
++      <Icon icon={Building2} size={28} className="text-text-muted" />
++    </div>
++  );
++}
++
+ export default function SalonCard({ salon, locale, category, source }: Props) {
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+   const href = `${prefix}/salons/${salon.slug || salon.id}`;
++  const [imageFailed, setImageFailed] = useState(false);
+ 
+   // T-015: the internal numeric id only — never salon.slug, which typically
+   // embeds the salon's business name (e.g. "harris-anagnostopoulos-12608")
+@@ -133,27 +145,40 @@ export default function SalonCard({ salon, locale, category, source }: Props) {
+     locale,
+   });
+ 
++  const showPhoto = salon.primary_photo && !imageFailed;
++
+   return (
+-    <Link href={href} onClick={handleOpen} aria-label={cardAriaLabel} className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-pink-100 transition-all group">
+-      {/* Photo */}
+-      <div className="relative h-44 bg-gradient-to-br from-pink-50 to-purple-50">
+-        {salon.primary_photo ? (
++    <Link
++      href={href}
++      onClick={handleOpen}
++      aria-label={cardAriaLabel}
++      className="block bg-surface rounded-md border border-border overflow-hidden shadow-resting hover:shadow-elevated hover:border-border-strong transition-shadow focus-ring-token group"
++    >
++      {/* Photo — aspect-[4/3] keeps a deliberate, consistent ratio across
++          every breakpoint (the old fixed h-44 produced a different visual
++          ratio at every card width). Hover zoom is scoped to the image
++          only, inside this overflow-hidden frame — text/layout never move. */}
++      <div className="relative aspect-[4/3] w-full overflow-hidden">
++        {showPhoto ? (
+           <img
+             src={salon.primary_photo}
+             alt={salon.name}
+-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
++            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:transform-none"
+             loading="lazy"
+-            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
++            onError={() => setImageFailed(true)}
+           />
+         ) : (
+-          <div className="flex items-center justify-center h-full text-5xl">💈</div>
++          <PhotoFallback />
+         )}
+         {verificationLabel && (
+-          <span className="absolute top-2 right-2 max-w-[85%] truncate bg-white text-xs text-blue-600 px-2 py-0.5 rounded-full shadow-sm font-medium">{verificationLabel}</span>
++          <span className="absolute top-2 right-2 max-w-[85%] flex items-center gap-1 truncate bg-surface/95 text-caption text-text-secondary px-2 py-0.5 rounded-pill shadow-resting font-medium">
++            <Icon icon={BadgeCheck} size={16} className="text-text-secondary shrink-0" />
++            <span className="truncate">{verificationLabel}</span>
++          </span>
+         )}
+         {/* Open/Closed badge on photo */}
+         {salon.is_open_now !== undefined && salon.is_open_now !== null && (
+-          <span className={`absolute bottom-2 left-2 text-xs px-2 py-0.5 rounded-full font-medium shadow-sm ${salon.is_open_now ? 'bg-green-500 text-white' : 'bg-black/50 text-gray-200'}`}>
++          <span className={`absolute bottom-2 left-2 text-caption px-2 py-0.5 rounded-pill font-medium shadow-resting ${salon.is_open_now ? 'bg-success text-text-inverse' : 'bg-closed text-text-inverse'}`}>
+             {salon.is_open_now ? openLabel : closedLabel}
+           </span>
+         )}
+@@ -162,37 +187,43 @@ export default function SalonCard({ salon, locale, category, source }: Props) {
+       {/* Info */}
+       <div className="p-3">
+         {/* T-055: line-clamp-2 (not -1) — verified via live DOM measurement that
+-            this reserves a uniform 2-line height for every card (263.5px→281px,
+-            0.0px variance either way), so longer names don't create ragged grid
+-            rows. title= gives pointer users the full name on hover; the full
+-            name is still always in the card's accessible name via aria-label
+-            above, regardless of visual truncation. */}
+-        <h3 className="font-semibold text-gray-900 text-sm leading-tight mb-1 line-clamp-2" title={salon.name}>{salon.name}</h3>
+-        <p className="text-xs text-gray-500 mb-2 line-clamp-1">
+-          {[salon.address_street, salon.address_number].filter(Boolean).join(' ')}{salon.address_city ? `, ${salon.address_city}` : ''}
++            this reserves a uniform 2-line height for every card, so longer
++            names don't create ragged grid rows. title= gives pointer users
++            the full name on hover; the full name is still always in the
++            card's accessible name via aria-label above, regardless of
++            visual truncation. */}
++        <h3 className="text-card-title text-text mb-1 line-clamp-2" title={salon.name}>{salon.name}</h3>
++        <p className="flex items-center gap-1 text-body-sm text-text-muted mb-2 line-clamp-1">
++          <Icon icon={MapPin} size={16} className="text-text-muted shrink-0" />
++          <span className="truncate">
++            {[salon.address_street, salon.address_number].filter(Boolean).join(' ')}{salon.address_city ? `, ${salon.address_city}` : ''}
++          </span>
+         </p>
+ 
+         <div className="flex items-center justify-between gap-2">
+-          {/* Rating */}
++          {/* Rating — one filled star (decorative) + numeric value + review
++              count, replacing the old 5-glyph Unicode star row: the numeric
++              value already conveys the same information, so five repeated
++              icons only added visual noise without adding information. */}
+           <div className="flex items-center gap-1 min-w-0">
+             {salon.rating_google ? (
+               <>
+-                <span className="text-yellow-400 text-xs" aria-hidden="true">{STARS(salon.rating_google)}</span>
+-                <span className="text-xs text-gray-600 font-medium">{parseFloat(salon.rating_google).toFixed(1)}</span>
+-                <span className="text-xs text-gray-400">({salon.rating_count})</span>
++                <Icon icon={Star} size={16} className="fill-accent-strong text-accent-strong shrink-0" />
++                <span className="text-body-sm text-text font-medium">{parseFloat(salon.rating_google).toFixed(1)}</span>
++                <span className="text-caption text-text-muted">({salon.rating_count})</span>
+               </>
+             ) : (
+-              <span className="text-xs text-gray-300">—</span>
++              <span className="text-caption text-text-muted">—</span>
+             )}
+           </div>
+ 
+           {/* Min price */}
+           {salon.min_price != null && salon.min_price > 0 && (
+             <div className="flex items-center gap-1 shrink-0">
+-              <span className="text-xs text-gray-400">{fromLabel}</span>
+-              <span className="text-sm font-semibold text-gray-700">{Math.round(salon.min_price)}€</span>
++              <span className="text-caption text-text-muted">{fromLabel}</span>
++              <span className="text-body-sm font-semibold text-text">{Math.round(salon.min_price)}€</span>
+               {genderIcon && (
+-                <span className="text-xs text-gray-400">{genderIcon}</span>
++                <span className="text-caption text-text-muted">{genderIcon}</span>
+               )}
+             </div>
+           )}
+diff --git a/frontend/components/SalonCardVisual.test.tsx b/frontend/components/SalonCardVisual.test.tsx
+new file mode 100644
+index 0000000..53fa94c
+--- /dev/null
++++ b/frontend/components/SalonCardVisual.test.tsx
+@@ -0,0 +1,234 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const source = fs.readFileSync(path.join(here, 'SalonCard.tsx'), 'utf-8');
++
++function codeOnly(src: string): string {
++  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++}
++
++describe('T-065: image presentation, fallback, and failure handling', () => {
++  test('image uses a deliberate aspect-[4/3] ratio, not a fixed pixel height', () => {
++    // codeOnly() strips comments — one explains the aspect-ratio change by
++    // naming "the old fixed h-44" in prose, which would otherwise
++    // false-positive as real code still using it.
++    const clean = codeOnly(source);
++    assert.ok(clean.includes('aspect-[4/3]'));
++    assert.ok(!/\bh-44\b/.test(clean));
++  });
++
++  test('a failed image load is tracked via state and swaps to the honest fallback — not just hidden', () => {
++    assert.ok(source.includes("const [imageFailed, setImageFailed] = useState(false);"));
++    assert.ok(source.includes('onError={() => setImageFailed(true)}'));
++    assert.ok(!source.includes("style.display = 'none'"), 'the old hide-only onError handler must be replaced, not just supplemented');
++  });
++
++  test('showPhoto is false both when the URL is absent AND when the image failed to load — same fallback UI for both', () => {
++    assert.ok(source.includes('const showPhoto = salon.primary_photo && !imageFailed;'));
++  });
++
++  test('fallback is a decorative, generic (non-category-specific) icon — not an emoji, not a photo, not implying a real image', () => {
++    assert.ok(source.includes('function PhotoFallback()'));
++    assert.ok(source.includes('<Icon icon={Building2}'));
++    const fallbackFn = source.slice(source.indexOf('function PhotoFallback()'), source.indexOf('export default function SalonCard'));
++    assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(fallbackFn), 'no emoji in the fallback');
++    assert.ok(!fallbackFn.includes('decorative={false}'), 'fallback icon must stay at its aria-hidden default');
++  });
++
++  test('fallback sits inside the same aspect-ratio frame as the real photo, so card height never changes based on image success/failure', () => {
++    const photoFrameIdx = source.indexOf('aspect-[4/3]');
++    const fallbackIdx = source.indexOf('<PhotoFallback');
++    const showPhotoTernaryEnd = source.indexOf(')}', fallbackIdx);
++    assert.ok(photoFrameIdx < fallbackIdx && fallbackIdx < showPhotoTernaryEnd + 50, 'PhotoFallback must render inside the same aspect-ratio wrapper as <img>');
++  });
++
++  test('no infinite retry loop: onError only ever sets state once, no re-triggering fetch/reload logic', () => {
++    assert.ok(!/retry|reload|refetch/i.test(source.slice(source.indexOf('onError'), source.indexOf('onError') + 100)));
++  });
++
++  test('lazy loading is preserved (no eager/priority loading added)', () => {
++    assert.ok(source.includes('loading="lazy"'));
++  });
++
++  test('no next/image or new image dependency introduced — still a plain <img> against the existing source contract', () => {
++    assert.ok(!source.includes("from 'next/image'"));
++    assert.ok(source.includes('src={salon.primary_photo}'));
++  });
++});
++
++describe('T-065: card surface — Direction B tokens, no legacy palette', () => {
++  test('no legacy bg-white/border-gray-100/hover:border-pink-100/bg-gradient-to-br on the card', () => {
++    assert.ok(!/\bbg-white\b/.test(source));
++    assert.ok(!/border-gray-100/.test(source));
++    assert.ok(!/hover:border-pink-100/.test(source));
++    assert.ok(!/bg-gradient-to-br/.test(source));
++  });
++
++  test('uses the shared shadow tokens (resting default, elevated on hover) instead of shadow-md', () => {
++    assert.ok(source.includes('shadow-resting'));
++    assert.ok(source.includes('hover:shadow-elevated'));
++    assert.ok(!/shadow-md\b/.test(source));
++  });
++
++  test('the outer Link carries both focus-ring-token and overflow-hidden (verified empirically that an element\'s own outline is not clipped by its own overflow:hidden — only descendant content is)', () => {
++    const linkTagStart = source.indexOf('<Link\n');
++    const linkOpenTag = source.slice(linkTagStart, source.indexOf('>', linkTagStart));
++    assert.ok(linkOpenTag.includes('focus-ring-token'));
++    assert.ok(linkOpenTag.includes('overflow-hidden'), 'overflow-hidden clips the rounded card\'s image corners; it does not clip this same element\'s own outline');
++  });
++
++  test('hover only affects shadow/border on the card and scale on the image (inside its own clipped frame) — no card-wide transform', () => {
++    const linkTagStart = source.indexOf('<Link\n');
++    const linkOpenTag = source.slice(linkTagStart, source.indexOf('>', linkTagStart));
++    assert.ok(!/hover:scale/.test(linkOpenTag), 'the outer Link itself must not scale on hover — only the inner image does, inside its own overflow-hidden frame');
++  });
++
++  test('reduced motion disables the image hover-zoom transition', () => {
++    assert.ok(source.includes('motion-reduce:transition-none'));
++    assert.ok(source.includes('motion-reduce:transform-none'));
++  });
++});
++
++describe('T-065: rating — one Lucide star, not a 5-glyph Unicode row', () => {
++  test('no Unicode star glyphs (★ ✩ ☆) remain anywhere in the component', () => {
++    // codeOnly() strips comments — the JSDoc above buildCardAriaLabel
++    // quotes the OLD, unusable computed accessible name as a historical
++    // example ("...★★★★★5.0(520)"), which is prose, not live code.
++    assert.ok(!/[★✩☆]/.test(codeOnly(source)));
++  });
++
++  test('exactly one Star icon rendered per card (not five)', () => {
++    const starMatches = source.match(/<Icon icon=\{Star\}/g) || [];
++    assert.equal(starMatches.length, 1);
++  });
++
++  test('star colour is a text-safe accent token, not the universal brand pink', () => {
++    assert.ok(source.includes('text-accent-strong'));
++    assert.ok(!/text-brand.*Star|Star.*text-brand/.test(source));
++  });
++
++  test('missing rating shows a neutral dash, never a fabricated "0.0"', () => {
++    assert.ok(source.includes('<span className="text-caption text-text-muted">—</span>'));
++    assert.ok(!/rating.*0\.0|0\.0.*rating/i.test(source));
++  });
++});
++
++describe('T-065: address — decorative location icon, address contract unchanged', () => {
++  test('MapPin icon is decorative (Icon default aria-hidden), address text itself is not hidden', () => {
++    assert.ok(source.includes('<Icon icon={MapPin}'));
++    const addressBlock = source.slice(source.indexOf('<p '), source.indexOf('</p>'));
++    assert.ok(!addressBlock.includes('decorative={false}'));
++  });
++
++  test('address composition (street + number + city) is byte-identical to before', () => {
++    assert.ok(source.includes("{[salon.address_street, salon.address_number].filter(Boolean).join(' ')}{salon.address_city ? `, ${salon.address_city}` : ''}"));
++  });
++
++  test('no map deep-link, no raw coordinates exposed in the address block', () => {
++    const addressBlock = source.slice(source.indexOf('<p '), source.indexOf('</p>'));
++    assert.ok(!/salon\.lat|salon\.lng|google\.com\/maps/.test(addressBlock));
++  });
++});
++
++describe('T-065: open/closed status — semantic tokens, logic unchanged', () => {
++  test('open/closed gating condition (is_open_now !== undefined && !== null) is unchanged', () => {
++    const occurrences = (source.match(/salon\.is_open_now !== undefined && salon\.is_open_now !== null/g) || []).length;
++    assert.ok(occurrences >= 1);
++  });
++
++  test('open uses the success token, closed uses the closed token — not bg-green-500/bg-black', () => {
++    assert.ok(source.includes('bg-success text-text-inverse'));
++    assert.ok(source.includes('bg-closed text-text-inverse'));
++    assert.ok(!/bg-green-500|bg-black\//.test(source));
++  });
++
++  test('status text (openLabel/closedLabel) is still rendered as visible text, not colour-only', () => {
++    assert.ok(source.includes('{salon.is_open_now ? openLabel : closedLabel}'));
++  });
++});
++
++describe('T-065: verified badge — meaning unchanged, restrained visual treatment', () => {
++  test('verified gating (is_verified) and label selection (getVerificationLabelKey/is_owner_claimed) are unchanged', () => {
++    assert.ok(source.includes('salon.is_verified'));
++    assert.ok(source.includes('getVerificationLabelKey(salon.is_owner_claimed)'));
++  });
++
++  test('badge uses a neutral surface tone, not brand/success — it must not read as a primary claim or a positive-status colour', () => {
++    const badgeBlock = source.slice(source.indexOf('verificationLabel && ('), source.indexOf('verificationLabel && (') + 400);
++    assert.ok(badgeBlock.includes('bg-surface'));
++    assert.ok(!/bg-brand|bg-success/.test(badgeBlock));
++  });
++
++  test('BadgeCheck icon is decorative — the text label alone conveys meaning', () => {
++    assert.ok(source.includes('<Icon icon={BadgeCheck}'));
++    const badgeBlock = source.slice(source.indexOf('verificationLabel && ('), source.indexOf('verificationLabel && (') + 400);
++    assert.ok(!badgeBlock.includes('decorative={false}'));
++  });
++
++  test('unverified cards render no negative/warning element — the badge stays purely conditional with no else-branch', () => {
++    assert.ok(!/{!verificationLabel|{!salon\.is_verified/.test(source));
++  });
++});
++
++describe('T-065: price — conditional contract unchanged, restyled only', () => {
++  test('conditional gate (min_price != null && > 0) is unchanged', () => {
++    assert.ok(source.includes('{salon.min_price != null && salon.min_price > 0 && ('));
++  });
++
++  test('formatting (Math.round + €, fromLabel prefix) is unchanged — no currency conversion, no new prefix', () => {
++    assert.ok(source.includes('{Math.round(salon.min_price)}€'));
++    assert.ok(source.includes('{fromLabel}'));
++  });
++
++  test('price text does not resemble a button — no border/background/padding suggesting interactivity beyond the whole-card link', () => {
++    const priceBlock = source.slice(source.indexOf('salon.min_price != null'), source.indexOf('salon.min_price != null') + 500);
++    assert.ok(!/rounded-md.*border|border.*rounded-md/.test(priceBlock));
++    assert.ok(!/bg-brand/.test(priceBlock));
++  });
++});
++
++describe('T-065: DOM/structural integrity', () => {
++  test('exactly one interactive element in the whole component: the outer Link', () => {
++    const clean = codeOnly(source);
++    assert.equal((clean.match(/<Link\b/g) || []).length, 1);
++    assert.ok(!/<button|<a\s|<input|<select/.test(clean));
++  });
++
++  test('no tabIndex anywhere in the component (the Link is natively focusable; no inner element should compete)', () => {
++    assert.ok(!source.includes('tabIndex'));
++  });
++
++  test('no onClick handler anywhere except the single Link (image/badges/icons are all inert)', () => {
++    const clean = codeOnly(source);
++    assert.equal((clean.match(/onClick=/g) || []).length, 1);
++  });
++});
++
++describe('T-065 regression: no new data, no new analytics, no ranking/backend change', () => {
++  test('no new SalonListItem field referenced beyond what T-055 already used', () => {
++    // codeOnly() strips comments first — a code comment references the
++    // unrelated messages/*.json key "salon.infoReviewed" in prose, which
++    // would otherwise false-positive as an unknown `salon.info` field.
++    const knownFields = ['id', 'name', 'slug', 'address_city', 'address_street', 'address_number', 'rating_google', 'rating_count', 'is_verified', 'primary_photo', 'min_price', 'is_open_now', 'is_owner_claimed'];
++    const fieldRefs = [...codeOnly(source).matchAll(/salon\.([a-z_]+)/g)].map(m => m[1]);
++    for (const f of fieldRefs) assert.ok(knownFields.includes(f), `unexpected salon field referenced: salon.${f}`);
++  });
++
++  test('no "recommended"/"popular"/"premium"/"featured" label introduced', () => {
++    assert.ok(!/recommended|popular|premium|featured/i.test(source));
++  });
++
++  test('trackEvent is still called exactly once, only for salon_open, with the exact same parameter set', () => {
++    const trackEventCalls = [...source.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]);
++    assert.deepEqual(trackEventCalls, ['salon_open']);
++    assert.ok(source.includes("trackEvent('salon_open', { salon_id: String(salon.id), source, locale: locale as Locale });"));
++  });
++
++  test('no hover/focus/image-load event added — handleOpen is the only function that calls trackEvent, and it is wired only to onClick', () => {
++    assert.ok(!/onMouseEnter|onMouseOver|onFocus.*trackEvent|onLoad.*trackEvent/.test(source));
++  });
++});
+diff --git a/frontend/lib/analytics.test.ts b/frontend/lib/analytics.test.ts
+index deff8dd..804f9ce 100644
+--- a/frontend/lib/analytics.test.ts
++++ b/frontend/lib/analytics.test.ts
+@@ -483,7 +483,14 @@ describe('T-015: SalonCard.tsx — salon_open, single owner, no PII', () => {
+   test('exactly one onClick in the whole file, on the single wrapping Link — no nested handler could double-fire', () => {
+     const onClickMatches = source.match(/onClick=/g) || [];
+     assert.equal(onClickMatches.length, 1);
+-    assert.ok(/<Link href=\{href\} onClick=\{handleOpen\}/.test(source));
++    // '<Link\n' (not bare '<Link') targets the real JSX tag — the file's
++    // own JSDoc comment mentions "<Link>'s accessible name" in prose,
++    // which a bare match would find first.
++    const linkTagStart = source.indexOf('<Link\n');
++    assert.ok(linkTagStart > -1);
++    const linkOpenTag = source.slice(linkTagStart, source.indexOf('>', linkTagStart));
++    assert.ok(linkOpenTag.includes('href={href}'));
++    assert.ok(linkOpenTag.includes('onClick={handleOpen}'));
+   });
+ 
+   test('no salon name, address, or phone is passed to trackEvent', () => {

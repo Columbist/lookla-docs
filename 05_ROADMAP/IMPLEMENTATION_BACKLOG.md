@@ -1545,6 +1545,53 @@ T-064 regressions: 0
 
 ---
 
+### T-065 — SalonCard Visual Refresh
+**Priority:** P0 (fifth ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-055 ✅, T-056 ✅, T-058 ✅, T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅
+**Reserved separately:** T-063 — Map Accessibility (untouched by this ticket)
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #60 (`3eea3e5` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
+
+**Ticket-identity note:** T-065 was confirmed genuinely unused before branching — no collision. T-063 remains reserved only for the future Map Accessibility ticket and was not modified.
+
+**Scope:** `components/SalonCard.tsx` — the first ticket in this sequence allowed to change the card's *internal* visual presentation (T-059/T-060/T-062/T-064 all deliberately left it untouched). Plus the search page's loading-skeleton markup, updated to match the card's new geometry. Salon-detail, map markers/popups, ranking, and the entire T-055/T-056/T-058 functional/analytics contract are untouched. `SalonCard` has exactly one real consumer today (`search/page.tsx`) — the `'homepage'|'masters'` `source` values remain reserved/unused. Full contract and verification detail: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-065 section.
+
+**Key changes:**
+- **Image:** fixed `h-44` (176px, a different crop ratio at every card width) replaced with a deliberate `aspect-[4/3]`, consistent at every breakpoint.
+- **Fallback — a real gap found and fixed:** the old `onError` handler only hid the broken image, leaving a blank box on a *failed* request (the emoji fallback only ever covered a *missing* URL, not a failed one). Fixed with `useState` tracking load failure; both states now show the same honest fallback — a generic, decorative `Building2` icon (not category-specific, since `category` is a page-level filter, not verified per-salon data; not an emoji, not a stock photo, not AI-generated).
+- **Rating:** the old 5-glyph Unicode star row (`★★★★☆`, redundant with the adjacent numeric value) replaced with **one** filled Lucide `Star` icon + the numeric value + review count — less visual noise, same information, coloured with T-059's text-safe `accent-strong` token instead of brand pink.
+- **Open/closed:** `bg-green-500`/`bg-black/50` replaced with T-059's semantic `success`/`closed` tokens (defined but never consumed by an earlier ticket) — logic unchanged.
+- **Verified badge:** documented what the field actually means first (`is_verified` gates presence; `is_owner_claimed` picks between the two already-restrained existing labels, "Owner verified"/"Information reviewed" — DEC-014). Restyled to a neutral (not brand/success-coloured) pill with a decorative `BadgeCheck` icon — the claim's strength is unchanged, only the surface.
+- **Address:** a decorative `MapPin` icon added; address composition byte-identical.
+- **Surface:** `rounded-md`/`shadow-resting`/`hover:shadow-elevated`/`focus-ring-token` — consolidates onto the same radius token already used elsewhere (was a 4th, one-off `rounded-xl`), and is the first component to actually use T-059's 2-level shadow system (resting default + elevated hover) as originally designed. Verified empirically (isolated HTML/CSS test, screenshotted) that `overflow-hidden` and the focus ring can safely live on the same element — an element's own outline is not clipped by its own overflow.
+- **Skeleton:** updated to mirror the real card's new aspect-ratio-driven geometry (image placeholder + title/address/rating-price bars) instead of one fixed-height block that no longer matched.
+
+**Verification:** 61 tests in the existing `SalonCard.test.tsx` (5 pre-existing T-055 assertions updated to locate their guarantee inside the refreshed markup) + 37 new tests in `SalonCardVisual.test.tsx` (image/fallback/failure states, tokens, all 6 metadata contracts, DOM integrity, no-new-data/no-new-analytics sweep). Full suite: 975/975 passing (all T-042–T-064 regression suites green — including one more pre-existing assertion in `lib/analytics.test.ts` fixed for the same reason). Lint/build clean (one real TypeScript catch: an icon size wasn't a valid enum member, fixed). Isolated Playwright: 24 breakpoint×locale combinations, DOM-integrity inspection, accessible names free of star glyphs with all decorative icons `aria-hidden`, focus-visible confirmed unclipped, 3 image states, reduced-motion, keyboard activation firing exactly one `salon_open`, zero events from hover/focus, T-056 restoration with the new design intact, and a List→Map→List transition.
+
+**Live production verification (`https://lookla.gr`, 2026-07-29, post-deploy):** all 4 locales × {320, 375, 390, 768, 1024, 1440}px — zero horizontal overflow, real card dimensions, image aspect-ratio confirmed ~4:3 at every combination, zero console/hydration errors. Missing-URL and simulated-failed-request image states both confirmed to show the identical fallback (not broken-image UI), with no retry loop and stable card height. Accessible name confirmed to include the full salon name with no star glyph; all icons (including the Lucide star) confirmed `aria-hidden` and excluded from the accessible name. DOM integrity confirmed across 24 live cards: exactly one `<a>`, zero nested interactive elements, zero descendant `tabindex`. Focus ring confirmed rendered, unclipped. Hover confirmed to cause zero layout shift and zero analytics events. Pointer click and keyboard `Enter` each confirmed to produce exactly one `salon_open`. Ctrl-click confirmed to open a new tab (browser-default behaviour preserved, uninterfered with). T-056 restoration confirmed live: 48/48 cards and scroll position both restored, exactly one `search_results_view` across the full search→open→Back cycle (no duplicate), restored cards using the new design. List→Map→List confirmed with markers rendering (2000) and the list correctly restored afterward, no marker/popup behaviour change. Live CLS measured at 0.
+
+```text
+T-065 regressions: 0
+```
+
+**Acceptance Criteria:**
+- [x] Exactly one outer Link; no nested interactive controls added
+- [x] SalonCard accessible-name contract preserved (rating/status announced once, no star-glyph pollution)
+- [x] Price conditional-rendering contract preserved (no reserved blank row)
+- [x] Verification meaning not strengthened (documented first; restyled only)
+- [x] No contact/booking/favourite/compare/share controls added
+- [x] Map marker behaviour unchanged; map accessibility not implemented (T-063 scope preserved)
+- [x] Salon-detail not redesigned
+- [x] No new or changed GA4 event; `salon_open` unchanged
+- [x] T-056 restoration preserved (re-verified live with the new design)
+- [x] T-058 analytics dedup preserved
+- [x] Four locales verified at 6 breakpoints
+- [x] 320px overflow absent
+- [x] Image performance measured (CLS/LCP/bundle/requests)
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE**
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
