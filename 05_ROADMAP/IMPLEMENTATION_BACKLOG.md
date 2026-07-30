@@ -1816,6 +1816,65 @@ The second `.set` **overwrites** the first, so the store ends up holding only ke
 
 ---
 
+### T-069 — Map Search Results View Stabilization
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-015 ✅, T-042 ✅, T-056 ✅, T-058 ✅, T-068 ✅
+**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
+
+**Ticket-identity note:** T-069 confirmed free before branching.
+
+**The defect (inherited, surfaced by T-068).** `mapLoading` is initialised `false`. The fetch effect is declared *before* the tracking effect, but the `setMapLoading(true)` it performs does not change the value already captured in the current render's closure — so on the very first map render the tracking effect saw `mapLoading === false` with `mapSalons === []` and reported `result_count_bucket: "0"`. That "zero results" view never existed: the request had simply not started.
+
+Two consequences: the 0-bucket was inflated with states no user ever saw, and because T-058's dedup store holds one material key per history entry, the false `all|0|map|<locale>` was immediately overwritten by the real `all|51_plus|map|<locale>` — so on Back neither matched and **both fired again**.
+
+**Approved approach — variant (b): report only resolved states.** "Not loading" is not "resolved": `!loading` is true both before a request starts and after it finishes, and an empty array looks identical in both. Resolution is now tracked explicitly (`mapResolved`), cleared when a request begins and set only when one settles successfully. The decision itself lives in a pure, Leaflet-free, DOM-free module (`lib/mapResultsResolution.ts`) so it is directly unit-testable.
+
+`result_count_bucket: "0"` is still sent — but only when a completed request genuinely matched nothing. Verified live: a query matching no salons produces exactly one `"0"` map event.
+
+**Deliberately NOT changed: the dedup storage model.** `Map<entryId, string>` stays as-is. An `A → B → A` cycle (List → Map → List → Map) *does* re-send the map key — but every List/Map toggle pushes a **new history entry with a distinct `entryId`** (measured: `99918f5e…` → `7e8347e8…` → `d810b731…` → `5dcd41f5…`), so the two reports live under different entries. A `Map<entryId, Set<key>>` would change nothing: the second lookup misses on the *entry* key, not on the material key within it. Semantically the re-send is also correct — `view` is part of the material key, and a deliberate toggle that creates a history entry is a genuinely new view of results. The dedup's job is suppressing re-reports of the *same* entry (Back restoration), which is verified and passes. Recorded with the reasoning so a `Set` is not introduced later on the strength of the bare "it fired twice" observation.
+
+**Verification:** 25 new tests in `lib/mapResultsResolution.test.ts` (resolution semantics, genuine-vs-transient emptiness, full slow-API lifecycle, filter/locale/retry invalidation, page wiring, batching order, error path, unchanged payload, untouched event owners, and the A→B→A reasoning). Three pre-existing tripwires updated — they pinned the literal `if (mapLoading || mapError) return;` and the exact 9-dependency array, both of which T-069 intentionally changes; each now asserts the same underlying guarantee against the new structure (map branch still gates on raw `mapLoading`/`mapError` and never on AsyncSection-derived status; the gate still precedes computing the bucket; the dependency array is asserted as a *set* of required gating variables rather than a brittle literal). Full suite **1166/1166**. Lint clean (zero warnings on both touched files); build clean; search bundle unchanged at 9.64kB.
+
+Isolated Playwright (map API artificially delayed 6s to reproduce the real production timing):
+
+| Scenario | Result |
+|---|---|
+| Mid-flight, slow map API | **no** map event at all — the false `"0"` is gone |
+| After resolution | exactly **1** map event, `51_plus` |
+| Map → preview → detail → Back | `search_results_view` = **0** (was **2**), `salon_open` = 1 |
+| List → detail → Back | **0** — no regression on the working path |
+| Genuine empty completed request | exactly **1** event with `"0"` |
+| Filter change (`area=glyfada`) | 1 new correct event, **no** transient `"0"` |
+| Locale change (`ru`) | 1 correct event, `locale: "ru"`, no transient `"0"` |
+| Consent denied | **0** events |
+
+*Instrumentation note:* the isolated build carries no GA4 id, so `gtag.js` never loads and `trackEvent` bails on its `typeof window.gtag !== 'function'` guard. A first run therefore reported zeros everywhere — including states that should have fired — which would have read as a false pass. Stubbing `window.gtag` (rather than patching `dataLayer.push`, the approach production requires because the real `gtag.js` overwrites a stub) produced valid measurements.
+
+**Acceptance Criteria:**
+- [x] Slow map API creates no transient `"0"` event
+- [x] Unresolved results are never treated as empty
+- [x] A genuinely completed empty request sends exactly one `"0"`
+- [x] A non-empty map result sends one correct bucket
+- [x] The transient empty state no longer overwrites the dedup key
+- [x] Map → detail → Back sends 0 new events
+- [x] List → detail → Back unregressed
+- [x] List/Map toggling follows the existing material-key contract
+- [x] Filter change sends a new event after resolution
+- [x] Locale change sends a correct new event
+- [x] Snapshot restoration creates no intermediate `"0"`
+- [x] Consent denied sends nothing
+- [x] Event name and payload shape unchanged
+- [x] `salon_open` / `contact_action` untouched
+- [x] Production-like delayed response exercised in Playwright
+- [ ] GA4 POST-batch parsing verified against production — pending deploy
+- [ ] Live production verification — pending merge/deploy
+- [ ] `Map search_results_view correction boundary` recorded — pending deploy
+- [ ] Independent review — pending **APPROVE**
+
+**Analytics data boundary (to be recorded after deploy):** T-069 changes both the meaning and the count of Map `search_results_view`, so its production deployment timestamp must be recorded as a `Map search_results_view correction boundary`. For KPIs using `search_results_view` as a denominator, Map data either side of that boundary must not be mixed without annotation. This does **not** reset the conversion baseline: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
