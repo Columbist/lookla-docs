@@ -1819,7 +1819,22 @@ The second `.set` **overwrites** the first, so the store ends up holding only ke
 ### T-069 — Map Search Results View Stabilization
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-015 ✅, T-042 ✅, T-056 ✅, T-058 ✅, T-068 ✅
-**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
+**Status:** ✅ **Completed with documented follow-up.** Reviewed, **APPROVE**, merged via PR #65 (`2b5d5a6`), deployed to production **2026-07-30 18:26:17 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched.
+
+```text
+T-069 regressions: 0
+```
+
+T-069's own contract is fully verified live (see below). One smoke item — the stale-response race — **failed**, and is a **pre-existing unprotected defect that T-069 neither introduced nor claims to fix**. Owned by **T-070**, see "Open finding" below.
+
+**Map `search_results_view` correction boundary:**
+
+```text
+Map search_results_view correction boundary:
+2026-07-30 18:26:17 Europe/Athens (EEST)
+```
+
+From this timestamp the meaning and count of Map `search_results_view` change: transient pre-request states no longer emit a false `result_count_bucket: "0"`, and a restored map view no longer re-fires. For any KPI using `search_results_view` as a denominator, Map data either side of this boundary must be separated or explicitly annotated. This is **not** a conversion-baseline reset — the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
 
 **Ticket-identity note:** T-069 confirmed free before branching.
 
@@ -1866,10 +1881,53 @@ Isolated Playwright (map API artificially delayed 6s to reproduce the real produ
 - [x] Event name and payload shape unchanged
 - [x] `salon_open` / `contact_action` untouched
 - [x] Production-like delayed response exercised in Playwright
-- [ ] GA4 POST-batch parsing verified against production — pending deploy
-- [ ] Live production verification — pending merge/deploy
-- [ ] `Map search_results_view correction boundary` recorded — pending deploy
-- [ ] Independent review — pending **APPROVE**
+- [x] Live production verification — passed for every T-069 item
+- [x] `Map search_results_view correction boundary` recorded
+- [x] Independent review — **APPROVE**
+- [ ] Stale-response race — **FAILED**; pre-existing, not introduced by T-069, owned by **T-070** (see below)
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy, real `gtag.js` intercepted via `dataLayer.push`):**
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Slow map API (6s) emits no transient `"0"` | **0 map events mid-flight** ✅ |
+| 2 | After resolution, one correct bucket | 1 × `51_plus` ✅ |
+| 3 | Genuine empty completed request | exactly 1 × `"0"` ✅ |
+| 4 | Map → preview → detail → Back | **0** (was 2), `salon_open` = 1 ✅ |
+| 5 | List → detail → Back | 0 ✅ |
+| 6 | Filter change (`area=glyfada`) | 1 correct event, no transient `"0"` ✅ |
+| 7 | Locale change (`ru`) | 1 correct event, `locale: "ru"` ✅ |
+| 9 | Consent denied | 0 GA/GTM requests, 0 product events ✅ |
+| 10 | Consent withdrawal | 0 further product events ✅ |
+
+### Open finding — stale map response replaces current data (pre-existing, → T-070)
+
+There is **no** request-cancellation or latest-request guard in `search/page.tsx`: no `AbortController`, no request token, no `signal`. Confirmed by inspection and then by live measurement.
+
+**Reproduced in production**, with the realm verified preserved (so this is a true in-realm race, not an artifact of a full navigation):
+
+```text
+request A (area=all)      delayed 16s   ─┐
+  user changes filter in-page → glyfada  │  client-side router.push, realm survives
+request B (area=glyfada)  400ms  ────────┘
+B resolves   → 76 markers, 1 correct event (area=glyfada)
+A lands late → 2000 markers   ← B's data REPLACED, URL still says area=glyfada
+```
+
+Against the four required properties of a stale response:
+
+| Must not… | Observed |
+|---|---|
+| replace B's data | ❌ **violated** — 76 → 2000 markers while the filter reads Glyfada |
+| re-mark the state as resolved | ❌ violated — the stale `.then` sets `mapResolved` true again |
+| emit an extra bucket | ✅ none observed — **but coincidentally**: Glyfada (76) and all (2000) both bucket to `51_plus`, so the material key was unchanged. With a smaller area the stale count would produce a *different* bucket under the *current* area and would emit a wrong event |
+| overwrite the dedup key | ✅ none — no event fired, so nothing was recorded |
+
+**Not introduced by T-069.** The data-replacement half has existed for as long as the map fetch has had no cancellation. T-069 adds only the (harmless in isolation) re-assertion of `mapResolved`. T-069's mandate was the reporting semantics of resolved states, not the fetching contract, and the approval explicitly said fetching was not to be rewritten — so this is recorded rather than silently expanded into.
+
+**Two earlier attempts at this test were invalid and are recorded so the result isn't over-trusted:** the first used `page.goto()` for the filter change, which is a full navigation that destroys the realm and the pending request, so no race existed; the second failed to open the filter popover (the page has two `aria-controls` buttons — the header burger renders first, per the T-064 note — so the selector matched the wrong one) and issued only one request. Only the third run, which used `div.relative button[aria-controls]` and an in-page `change` event, genuinely exercised the race.
+
+**→ T-070 — Map Request Cancellation & Latest-Request Contract.** Should ensure a superseded map request cannot replace current data, re-assert resolution, or emit a bucket, via an `AbortController` or a request-token guard. Needs its own verification including the differing-bucket case that this run could not distinguish.
 
 **Analytics data boundary (to be recorded after deploy):** T-069 changes both the meaning and the count of Map `search_results_view`, so its production deployment timestamp must be recorded as a `Map search_results_view correction boundary`. For KPIs using `search_results_view` as a denominator, Map data either side of that boundary must not be mixed without annotation. This does **not** reset the conversion baseline: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
 
