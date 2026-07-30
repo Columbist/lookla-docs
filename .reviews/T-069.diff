@@ -1,0 +1,491 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 8bd7ac4..a5e98af 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1816,6 +1816,65 @@ The second `.set` **overwrites** the first, so the store ends up holding only ke
+ 
+ ---
+ 
++### T-069 — Map Search Results View Stabilization
++**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-015 ✅, T-042 ✅, T-056 ✅, T-058 ✅, T-068 ✅
++**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
++
++**Ticket-identity note:** T-069 confirmed free before branching.
++
++**The defect (inherited, surfaced by T-068).** `mapLoading` is initialised `false`. The fetch effect is declared *before* the tracking effect, but the `setMapLoading(true)` it performs does not change the value already captured in the current render's closure — so on the very first map render the tracking effect saw `mapLoading === false` with `mapSalons === []` and reported `result_count_bucket: "0"`. That "zero results" view never existed: the request had simply not started.
++
++Two consequences: the 0-bucket was inflated with states no user ever saw, and because T-058's dedup store holds one material key per history entry, the false `all|0|map|<locale>` was immediately overwritten by the real `all|51_plus|map|<locale>` — so on Back neither matched and **both fired again**.
++
++**Approved approach — variant (b): report only resolved states.** "Not loading" is not "resolved": `!loading` is true both before a request starts and after it finishes, and an empty array looks identical in both. Resolution is now tracked explicitly (`mapResolved`), cleared when a request begins and set only when one settles successfully. The decision itself lives in a pure, Leaflet-free, DOM-free module (`lib/mapResultsResolution.ts`) so it is directly unit-testable.
++
++`result_count_bucket: "0"` is still sent — but only when a completed request genuinely matched nothing. Verified live: a query matching no salons produces exactly one `"0"` map event.
++
++**Deliberately NOT changed: the dedup storage model.** `Map<entryId, string>` stays as-is. An `A → B → A` cycle (List → Map → List → Map) *does* re-send the map key — but every List/Map toggle pushes a **new history entry with a distinct `entryId`** (measured: `99918f5e…` → `7e8347e8…` → `d810b731…` → `5dcd41f5…`), so the two reports live under different entries. A `Map<entryId, Set<key>>` would change nothing: the second lookup misses on the *entry* key, not on the material key within it. Semantically the re-send is also correct — `view` is part of the material key, and a deliberate toggle that creates a history entry is a genuinely new view of results. The dedup's job is suppressing re-reports of the *same* entry (Back restoration), which is verified and passes. Recorded with the reasoning so a `Set` is not introduced later on the strength of the bare "it fired twice" observation.
++
++**Verification:** 25 new tests in `lib/mapResultsResolution.test.ts` (resolution semantics, genuine-vs-transient emptiness, full slow-API lifecycle, filter/locale/retry invalidation, page wiring, batching order, error path, unchanged payload, untouched event owners, and the A→B→A reasoning). Three pre-existing tripwires updated — they pinned the literal `if (mapLoading || mapError) return;` and the exact 9-dependency array, both of which T-069 intentionally changes; each now asserts the same underlying guarantee against the new structure (map branch still gates on raw `mapLoading`/`mapError` and never on AsyncSection-derived status; the gate still precedes computing the bucket; the dependency array is asserted as a *set* of required gating variables rather than a brittle literal). Full suite **1166/1166**. Lint clean (zero warnings on both touched files); build clean; search bundle unchanged at 9.64kB.
++
++Isolated Playwright (map API artificially delayed 6s to reproduce the real production timing):
++
++| Scenario | Result |
++|---|---|
++| Mid-flight, slow map API | **no** map event at all — the false `"0"` is gone |
++| After resolution | exactly **1** map event, `51_plus` |
++| Map → preview → detail → Back | `search_results_view` = **0** (was **2**), `salon_open` = 1 |
++| List → detail → Back | **0** — no regression on the working path |
++| Genuine empty completed request | exactly **1** event with `"0"` |
++| Filter change (`area=glyfada`) | 1 new correct event, **no** transient `"0"` |
++| Locale change (`ru`) | 1 correct event, `locale: "ru"`, no transient `"0"` |
++| Consent denied | **0** events |
++
++*Instrumentation note:* the isolated build carries no GA4 id, so `gtag.js` never loads and `trackEvent` bails on its `typeof window.gtag !== 'function'` guard. A first run therefore reported zeros everywhere — including states that should have fired — which would have read as a false pass. Stubbing `window.gtag` (rather than patching `dataLayer.push`, the approach production requires because the real `gtag.js` overwrites a stub) produced valid measurements.
++
++**Acceptance Criteria:**
++- [x] Slow map API creates no transient `"0"` event
++- [x] Unresolved results are never treated as empty
++- [x] A genuinely completed empty request sends exactly one `"0"`
++- [x] A non-empty map result sends one correct bucket
++- [x] The transient empty state no longer overwrites the dedup key
++- [x] Map → detail → Back sends 0 new events
++- [x] List → detail → Back unregressed
++- [x] List/Map toggling follows the existing material-key contract
++- [x] Filter change sends a new event after resolution
++- [x] Locale change sends a correct new event
++- [x] Snapshot restoration creates no intermediate `"0"`
++- [x] Consent denied sends nothing
++- [x] Event name and payload shape unchanged
++- [x] `salon_open` / `contact_action` untouched
++- [x] Production-like delayed response exercised in Playwright
++- [ ] GA4 POST-batch parsing verified against production — pending deploy
++- [ ] Live production verification — pending merge/deploy
++- [ ] `Map search_results_view correction boundary` recorded — pending deploy
++- [ ] Independent review — pending **APPROVE**
++
++**Analytics data boundary (to be recorded after deploy):** T-069 changes both the meaning and the count of Map `search_results_view`, so its production deployment timestamp must be recorded as a `Map search_results_view correction boundary`. For KPIs using `search_results_view` as a denominator, Map data either side of that boundary must not be mixed without annotation. This does **not** reset the conversion baseline: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/app/[locale]/search/page.tsx b/frontend/app/[locale]/search/page.tsx
+index bdd51d1..7611d9d 100644
+--- a/frontend/app/[locale]/search/page.tsx
++++ b/frontend/app/[locale]/search/page.tsx
+@@ -18,6 +18,7 @@ import { deriveActiveFilters, removeActiveFilter, clearAllActiveFilters, removeQ
+ import { trackEvent, bucketResultCount, buildSearchResultsViewKey } from '@/lib/analytics';
+ import { ensureEntryId, computeSearchKey, getValidSnapshot, saveSnapshot, SNAPSHOT_VERSION, type SearchReturnSnapshot } from '@/lib/searchReturnState';
+ import { hasReportedSearchResultsView, markSearchResultsViewReported } from '@/lib/searchResultsViewDedup';
++import { isMapResultStateReportable } from '@/lib/mapResultsResolution';
+ import dynamic from 'next/dynamic';
+ 
+ const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+@@ -78,6 +79,8 @@ function SearchContent({ locale }: { locale: string }) {
+   const [areasError, setAreasError] = useState(false);
+   const [mapLoading, setMapLoading] = useState(false);
+   const [mapError, setMapError] = useState(false);
++  // T-069: "not loading" is not "resolved" — see lib/mapResultsResolution.ts.
++  const [mapResolved, setMapResolved] = useState(false);
+   const [filtersOpen, setFiltersOpen] = useState(false);
+   const filtersRef = useRef<HTMLDivElement>(null);
+   const filterTriggerRef = useRef<HTMLButtonElement>(null);
+@@ -328,6 +331,9 @@ function SearchContent({ locale }: { locale: string }) {
+     if (view !== 'map') return;
+     setMapLoading(true);
+     setMapError(false);
++    // T-069: a new request invalidates the previous resolution, so nothing is
++    // reportable again until this one settles.
++    setMapResolved(false);
+     const params = new URLSearchParams();
+     if (area) params.set('area', area);
+     if (city) params.set('city', city);
+@@ -339,7 +345,13 @@ function SearchContent({ locale }: { locale: string }) {
+         if (!r.ok) throw new Error(`map fetch failed: ${r.status}`);
+         return r.json();
+       })
+-      .then(d => setMapSalons(Array.isArray(d) ? d : []))
++      .then(d => {
++        // T-069: the count and its resolution flip together, batched into one
++        // render, so there is never an interim commit where the state claims to
++        // be resolved while still holding the previous (or empty) count.
++        setMapSalons(Array.isArray(d) ? d : []);
++        setMapResolved(true);
++      })
+       .catch(() => { setMapSalons([]); setMapError(true); })
+       .finally(() => setMapLoading(false));
+   }, [view, area, city, q, category, minRating]);
+@@ -367,7 +379,12 @@ function SearchContent({ locale }: { locale: string }) {
+   useEffect(() => {
+     const entryId = currentEntryIdRef.current;
+     if (view === 'map') {
+-      if (mapLoading || mapError) return;
++      // T-069: was `if (mapLoading || mapError) return;`, which let the very
++      // first map render through — mapLoading is still false in this render's
++      // closure at that point — and reported a bucket of "0" for a request
++      // that had not started. A resolved-state check replaces it, so "0" is
++      // only ever sent when a completed request genuinely matched nothing.
++      if (!isMapResultStateReportable({ loading: mapLoading, error: mapError, resolved: mapResolved })) return;
+       const bucket = bucketResultCount(mapSalons.length);
+       const key = buildSearchResultsViewKey(area || 'all', bucket, 'map', locale as Locale);
+       if (key === lastTrackedSearchKey.current) return;
+@@ -385,7 +402,7 @@ function SearchContent({ locale }: { locale: string }) {
+       markSearchResultsViewReported(entryId, key);
+       trackEvent('search_results_view', { area: area || 'all', result_count_bucket: bucket, view: 'list', locale: locale as Locale });
+     }
+-  }, [view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]);
++  }, [view, loading, searchError, total, mapLoading, mapError, mapResolved, mapSalons.length, area, locale]);
+ 
+   // IntersectionObserver — fires loadMore when sentinel enters viewport
+   useEffect(() => {
+diff --git a/frontend/app/[locale]/search/searchPage.test.ts b/frontend/app/[locale]/search/searchPage.test.ts
+index 8498ab9..078dd33 100644
+--- a/frontend/app/[locale]/search/searchPage.test.ts
++++ b/frontend/app/[locale]/search/searchPage.test.ts
+@@ -50,9 +50,19 @@ describe('T-042: search results distinguish loading/empty/error/success via Asyn
+     assert.ok(!source.includes("t('no_salons_in_area'"), 'the old area-only empty message must no longer be referenced — T-054 replaced it with a generic filtered-empty-state contract');
+   });
+ 
+-  test('T-015 search_results_view tracking still gates on the raw loading/error booleans, untouched by the AsyncSection refactor', () => {
+-    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2200);
+-    assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
++  test('T-015 search_results_view tracking still gates on raw state before computing a bucket, untouched by the AsyncSection refactor', () => {
++    // T-069 replaced the map branch's `if (mapLoading || mapError) return;`
++    // with a resolution gate: the old check let the pre-request state through
++    // (mapLoading is false before the fetch starts) and reported a false
++    // "0" bucket. The guarantee this test protects — that the map branch
++    // gates on raw loading/error state and never derives it from
++    // AsyncSection — still holds, and is now strictly stronger.
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2600);
++    assert.ok(
++      /isMapResultStateReportable\(\{ loading: mapLoading, error: mapError, resolved: mapResolved \}\)/.test(effectBlock),
++      'the map branch must still gate on the raw mapLoading/mapError booleans (plus resolution)',
++    );
++    assert.ok(!/deriveAsyncStatus|mapStatus/.test(effectBlock), 'tracking must not depend on AsyncSection-derived status');
+     assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
+   });
+ 
+diff --git a/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts b/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts
+index 7ef1f61..ea1546d 100644
+--- a/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts
++++ b/frontend/app/[locale]/search/searchResultsViewDedupWiring.test.ts
+@@ -102,8 +102,22 @@ describe('T-058: timing invariants unchanged — still gates on settled, success
+     assert.ok(!trackingEffect.includes('debounce'));
+   });
+ 
+-  test('the effect dependency array is unchanged from pre-T-058 (same 9 dependencies, same gating variables)', () => {
+-    assert.ok(trackingEffect.includes('}, [view, loading, searchError, total, mapLoading, mapError, mapSalons.length, area, locale]);'));
++  test('the effect dependency array still lists every gating variable (T-069 added mapResolved, nothing was removed)', () => {
++    // Was pinned to the exact pre-T-058 9-dependency literal. T-069 adds
++    // mapResolved — required, since the effect now reads it — so the literal
++    // moved to 10. Asserted as a set rather than a string so the intent
++    // (every gating variable is a dependency; none were dropped) survives a
++    // future addition, while still failing if one disappears.
++    const deps = /\}, \[([^\]]+)\]\);/.exec(trackingEffect);
++    assert.ok(deps, 'tracking effect must declare a dependency array');
++    const listed = deps[1].split(',').map(s => s.trim());
++    for (const required of [
++      'view', 'loading', 'searchError', 'total',
++      'mapLoading', 'mapError', 'mapResolved', 'mapSalons.length',
++      'area', 'locale',
++    ]) {
++      assert.ok(listed.includes(required), `dependency array must include ${required}`);
++    }
+   });
+ });
+ 
+diff --git a/frontend/lib/analytics.test.ts b/frontend/lib/analytics.test.ts
+index 804f9ce..ebe7394 100644
+--- a/frontend/lib/analytics.test.ts
++++ b/frontend/lib/analytics.test.ts
+@@ -622,10 +622,19 @@ describe('T-015: search/page.tsx — search_results_view and area_select (search
+     assert.ok(source.includes("trackEvent('area_select', { area: slug, source: 'search_filter'"));
+   });
+ 
+-  test('search_results_view is gated on loading/error state for both list and map before ever computing a bucket', () => {
+-    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2200);
+-    assert.ok(/if \(mapLoading \|\| mapError\) return;/.test(effectBlock));
++  test('search_results_view is gated on result state for both list and map before ever computing a bucket', () => {
++    // T-069: the map branch now additionally requires a *resolved* result,
++    // because "not loading" was true both before a request started and after
++    // it finished — indistinguishable from an empty array, which produced a
++    // false result_count_bucket "0". The list branch is unchanged.
++    const effectBlock = source.slice(source.indexOf('search_results_view — fires once'), source.indexOf('search_results_view — fires once') + 2600);
++    const mapGate = /isMapResultStateReportable\(\{ loading: mapLoading, error: mapError, resolved: mapResolved \}\)/.test(effectBlock);
++    assert.ok(mapGate, 'map branch must gate on loading, error AND resolution');
+     assert.ok(/if \(loading \|\| searchError\) return;/.test(effectBlock));
++    // The bucket must never be computed before the gate returns.
++    const gateAt = effectBlock.indexOf('isMapResultStateReportable');
++    const bucketAt = effectBlock.indexOf('bucketResultCount(mapSalons.length)');
++    assert.ok(gateAt > -1 && bucketAt > gateAt, 'the map gate must precede computing the map bucket');
+   });
+ 
+   test('search_results_view uses a ref-based normalized-key comparison for dedup, not a time-based debounce', () => {
+diff --git a/frontend/lib/mapResultsResolution.test.ts b/frontend/lib/mapResultsResolution.test.ts
+new file mode 100644
+index 0000000..e8590ed
+--- /dev/null
++++ b/frontend/lib/mapResultsResolution.test.ts
+@@ -0,0 +1,200 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++import {
++  isMapResultStateReportable,
++  isGenuineEmptyMapResult,
++  type MapResultsState,
++} from './mapResultsResolution';
++
++const st = (o: Partial<MapResultsState> = {}): MapResultsState => ({
++  loading: false, error: false, resolved: false, ...o,
++});
++
++describe('T-069: only a resolved map result state is reportable', () => {
++  test('the pre-request state is NOT reportable — this is the defect being fixed', () => {
++    // mapLoading is initialised false, so the very first map render presented
++    // as "not loading, zero results" before the fetch had even started.
++    assert.equal(isMapResultStateReportable(st({ loading: false, resolved: false })), false);
++  });
++
++  test('an in-flight request is not reportable', () => {
++    assert.equal(isMapResultStateReportable(st({ loading: true, resolved: false })), false);
++    assert.equal(isMapResultStateReportable(st({ loading: true, resolved: true })), false);
++  });
++
++  test('a failed request is not reportable', () => {
++    assert.equal(isMapResultStateReportable(st({ error: true, resolved: true })), false);
++  });
++
++  test('a settled successful request IS reportable', () => {
++    assert.equal(isMapResultStateReportable(st({ resolved: true })), true);
++  });
++
++  test('"not loading" alone is never sufficient', () => {
++    // The whole bug: !loading is true both before a request starts and after it
++    // finishes, and an empty array looks identical in both.
++    assert.equal(isMapResultStateReportable(st({ loading: false })), false);
++  });
++});
++
++describe('T-069: a zero bucket requires a genuinely empty resolved result', () => {
++  test('unresolved emptiness is not a real zero', () => {
++    assert.equal(isGenuineEmptyMapResult(st({ resolved: false }), 0), false);
++  });
++
++  test('loading emptiness is not a real zero', () => {
++    assert.equal(isGenuineEmptyMapResult(st({ loading: true }), 0), false);
++  });
++
++  test('a completed request that matched nothing IS a real zero', () => {
++    assert.equal(isGenuineEmptyMapResult(st({ resolved: true }), 0), true);
++  });
++
++  test('a resolved non-empty result is not a zero', () => {
++    assert.equal(isGenuineEmptyMapResult(st({ resolved: true }), 2000), false);
++  });
++
++  test('an errored empty result is not reported as a zero', () => {
++    assert.equal(isGenuineEmptyMapResult(st({ error: true, resolved: true }), 0), false);
++  });
++});
++
++describe('T-069: full lifecycle — slow map API produces no transient zero', () => {
++  test('a slow request emits nothing until it settles, then exactly one reportable state', () => {
++    // Replays the real production sequence that produced the false zero.
++    const sequence: Array<{ label: string; state: MapResultsState; count: number }> = [
++      { label: 'map view selected, fetch not yet started', state: st(), count: 0 },
++      { label: 'fetch in flight', state: st({ loading: true }), count: 0 },
++      { label: 'fetch settled with 2000 salons', state: st({ resolved: true }), count: 2000 },
++    ];
++    const reportable = sequence.filter(s => isMapResultStateReportable(s.state));
++    assert.equal(reportable.length, 1, `expected exactly one reportable state, got ${reportable.map(r => r.label).join(', ')}`);
++    assert.equal(reportable[0].count, 2000, 'the reportable state must be the settled one');
++  });
++
++  test('a new request invalidates a previous resolution, so stale counts are not re-reported', () => {
++    // Filter change: resolved goes back to false while the new fetch runs.
++    assert.equal(isMapResultStateReportable(st({ resolved: true })), true);
++    assert.equal(isMapResultStateReportable(st({ loading: true, resolved: false })), false);
++  });
++
++  test('a retry after an error stays unreportable until it succeeds', () => {
++    assert.equal(isMapResultStateReportable(st({ error: true })), false);
++    assert.equal(isMapResultStateReportable(st({ loading: true })), false);
++    assert.equal(isMapResultStateReportable(st({ resolved: true })), true);
++  });
++});
++
++describe('T-069: search page wiring', () => {
++  const src = readFileSync('app/[locale]/search/page.tsx', 'utf8');
++  const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
++
++  test('the map branch gates on resolution, not on the old loading-only check', () => {
++    assert.ok(
++      /if \(!isMapResultStateReportable\(\{ loading: mapLoading, error: mapError, resolved: mapResolved \}\)\) return;/.test(codeOnly),
++      'the map branch must use the resolution gate',
++    );
++    assert.ok(
++      !/if \(mapLoading \|\| mapError\) return;/.test(codeOnly),
++      'the old loading-only guard must be gone — it let the pre-request state through',
++    );
++  });
++
++  test('a new request resets resolution', () => {
++    const fn = codeOnly.slice(codeOnly.indexOf('const loadMapSalons'), codeOnly.indexOf('useEffect(() => { loadMapSalons(); }'));
++    assert.ok(/setMapResolved\(false\)/.test(fn), 'starting a fetch must clear resolution');
++    assert.ok(/setMapResolved\(true\)/.test(fn), 'a settled fetch must set resolution');
++  });
++
++  test('count and resolution are set together so no interim commit claims a stale resolved state', () => {
++    const fn = codeOnly.slice(codeOnly.indexOf('const loadMapSalons'), codeOnly.indexOf('useEffect(() => { loadMapSalons(); }'));
++    const then = fn.slice(fn.indexOf('.then(d =>'));
++    const salonsAt = then.indexOf('setMapSalons(');
++    const resolvedAt = then.indexOf('setMapResolved(true)');
++    assert.ok(salonsAt > -1 && resolvedAt > -1, 'both writes must be in the same .then');
++    assert.ok(salonsAt < resolvedAt, 'the count must be written before resolution is asserted');
++  });
++
++  test('resolution never becomes true on the error path', () => {
++    const fn = codeOnly.slice(codeOnly.indexOf('const loadMapSalons'), codeOnly.indexOf('useEffect(() => { loadMapSalons(); }'));
++    const c = fn.slice(fn.indexOf('.catch('), fn.indexOf('.finally('));
++    assert.ok(!/setMapResolved\(true\)/.test(c), 'a failed fetch must not be reported as resolved');
++  });
++
++  test('mapResolved is in the tracking effect dependency list', () => {
++    assert.ok(/mapError, mapResolved, mapSalons\.length/.test(codeOnly), 'the effect must re-run when resolution changes');
++  });
++
++  test('the list branch is untouched — no regression to the working path', () => {
++    assert.ok(/if \(loading \|\| searchError\) return;/.test(codeOnly), 'the list guard must be unchanged');
++  });
++
++  test('the event name and payload shape are unchanged', () => {
++    const calls = [...codeOnly.matchAll(/trackEvent\('search_results_view', \{([^}]+)\}\)/g)].map(m => m[1]);
++    assert.equal(calls.length, 2, 'still exactly two call sites (map and list)');
++    for (const c of calls) {
++      for (const field of ['area:', 'result_count_bucket:', 'view:', 'locale:']) {
++        assert.ok(c.includes(field), `payload must still carry ${field}`);
++      }
++    }
++  });
++
++  test('the dedup storage model was NOT changed speculatively', () => {
++    const dedup = readFileSync('lib/searchResultsViewDedup.ts', 'utf8');
++    assert.ok(
++      /new Map<string, string>\(\)/.test(dedup),
++      'storage must remain one key per entry — see the A->B->A finding below',
++    );
++  });
++
++  test('A->B->A finding: the re-send is cross-entry, so a per-entry Set would not address it', () => {
++    // Measured live (List -> Map -> List -> Map): the map material key is
++    // reported twice, so an A->B->A cycle DOES re-send. But every List/Map
++    // toggle creates a new history entry with a distinct entryId
++    // (99918f5e… -> 7e8347e8… -> d810b731… -> 5dcd41f5…), so the two map
++    // reports live under DIFFERENT entryIds. A Map<entryId, Set<key>> would
++    // change nothing: the second lookup misses on the entry key itself, not
++    // on the material key within it.
++    //
++    // Semantically that re-send is also correct under the existing contract:
++    // `view` is part of the material key, and a deliberate user toggle that
++    // pushes a new history entry is a genuinely new view of results. The
++    // dedup exists to suppress re-reporting the SAME entry (Back
++    // restoration), which is verified separately and passes.
++    //
++    // This test records the reasoning so the Set is not introduced later on
++    // the strength of the raw "it fired twice" observation alone.
++    const dedup = readFileSync('lib/searchResultsViewDedup.ts', 'utf8');
++    assert.ok(
++      /entryId/.test(dedup) && /reportedKeys\.get\(entryId\) === materialKey/.test(dedup),
++      'dedup remains keyed per history entry, which is the correct scope for Back-restoration',
++    );
++    const page = readFileSync('app/[locale]/search/page.tsx', 'utf8');
++    assert.ok(
++      /buildSearchResultsViewKey\(area \|\| 'all', bucket, 'map', locale as Locale\)/.test(page),
++      "the material key still includes view, so list/map are legitimately distinct states",
++    );
++  });
++
++  test('this page still emits only its own two event names', () => {
++    // salon_open lives in SalonCard/MapView, not here — asserting it in this
++    // file was wrong. What matters is that T-069 added no event to this page.
++    const names = [...codeOnly.matchAll(/trackEvent\('([a-z_]+)'/g)].map(m => m[1]).sort();
++    assert.deepEqual(names, ['area_select', 'search_results_view', 'search_results_view']);
++  });
++
++  test('salon_open and contact_action owners are untouched by T-069', () => {
++    const card = readFileSync('components/SalonCard.tsx', 'utf8');
++    const map = readFileSync('components/MapView.tsx', 'utf8');
++    assert.ok(/trackEvent\('salon_open'/.test(card), 'SalonCard still owns its salon_open');
++    assert.ok(/source: 'search_map'/.test(map), "MapView still owns its search_map salon_open");
++    for (const src of [card, map]) {
++      assert.ok(!/mapResolved|isMapResultStateReportable/.test(src), 'T-069 state must not leak into event owners');
++    }
++  });
++
++  test('consent gating is still delegated to trackEvent, not re-implemented here', () => {
++    assert.ok(!/getAnalyticsConsent/.test(codeOnly), 'the page must not gate consent itself');
++  });
++});
+diff --git a/frontend/lib/mapResultsResolution.ts b/frontend/lib/mapResultsResolution.ts
+new file mode 100644
+index 0000000..7a8056d
+--- /dev/null
++++ b/frontend/lib/mapResultsResolution.ts
+@@ -0,0 +1,57 @@
++/**
++ * T-069 — decides whether the map's result state is *resolved* enough to be
++ * worth reporting as a `search_results_view`.
++ *
++ * The defect this exists to prevent: `mapLoading` is initialised to `false`,
++ * and although the fetch effect is declared before the tracking effect, the
++ * `setMapLoading(true)` it performs does not change the value already captured
++ * in the current render's closure. So on the very first map render the tracking
++ * effect saw `mapLoading === false` with `mapSalons === []` and reported
++ * `result_count_bucket: "0"` — a "zero results" view that was never a real
++ * user-visible state, the request had simply not started yet.
++ *
++ * That false zero then caused a second, real report to be sent immediately
++ * afterwards, and (because T-058's dedup store holds one material key per
++ * history entry) overwrote the dedup key so both fired again on Back.
++ *
++ * "Not loading" is therefore not the same as "resolved". Resolution is tracked
++ * explicitly: a request must have *settled* before any bucket — including a
++ * genuine `"0"` — may be reported.
++ */
++
++export interface MapResultsState {
++  /** A fetch is currently in flight. */
++  loading: boolean;
++  /** The most recent fetch failed. */
++  error: boolean;
++  /**
++   * A fetch has settled successfully since the last time the query inputs
++   * changed. False before the first fetch starts, and false again as soon as a
++   * new fetch is initiated for new inputs.
++   */
++  resolved: boolean;
++}
++
++/**
++ * True only when the map's result count reflects a completed request and is
++ * therefore safe to report.
++ *
++ * Deliberately requires `resolved` rather than inferring it from `!loading`:
++ * the whole defect was that `!loading` is true both before a request starts
++ * and after it finishes, and those two states are indistinguishable from the
++ * count alone (both can present as an empty array).
++ */
++export function isMapResultStateReportable(state: MapResultsState): boolean {
++  if (state.loading) return false;
++  if (state.error) return false;
++  return state.resolved;
++}
++
++/**
++ * True when an empty map result may legitimately be reported as `"0"` — i.e.
++ * the system actually knows the completed request matched nothing, rather than
++ * merely not having an answer yet.
++ */
++export function isGenuineEmptyMapResult(state: MapResultsState, count: number): boolean {
++  return isMapResultStateReportable(state) && count === 0;
++}
