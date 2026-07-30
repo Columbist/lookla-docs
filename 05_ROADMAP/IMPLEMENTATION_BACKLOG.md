@@ -1744,7 +1744,15 @@ T-063 regressions: 0
 ### T-068 — Map Preview Client Navigation & Search Return Preservation
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅
-**Status:** ⚠️ Implemented, **APPROVE**, merged via PR #64 (`749aa1e`), deployed to production **2026-07-30 15:52:12 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched. Core objective achieved and verified live. **One smoke acceptance point is NOT met** (`search_results_view` still fires on Back via the map path) — root-caused to a pre-existing T-058 limitation outside this ticket's scope, see "Open finding" below. **Not recorded as `regressions: 0`.**
+**Status:** ✅ **Completed with documented follow-up.** Reviewed, **APPROVE**, merged via PR #64 (`749aa1e`), deployed to production **2026-07-30 15:52:12 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched.
+
+```text
+T-068 implementation goal: achieved
+T-068 regressions introduced: 0
+Known inherited analytics defect discovered: T-069
+```
+
+Deliberately **not** recorded as "the full checklist passed without exception": one smoke acceptance point (`search_results_view` must not fire after Back) is not met on the map path. That defect predates T-068, did not worsen, requires a separate analytics decision, and is unrelated to the client-navigation mechanism — it is owned by **T-069**. See "Open finding" below.
 
 **Map-return-flow UX boundary marker:** `2026-07-30 15:52:12 Europe/Athens (EEST)` — from this deployment, returning from a map-opened salon preserves search state. Useful for segmenting map-path return behaviour in later analysis. This is **not** a baseline reset: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, since T-068 changed no GA4 taxonomy and no conversion-event shape.
 
@@ -1780,7 +1788,7 @@ Isolated Playwright, full `Map → preview → salon detail → Back` flow with 
 - [x] Modifier-click browser defaults preserved
 - [x] Live production verification — passed, except the one item below
 - [x] Independent review — **APPROVE**
-- [ ] ⚠️ `search_results_view` must not fire after Back — **NOT met on the map path** (fires 2×); root cause is outside this ticket, see below
+- [ ] `search_results_view` must not fire after Back — **NOT met on the map path** (fires 2×); inherited defect, owned by **T-069**, see below
 
 **Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 48 cards established in List first (24 → 48, scrollY 2767), switched to Map, scroll set to its 181px maximum, preview opened by keyboard, navigated to salon detail, browser Back. Results: realm probe read `alive` on the detail page (**client-side, no new document**); returned to `view=map` with Leaflet rendered; **scrollY 181 → 181 exact** against the pre-measured value; **48 cards restored** (confirmed by switching back to List); **no page-1 flash** (card-count sampled 8× during restore, never showed 24); **no repeat initial search fetch** (`/api/salons?limit=24&page=1` did not reappear — only MapView's own `/api/salons/map?` refetch on remount, pre-existing); `salon_open` fired **exactly once** with the unchanged shape and **no second fire on detail mount**; destination, locale (`en`) and query context preserved; `tel:` still a plain `<a href="tel:...">`; Ctrl+click opened a new tab with the correct destination leaving the map page intact; T-063 keyboard model intact; no horizontal overflow; zero console or page errors.
 
@@ -1804,11 +1812,7 @@ The second `.set` **overwrites** the first, so the store ends up holding only ke
 
 **Secondary observation worth its own attention:** the transient `result_count_bucket: "0"` map event reports a "zero results" view that was never a real user-visible state — the map was simply still loading. That inflates the 0-bucket in analytics independently of the dedup issue.
 
-**Candidate fixes (deliberately deferred — T-068's mandate was to change only the navigation mechanism):**
-- *(a)* hold a `Set` of keys per `entryId` instead of a single key — mechanical fix for the dedup;
-- *(b)* suppress the transient empty-map report so the map reports only its settled state — removes the double report at source and also fixes the misleading 0-bucket. Likely the better product fix.
-
-Recommended as a separate ticket covering both, since (b) changes what is reported and therefore needs explicit analytics sign-off.
+**Resolution:** owned by **T-069 — Map Search Results View Stabilization**, with **variant (b) approved**: suppress the transient empty-map report so the map only reports a resolved, user-meaningful result state. This removes the double report at source and fixes the misleading 0-bucket. The `Map<entryId, string>` → `Map<entryId, Set<key>>` storage change is explicitly **not** bundled in: once the false zero is gone, a single correct key remains per entry and existing dedup should suffice. A regression test for an `A → B → A` material-state cycle will decide whether the Set is ever actually needed, rather than introducing it speculatively.
 
 ---
 
