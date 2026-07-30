@@ -1708,7 +1708,7 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
 - **Announcement:** one polite message on first entry, carrying the real set size ("50 of 2000"), never repeated per arrow — per-marker position already lives in each marker's own name, so arrowing is not announced twice.
 - **Preserved:** the map container gained a name but no invented role; Leaflet's zoom and attribution controls remain exactly where they were in the tab order (verified: they follow the single marker stop).
 
-**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. Also still open (unchanged by this ticket): the preview's plain-`<a href>` link performs a hard navigation and therefore still discards T-056's in-memory search-return snapshot.
+**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. The preview's plain-`<a href>` hard navigation was left open here and is **fixed by T-068** (see below).
 
 **Verification:** 54 new tests in `lib/mapKeyboardNav.test.ts` — the pure geometry/selection module is unit-tested without Leaflet or a DOM, plus source-level assertions on the wiring. 1 pre-existing T-067 guard retired (it asserted *no* keyboard work existed in `MapView` specifically to stop a visual pass from starting T-063; that purpose is now fulfilled, and it was replaced with an assertion that still holds — that `MapView` owns no data/fetching/clustering concerns). Full suite **1125/1125**. Lint/build clean; search bundle unchanged at 9.58kB (`MapView` is dynamically imported). Isolated Playwright: tab-stop census (2023→20), a tab walk confirming the container is **not** a stop and Tab reaches the marker in one press before continuing through Leaflet's controls, four distinct arrow moves, single-`tabindex=0` invariant maintained after arrowing, no map panning during marker arrow navigation (the conflict `keyboard: false` removes), Space opening with `scrollDelta=0`, focus landing on the first preview link, Escape restoring marker focus, pointer sync without forced focus, the hint announced from marker focus and still exactly once after leaving and re-entering the collection, and all four locales confirmed localized (map label, rating word, position, hint).
 
@@ -1738,6 +1738,198 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
 ```text
 T-063 regressions: 0
 ```
+
+---
+
+### T-068 — Map Preview Client Navigation & Search Return Preservation
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅
+**Status:** ✅ **Completed with documented follow-up.** Reviewed, **APPROVE**, merged via PR #64 (`749aa1e`), deployed to production **2026-07-30 15:52:12 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched.
+
+```text
+T-068 implementation goal: achieved
+T-068 regressions introduced: 0
+Known inherited analytics defect discovered: T-069
+```
+
+Deliberately **not** recorded as "the full checklist passed without exception": one smoke acceptance point (`search_results_view` must not fire after Back) is not met on the map path. That defect predates T-068, did not worsen, requires a separate analytics decision, and is unrelated to the client-navigation mechanism — it is owned by **T-069**. See "Open finding" below.
+
+**Map-return-flow UX boundary marker:** `2026-07-30 15:52:12 Europe/Athens (EEST)` — from this deployment, returning from a map-opened salon preserves search state. Useful for segmenting map-path return behaviour in later analysis. This is **not** a baseline reset: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, since T-068 changed no GA4 taxonomy and no conversion-event shape.
+
+**Ticket-identity note:** T-068 confirmed free before branching (highest number previously in use was T-067).
+
+**The defect.** The map preview's "view salon" control was a plain `<a href>`, so activating it performed a full-document navigation. T-056 stores its search-return snapshot in a **module-scope Map** and writes it from a **save-on-unmount cleanup**. A hard navigation destroys the JS realm — the cleanup's write is lost along with the store — so returning from a salon opened via the map always remounted the search page at page 1 with scroll discarded. Registered as a known limitation in T-056 and carried unchanged through T-063.
+
+**Root-cause detail worth keeping:** the search page's capture-phase scroll-freeze listener was *never* the problem. Its selector is `a[href*="/salons/"]`, which already matched the map preview link (and still matches what `next/link` renders). The only broken link in the chain was realm survival.
+
+**The fix.** One element swap: `<a href>` → `next/link`'s `<Link href>`. Nothing else changed — the destination expression, the `salon_open` call, and the className are byte-identical, and the search page was not touched at all.
+
+Deliberately **not** routed through `Link`: the adjacent `tel:` quick-dial. An external protocol is not a route, and handing it to the router would break it.
+
+**Verification:** 16 new tests in `lib/mapPreviewNavigation.test.ts` (client-side mechanism, byte-identical destination/analytics/styling, `tel:` still a plain anchor, no `Link` carrying an external protocol, T-056 machinery untouched with exactly one `saveSnapshot` call site, T-063 keyboard model intact). One T-056 test **inverted**: it existed to document the limitation and explicitly said "if this ever changes to `<Link>`, the limitation (and this test) should be revisited" — the tripwire fired correctly and now asserts the fix, so a regression to a hard navigation fails in two suites. Full suite **1141/1141**. Lint/build clean; search bundle unchanged at 9.58kB.
+
+Isolated Playwright, full `Map → preview → salon detail → Back` flow with the precondition actually established first (48 cards loaded via scroll before switching views):
+- **Client-side navigation proven directly** via a realm probe (`window.__realmProbe`), which survives a client-side transition and dies on a document load. It read `alive` on the destination page. `framenavigated` counts were *not* used, because they fire for both kinds of navigation and cannot discriminate.
+- **48 cards restored** after Back (the exact loss this ticket targets).
+- **Scroll restored exactly.** Worth recording how this was measured: returning lands on **map** view, which is only ~181px scrollable, so an early run showing `scrollY=0` looked like a failure but was in fact correct restoration of a genuinely-zero position. Re-measuring with the map scrolled to its maximum first gave `181 → 181`, exact. This is the same measurement trap that produced false scroll "failures" in T-066 and T-067; the expected value must be captured before the navigation, never assumed.
+- `salon_open` fires **exactly once** per activation with the unchanged shape (`{salon_id, source: "search_map", locale}`).
+- **Ctrl+click still opens a new tab** with the correct destination and leaves the map page in place — `Link` preserves browser modifier defaults (verified on a clean element, after an initial run was invalidated by a `preventDefault` listener left over from the previous step).
+
+**Acceptance Criteria:**
+- [x] Preview navigation is client-side; the T-056 realm and snapshot survive
+- [x] Destination unchanged (slug with numeric id fallback)
+- [x] `salon_open` unchanged in name, shape and source; exactly one call site; fires once
+- [x] Visual treatment unchanged — this is not a visual ticket
+- [x] `tel:` remains a plain anchor; no `Link` carries an external protocol
+- [x] Search page and T-056 snapshot machinery untouched (one `saveSnapshot` site)
+- [x] T-063 keyboard model intact (Enter/Space, Escape, roving tabindex, focus-to-first-link)
+- [x] 48 cards restored after `Map → preview → detail → Back`
+- [x] Scroll restored exactly, against a measured expected value
+- [x] Modifier-click browser defaults preserved
+- [x] Live production verification — passed, except the one item below
+- [x] Independent review — **APPROVE**
+- [ ] `search_results_view` must not fire after Back — **NOT met on the map path** (fires 2×); inherited defect, owned by **T-069**, see below
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 48 cards established in List first (24 → 48, scrollY 2767), switched to Map, scroll set to its 181px maximum, preview opened by keyboard, navigated to salon detail, browser Back. Results: realm probe read `alive` on the detail page (**client-side, no new document**); returned to `view=map` with Leaflet rendered; **scrollY 181 → 181 exact** against the pre-measured value; **48 cards restored** (confirmed by switching back to List); **no page-1 flash** (card-count sampled 8× during restore, never showed 24); **no repeat initial search fetch** (`/api/salons?limit=24&page=1` did not reappear — only MapView's own `/api/salons/map?` refetch on remount, pre-existing); `salon_open` fired **exactly once** with the unchanged shape and **no second fire on detail mount**; destination, locale (`en`) and query context preserved; `tel:` still a plain `<a href="tel:...">`; Ctrl+click opened a new tab with the correct destination leaving the map page intact; T-063 keyboard model intact; no horizontal overflow; zero console or page errors.
+
+### Open finding — `search_results_view` fires 2× on Back via the map path
+
+**Measured, with a correct comparison baseline:**
+
+| Path | `search_results_view` after `→ detail → Back` |
+|---|---|
+| List (card → detail → Back) | **0** — T-058 dedup works |
+| Map (preview → detail → Back) | **2** |
+
+**Root cause — a pre-existing T-058 design limitation, not caused by T-068.** `lib/searchResultsViewDedup.ts` stores **one** material key per history entry (`Map<entryId, string>`, written with `.set(entryId, key)` and checked with `.get(entryId) === key`). The map view legitimately reports **two different** material keys within a single history entry:
+
+1. `all|0|map|en` — a transient state where `mapLoading` has already gone false but `mapSalons` is still empty
+2. `all|51_plus|map|en` — once map data arrives
+
+The second `.set` **overwrites** the first, so the store ends up holding only key 2. On Back, key 1 no longer matches (fires), then key 2 no longer matches because key 1 was just written (fires). The list path is unaffected because it only ever reports one key per entry. `entryId` was verified **preserved** across the whole cycle (`cddcade6…` before and after), so this is not an entry-identity problem.
+
+**Not a regression.** Before T-068 the map path did a full-document navigation, so the dedup store was destroyed and both keys fired on Back anyway — the count was already 2. T-068 neither improved nor worsened it; it made the gap *visible and fixable* by preserving the realm. (Count-before is inference from the mechanism, not a live measurement, since production now carries T-068.)
+
+**Secondary observation worth its own attention:** the transient `result_count_bucket: "0"` map event reports a "zero results" view that was never a real user-visible state — the map was simply still loading. That inflates the 0-bucket in analytics independently of the dedup issue.
+
+**Resolution:** owned by **T-069 — Map Search Results View Stabilization**, with **variant (b) approved**: suppress the transient empty-map report so the map only reports a resolved, user-meaningful result state. This removes the double report at source and fixes the misleading 0-bucket. The `Map<entryId, string>` → `Map<entryId, Set<key>>` storage change is explicitly **not** bundled in: once the false zero is gone, a single correct key remains per entry and existing dedup should suffice. A regression test for an `A → B → A` material-state cycle will decide whether the Set is ever actually needed, rather than introducing it speculatively.
+
+---
+
+### T-069 — Map Search Results View Stabilization
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-015 ✅, T-042 ✅, T-056 ✅, T-058 ✅, T-068 ✅
+**Status:** ✅ **Completed with documented follow-up.** Reviewed, **APPROVE**, merged via PR #65 (`2b5d5a6`), deployed to production **2026-07-30 18:26:17 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched.
+
+```text
+T-069 regressions: 0
+```
+
+T-069's own contract is fully verified live (see below). One smoke item — the stale-response race — **failed**, and is a **pre-existing unprotected defect that T-069 neither introduced nor claims to fix**. Owned by **T-070**, see "Open finding" below.
+
+**Map `search_results_view` correction boundary:**
+
+```text
+Map search_results_view correction boundary:
+2026-07-30 18:26:17 Europe/Athens (EEST)
+```
+
+From this timestamp the meaning and count of Map `search_results_view` change: transient pre-request states no longer emit a false `result_count_bucket: "0"`, and a restored map view no longer re-fires. For any KPI using `search_results_view` as a denominator, Map data either side of this boundary must be separated or explicitly annotated. This is **not** a conversion-baseline reset — the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
+
+**Ticket-identity note:** T-069 confirmed free before branching.
+
+**The defect (inherited, surfaced by T-068).** `mapLoading` is initialised `false`. The fetch effect is declared *before* the tracking effect, but the `setMapLoading(true)` it performs does not change the value already captured in the current render's closure — so on the very first map render the tracking effect saw `mapLoading === false` with `mapSalons === []` and reported `result_count_bucket: "0"`. That "zero results" view never existed: the request had simply not started.
+
+Two consequences: the 0-bucket was inflated with states no user ever saw, and because T-058's dedup store holds one material key per history entry, the false `all|0|map|<locale>` was immediately overwritten by the real `all|51_plus|map|<locale>` — so on Back neither matched and **both fired again**.
+
+**Approved approach — variant (b): report only resolved states.** "Not loading" is not "resolved": `!loading` is true both before a request starts and after it finishes, and an empty array looks identical in both. Resolution is now tracked explicitly (`mapResolved`), cleared when a request begins and set only when one settles successfully. The decision itself lives in a pure, Leaflet-free, DOM-free module (`lib/mapResultsResolution.ts`) so it is directly unit-testable.
+
+`result_count_bucket: "0"` is still sent — but only when a completed request genuinely matched nothing. Verified live: a query matching no salons produces exactly one `"0"` map event.
+
+**Deliberately NOT changed: the dedup storage model.** `Map<entryId, string>` stays as-is. An `A → B → A` cycle (List → Map → List → Map) *does* re-send the map key — but every List/Map toggle pushes a **new history entry with a distinct `entryId`** (measured: `99918f5e…` → `7e8347e8…` → `d810b731…` → `5dcd41f5…`), so the two reports live under different entries. A `Map<entryId, Set<key>>` would change nothing: the second lookup misses on the *entry* key, not on the material key within it. Semantically the re-send is also correct — `view` is part of the material key, and a deliberate toggle that creates a history entry is a genuinely new view of results. The dedup's job is suppressing re-reports of the *same* entry (Back restoration), which is verified and passes. Recorded with the reasoning so a `Set` is not introduced later on the strength of the bare "it fired twice" observation.
+
+**Verification:** 25 new tests in `lib/mapResultsResolution.test.ts` (resolution semantics, genuine-vs-transient emptiness, full slow-API lifecycle, filter/locale/retry invalidation, page wiring, batching order, error path, unchanged payload, untouched event owners, and the A→B→A reasoning). Three pre-existing tripwires updated — they pinned the literal `if (mapLoading || mapError) return;` and the exact 9-dependency array, both of which T-069 intentionally changes; each now asserts the same underlying guarantee against the new structure (map branch still gates on raw `mapLoading`/`mapError` and never on AsyncSection-derived status; the gate still precedes computing the bucket; the dependency array is asserted as a *set* of required gating variables rather than a brittle literal). Full suite **1166/1166**. Lint clean (zero warnings on both touched files); build clean; search bundle unchanged at 9.64kB.
+
+Isolated Playwright (map API artificially delayed 6s to reproduce the real production timing):
+
+| Scenario | Result |
+|---|---|
+| Mid-flight, slow map API | **no** map event at all — the false `"0"` is gone |
+| After resolution | exactly **1** map event, `51_plus` |
+| Map → preview → detail → Back | `search_results_view` = **0** (was **2**), `salon_open` = 1 |
+| List → detail → Back | **0** — no regression on the working path |
+| Genuine empty completed request | exactly **1** event with `"0"` |
+| Filter change (`area=glyfada`) | 1 new correct event, **no** transient `"0"` |
+| Locale change (`ru`) | 1 correct event, `locale: "ru"`, no transient `"0"` |
+| Consent denied | **0** events |
+
+*Instrumentation note:* the isolated build carries no GA4 id, so `gtag.js` never loads and `trackEvent` bails on its `typeof window.gtag !== 'function'` guard. A first run therefore reported zeros everywhere — including states that should have fired — which would have read as a false pass. Stubbing `window.gtag` (rather than patching `dataLayer.push`, the approach production requires because the real `gtag.js` overwrites a stub) produced valid measurements.
+
+**Acceptance Criteria:**
+- [x] Slow map API creates no transient `"0"` event
+- [x] Unresolved results are never treated as empty
+- [x] A genuinely completed empty request sends exactly one `"0"`
+- [x] A non-empty map result sends one correct bucket
+- [x] The transient empty state no longer overwrites the dedup key
+- [x] Map → detail → Back sends 0 new events
+- [x] List → detail → Back unregressed
+- [x] List/Map toggling follows the existing material-key contract
+- [x] Filter change sends a new event after resolution
+- [x] Locale change sends a correct new event
+- [x] Snapshot restoration creates no intermediate `"0"`
+- [x] Consent denied sends nothing
+- [x] Event name and payload shape unchanged
+- [x] `salon_open` / `contact_action` untouched
+- [x] Production-like delayed response exercised in Playwright
+- [x] Live production verification — passed for every T-069 item
+- [x] `Map search_results_view correction boundary` recorded
+- [x] Independent review — **APPROVE**
+- [ ] Stale-response race — **FAILED**; pre-existing, not introduced by T-069, owned by **T-070** (see below)
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy, real `gtag.js` intercepted via `dataLayer.push`):**
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Slow map API (6s) emits no transient `"0"` | **0 map events mid-flight** ✅ |
+| 2 | After resolution, one correct bucket | 1 × `51_plus` ✅ |
+| 3 | Genuine empty completed request | exactly 1 × `"0"` ✅ |
+| 4 | Map → preview → detail → Back | **0** (was 2), `salon_open` = 1 ✅ |
+| 5 | List → detail → Back | 0 ✅ |
+| 6 | Filter change (`area=glyfada`) | 1 correct event, no transient `"0"` ✅ |
+| 7 | Locale change (`ru`) | 1 correct event, `locale: "ru"` ✅ |
+| 9 | Consent denied | 0 GA/GTM requests, 0 product events ✅ |
+| 10 | Consent withdrawal | 0 further product events ✅ |
+
+### Open finding — stale map response replaces current data (pre-existing, → T-070)
+
+There is **no** request-cancellation or latest-request guard in `search/page.tsx`: no `AbortController`, no request token, no `signal`. Confirmed by inspection and then by live measurement.
+
+**Reproduced in production**, with the realm verified preserved (so this is a true in-realm race, not an artifact of a full navigation):
+
+```text
+request A (area=all)      delayed 16s   ─┐
+  user changes filter in-page → glyfada  │  client-side router.push, realm survives
+request B (area=glyfada)  400ms  ────────┘
+B resolves   → 76 markers, 1 correct event (area=glyfada)
+A lands late → 2000 markers   ← B's data REPLACED, URL still says area=glyfada
+```
+
+Against the four required properties of a stale response:
+
+| Must not… | Observed |
+|---|---|
+| replace B's data | ❌ **violated** — 76 → 2000 markers while the filter reads Glyfada |
+| re-mark the state as resolved | ❌ violated — the stale `.then` sets `mapResolved` true again |
+| emit an extra bucket | ✅ none observed — **but coincidentally**: Glyfada (76) and all (2000) both bucket to `51_plus`, so the material key was unchanged. With a smaller area the stale count would produce a *different* bucket under the *current* area and would emit a wrong event |
+| overwrite the dedup key | ✅ none — no event fired, so nothing was recorded |
+
+**Not introduced by T-069.** The data-replacement half has existed for as long as the map fetch has had no cancellation. T-069 adds only the (harmless in isolation) re-assertion of `mapResolved`. T-069's mandate was the reporting semantics of resolved states, not the fetching contract, and the approval explicitly said fetching was not to be rewritten — so this is recorded rather than silently expanded into.
+
+**Two earlier attempts at this test were invalid and are recorded so the result isn't over-trusted:** the first used `page.goto()` for the filter change, which is a full navigation that destroys the realm and the pending request, so no race existed; the second failed to open the filter popover (the page has two `aria-controls` buttons — the header burger renders first, per the T-064 note — so the selector matched the wrong one) and issued only one request. Only the third run, which used `div.relative button[aria-controls]` and an in-page `change` event, genuinely exercised the race.
+
+**→ T-070 — Map Request Cancellation & Latest-Request Contract.** Should ensure a superseded map request cannot replace current data, re-assert resolution, or emit a bucket, via an `AbortController` or a request-token guard. Needs its own verification including the differing-bucket case that this run could not distinguish.
+
+**Analytics data boundary (to be recorded after deploy):** T-069 changes both the meaning and the count of Map `search_results_view`, so its production deployment timestamp must be recorded as a `Map search_results_view correction boundary`. For KPIs using `search_results_view` as a denominator, Map data either side of that boundary must not be mixed without annotation. This does **not** reset the conversion baseline: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
 
 ---
 

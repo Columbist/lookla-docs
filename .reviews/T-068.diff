@@ -1,0 +1,292 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 96f76ff..6fd8844 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1708,7 +1708,7 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
+ - **Announcement:** one polite message on first entry, carrying the real set size ("50 of 2000"), never repeated per arrow — per-marker position already lives in each marker's own name, so arrowing is not announced twice.
+ - **Preserved:** the map container gained a name but no invented role; Leaflet's zoom and attribution controls remain exactly where they were in the tab order (verified: they follow the single marker stop).
+ 
+-**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. Also still open (unchanged by this ticket): the preview's plain-`<a href>` link performs a hard navigation and therefore still discards T-056's in-memory search-return snapshot.
++**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. The preview's plain-`<a href>` hard navigation was left open here and is **fixed by T-068** (see below).
+ 
+ **Verification:** 54 new tests in `lib/mapKeyboardNav.test.ts` — the pure geometry/selection module is unit-tested without Leaflet or a DOM, plus source-level assertions on the wiring. 1 pre-existing T-067 guard retired (it asserted *no* keyboard work existed in `MapView` specifically to stop a visual pass from starting T-063; that purpose is now fulfilled, and it was replaced with an assertion that still holds — that `MapView` owns no data/fetching/clustering concerns). Full suite **1125/1125**. Lint/build clean; search bundle unchanged at 9.58kB (`MapView` is dynamically imported). Isolated Playwright: tab-stop census (2023→20), a tab walk confirming the container is **not** a stop and Tab reaches the marker in one press before continuing through Leaflet's controls, four distinct arrow moves, single-`tabindex=0` invariant maintained after arrowing, no map panning during marker arrow navigation (the conflict `keyboard: false` removes), Space opening with `scrollDelta=0`, focus landing on the first preview link, Escape restoring marker focus, pointer sync without forced focus, the hint announced from marker focus and still exactly once after leaving and re-entering the collection, and all four locales confirmed localized (map label, rating word, position, hint).
+ 
+@@ -1741,6 +1741,46 @@ T-063 regressions: 0
+ 
+ ---
+ 
++### T-068 — Map Preview Client Navigation & Search Return Preservation
++**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅
++**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
++
++**Ticket-identity note:** T-068 confirmed free before branching (highest number previously in use was T-067).
++
++**The defect.** The map preview's "view salon" control was a plain `<a href>`, so activating it performed a full-document navigation. T-056 stores its search-return snapshot in a **module-scope Map** and writes it from a **save-on-unmount cleanup**. A hard navigation destroys the JS realm — the cleanup's write is lost along with the store — so returning from a salon opened via the map always remounted the search page at page 1 with scroll discarded. Registered as a known limitation in T-056 and carried unchanged through T-063.
++
++**Root-cause detail worth keeping:** the search page's capture-phase scroll-freeze listener was *never* the problem. Its selector is `a[href*="/salons/"]`, which already matched the map preview link (and still matches what `next/link` renders). The only broken link in the chain was realm survival.
++
++**The fix.** One element swap: `<a href>` → `next/link`'s `<Link href>`. Nothing else changed — the destination expression, the `salon_open` call, and the className are byte-identical, and the search page was not touched at all.
++
++Deliberately **not** routed through `Link`: the adjacent `tel:` quick-dial. An external protocol is not a route, and handing it to the router would break it.
++
++**Verification:** 16 new tests in `lib/mapPreviewNavigation.test.ts` (client-side mechanism, byte-identical destination/analytics/styling, `tel:` still a plain anchor, no `Link` carrying an external protocol, T-056 machinery untouched with exactly one `saveSnapshot` call site, T-063 keyboard model intact). One T-056 test **inverted**: it existed to document the limitation and explicitly said "if this ever changes to `<Link>`, the limitation (and this test) should be revisited" — the tripwire fired correctly and now asserts the fix, so a regression to a hard navigation fails in two suites. Full suite **1141/1141**. Lint/build clean; search bundle unchanged at 9.58kB.
++
++Isolated Playwright, full `Map → preview → salon detail → Back` flow with the precondition actually established first (48 cards loaded via scroll before switching views):
++- **Client-side navigation proven directly** via a realm probe (`window.__realmProbe`), which survives a client-side transition and dies on a document load. It read `alive` on the destination page. `framenavigated` counts were *not* used, because they fire for both kinds of navigation and cannot discriminate.
++- **48 cards restored** after Back (the exact loss this ticket targets).
++- **Scroll restored exactly.** Worth recording how this was measured: returning lands on **map** view, which is only ~181px scrollable, so an early run showing `scrollY=0` looked like a failure but was in fact correct restoration of a genuinely-zero position. Re-measuring with the map scrolled to its maximum first gave `181 → 181`, exact. This is the same measurement trap that produced false scroll "failures" in T-066 and T-067; the expected value must be captured before the navigation, never assumed.
++- `salon_open` fires **exactly once** per activation with the unchanged shape (`{salon_id, source: "search_map", locale}`).
++- **Ctrl+click still opens a new tab** with the correct destination and leaves the map page in place — `Link` preserves browser modifier defaults (verified on a clean element, after an initial run was invalidated by a `preventDefault` listener left over from the previous step).
++
++**Acceptance Criteria:**
++- [x] Preview navigation is client-side; the T-056 realm and snapshot survive
++- [x] Destination unchanged (slug with numeric id fallback)
++- [x] `salon_open` unchanged in name, shape and source; exactly one call site; fires once
++- [x] Visual treatment unchanged — this is not a visual ticket
++- [x] `tel:` remains a plain anchor; no `Link` carries an external protocol
++- [x] Search page and T-056 snapshot machinery untouched (one `saveSnapshot` site)
++- [x] T-063 keyboard model intact (Enter/Space, Escape, roving tabindex, focus-to-first-link)
++- [x] 48 cards restored after `Map → preview → detail → Back`
++- [x] Scroll restored exactly, against a measured expected value
++- [x] Modifier-click browser defaults preserved
++- [ ] Live production verification — pending merge/deploy
++- [ ] Independent review — pending **APPROVE**
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/app/[locale]/search/searchReturnRestoration.test.ts b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+index 8b65734..645b246 100644
+--- a/frontend/app/[locale]/search/searchReturnRestoration.test.ts
++++ b/frontend/app/[locale]/search/searchReturnRestoration.test.ts
+@@ -197,10 +197,29 @@ describe('T-056: map boundary — no viewport/zoom/marker persistence, no second
+     assert.equal(occurrences.length, 2); // AsyncSection's empty + success children, T-042's existing pattern
+   });
+ 
+-  test('documented, known limitation: MapView.tsx is untouched by this ticket, and its marker-popup "view salon" link is a plain <a href>, not a Next.js <Link> — clicking it causes a full hard browser navigation, which destroys the JS realm (and any in-memory snapshot) before the save-on-unmount cleanup\'s effect can survive it. This is pre-existing MapView behavior, not a T-056 regression: return-state restoration was never possible through that path before this ticket either. Confirmed via direct instrumentation: a page-global set on the search page was already gone by the time the destination page loaded. Fixing this would mean converting that link to <Link>, which is out of scope here (Step 8) and belongs to the deferred map-accessibility candidate.', () => {
++  // This test previously *documented the limitation* that MapView's preview
++  // link was a plain <a href>, doing a hard navigation that destroyed the JS
++  // realm and with it the in-memory snapshot — so restoration was impossible
++  // through the map path. It deliberately carried the note "if this ever
++  // changes to <Link>, the limitation (and this test) should be revisited".
++  //
++  // T-068 is that change. The tripwire fired correctly and is now inverted:
++  // it asserts the fix instead of the limitation, so a regression back to a
++  // hard navigation would fail here as well as in the T-068 suite.
++  test('the map preview link navigates client-side, so the snapshot survives the map path (T-068)', () => {
+     const mapViewSource = fs.readFileSync(path.join(here, '..', '..', '..', 'components', 'MapView.tsx'), 'utf-8');
+-    assert.ok(/<a\s+href=\{`\$\{prefix\}\/salons\//.test(mapViewSource), 'MapView\'s popup link is still a plain <a>, matching the documented limitation — if this ever changes to <Link>, the limitation (and this test) should be revisited');
+-    assert.ok(!mapViewSource.includes("from 'next/link'"), 'MapView does not import next/link at all — confirms the popup link cannot be Link-based today');
++    assert.ok(
++      mapViewSource.includes("import Link from 'next/link'"),
++      'MapView must import next/link for client-side navigation',
++    );
++    assert.ok(
++      /<Link\s+href=\{`\$\{prefix\}\/salons\//.test(mapViewSource),
++      'the preview destination must be a <Link>, not a plain <a href>',
++    );
++    assert.ok(
++      !/<a\s+href=\{`\$\{prefix\}\/salons\//.test(mapViewSource),
++      'no plain <a> may point at an internal salon route — that would reintroduce the hard navigation',
++    );
+   });
+ });
+ 
+diff --git a/frontend/components/MapView.tsx b/frontend/components/MapView.tsx
+index a8a39b1..d9c3662 100644
+--- a/frontend/components/MapView.tsx
++++ b/frontend/components/MapView.tsx
+@@ -1,5 +1,6 @@
+ 'use client';
+ import { useEffect, useRef, useState } from 'react';
++import Link from 'next/link';
+ import { useTranslations } from 'next-intl';
+ import { MapPin, X, Star, Phone } from 'lucide-react';
+ import Icon from '@/components/ui/Icon';
+@@ -504,13 +505,29 @@ export default function MapView({ salons, locale }: Props) {
+                     <Icon icon={Phone} size={16} />
+                   </a>
+                 )}
+-                <a
++                {/* T-068 — was a plain <a href>, which did a full-document
++                    navigation. That destroyed the JS realm, and with it the
++                    module-scope store holding T-056's search-return snapshot,
++                    so returning from a salon opened via the map always
++                    remounted the search page at page 1 with scroll lost.
++                    next/link navigates client-side, so the search page
++                    unmounts normally, its save-on-unmount cleanup runs, and
++                    the snapshot survives in the same realm.
++
++                    Only the navigation mechanism changed: the destination,
++                    the salon_open event, and the styling are identical. The
++                    tel: link above stays a plain <a> — an external protocol
++                    is not a route and must not be routed through Link. The
++                    search page's capture-phase scroll-freeze already matched
++                    this element (its selector is a[href*="/salons/"], which
++                    Link still renders), so nothing there needed changing. */}
++                <Link
+                   href={`${prefix}/salons/${selected.slug || selected.id}`}
+                   onClick={() => trackEvent('salon_open', { salon_id: String(selected.id), source: 'search_map', locale: locale as Locale })}
+                   className="text-body-sm bg-brand text-text-inverse px-3 py-1 rounded-sm font-medium hover:bg-brand-hover transition-colors focus-ring-token"
+                 >
+                   {t('view')}
+-                </a>
++                </Link>
+               </div>
+             </div>
+           </div>
+diff --git a/frontend/lib/mapPreviewNavigation.test.ts b/frontend/lib/mapPreviewNavigation.test.ts
+new file mode 100644
+index 0000000..9355334
+--- /dev/null
++++ b/frontend/lib/mapPreviewNavigation.test.ts
+@@ -0,0 +1,146 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++
++/**
++ * T-068 — the map preview's "view salon" control must navigate client-side so
++ * T-056's in-memory search-return snapshot survives the trip.
++ *
++ * The snapshot is written by a save-on-unmount cleanup in the search page and
++ * stored in a module-scope Map. A full-document navigation destroys the JS
++ * realm and therefore the store, so the mechanism only works if leaving the
++ * page is a client-side transition.
++ */
++
++const src = readFileSync('components/MapView.tsx', 'utf8');
++const codeOnly = src
++  .replace(/\/\*[\s\S]*?\*\//g, '')
++  .replace(/\/\/.*$/gm, '')
++  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
++
++/** The JSX block for the salon-destination control. */
++const salonLinkBlock = (() => {
++  const idx = codeOnly.indexOf('/salons/${selected');
++  assert.ok(idx > -1, 'expected a salon destination in MapView');
++  const start = codeOnly.lastIndexOf('<', idx);
++  return codeOnly.slice(start, idx + 400);
++})();
++
++describe('T-068: the salon destination navigates client-side', () => {
++  test('is rendered with next/link, not a bare anchor', () => {
++    assert.ok(/^<Link\b/.test(salonLinkBlock), `expected <Link>, got: ${salonLinkBlock.slice(0, 40)}`);
++  });
++
++  test('next/link is imported', () => {
++    assert.ok(/^import Link from 'next\/link';$/m.test(src));
++  });
++
++  test('no plain <a> points at an internal /salons/ route any more', () => {
++    // A hard navigation to a salon route from this component would silently
++    // reintroduce the snapshot loss.
++    const anchors = codeOnly.match(/<a\b[\s\S]{0,400}?>/g) ?? [];
++    const offenders = anchors.filter(a => /\/salons\//.test(a));
++    assert.deepEqual(offenders, [], `internal salon route still on a plain <a>: ${JSON.stringify(offenders)}`);
++  });
++});
++
++describe('T-068: only the mechanism changed', () => {
++  test('the destination is byte-identical to before', () => {
++    assert.ok(
++      codeOnly.includes('href={`${prefix}/salons/${selected.slug || selected.id}`}'),
++      'destination expression must be unchanged (slug with numeric id fallback)',
++    );
++  });
++
++  test('salon_open is unchanged in name, shape and source', () => {
++    assert.ok(
++      /onClick=\{\(\) => trackEvent\('salon_open', \{ salon_id: String\(selected\.id\), source: 'search_map', locale: locale as Locale \}\)\}/.test(
++        codeOnly,
++      ),
++      'the analytics call must be byte-identical',
++    );
++  });
++
++  test('salon_open still has exactly one call site in this component', () => {
++    assert.equal((codeOnly.match(/trackEvent\(/g) ?? []).length, 1);
++    assert.equal((codeOnly.match(/'salon_open'/g) ?? []).length, 1);
++  });
++
++  test('the visual treatment is unchanged', () => {
++    assert.ok(
++      salonLinkBlock.includes(
++        'text-body-sm bg-brand text-text-inverse px-3 py-1 rounded-sm font-medium hover:bg-brand-hover transition-colors focus-ring-token',
++      ),
++      'className must be identical — T-068 is not a visual change',
++    );
++  });
++});
++
++describe('T-068: external protocols stay plain anchors', () => {
++  test('the tel: quick-dial is NOT routed through next/link', () => {
++    const idx = codeOnly.indexOf('tel:${selected.phone_primary}');
++    assert.ok(idx > -1, 'expected the tel: link to still exist');
++    const start = codeOnly.lastIndexOf('<', idx);
++    const block = codeOnly.slice(start, idx + 60);
++    assert.ok(/^<a\b/.test(block), 'tel: must remain a plain <a> — it is a protocol, not a route');
++  });
++
++  test('no Link wraps a non-route protocol', () => {
++    const links = codeOnly.match(/<Link\b[\s\S]{0,300}?>/g) ?? [];
++    for (const l of links) {
++      assert.ok(!/href=\{`(tel|mailto|https?):/.test(l), `Link must not carry an external protocol: ${l.slice(0, 60)}`);
++    }
++  });
++
++  test('the quick-dial keeps its accessible name from T-067', () => {
++    assert.ok(codeOnly.includes("aria-label={t('callSalon')}"));
++  });
++});
++
++describe('T-068: T-056 snapshot machinery is untouched', () => {
++  const page = readFileSync('app/[locale]/search/page.tsx', 'utf8');
++
++  test('the search page was not modified to special-case the map link', () => {
++    // The capture-phase freeze selector already matches whatever Link renders,
++    // so no page-level change was needed. If a map-specific branch appears
++    // here, the fix drifted out of its intended scope.
++    assert.ok(
++      page.includes(`closest?.('a[href*="/salons/"]')`),
++      'the generic freeze selector must remain generic',
++    );
++    assert.ok(!/search_map|MapView.*scroll/i.test(page.replace(/\/\*[\s\S]*?\*\//g, '')),
++      'the search page must not gain map-specific snapshot handling');
++  });
++
++  test('the snapshot is still written only by the save-on-unmount cleanup', () => {
++    assert.equal(
++      (page.match(/saveSnapshot\(/g) ?? []).length,
++      1,
++      'exactly one save site must remain',
++    );
++  });
++
++  test('MapView does not read or write the snapshot store itself', () => {
++    for (const banned of ['saveSnapshot', 'readSnapshot', 'searchReturnState']) {
++      assert.ok(!codeOnly.includes(banned), `${banned} does not belong in MapView`);
++    }
++  });
++});
++
++describe('T-068: T-063 keyboard model still intact', () => {
++  test('the preview is still reachable and closable by keyboard', () => {
++    assert.ok(/e\.key === 'Enter' \|\| e\.key === ' '/.test(codeOnly), 'Enter/Space activation preserved');
++    assert.ok(/e\.key !== 'Escape'/.test(codeOnly), 'Escape handling preserved');
++  });
++
++  test('keyboard activation still moves focus to the first link in the preview', () => {
++    // The destination is now a Link, which still renders an <a href>, so the
++    // existing focus query keeps working.
++    assert.ok(/querySelector<HTMLElement>\('a\[href\]'\)/.test(codeOnly));
++  });
++
++  test('the roving tabindex contract is unchanged', () => {
++    assert.ok(/keyboard: false/.test(codeOnly));
++    assert.ok(/'tabindex', entry\.salon\.id === activeIdRef\.current \? '0' : '-1'/.test(codeOnly));
++  });
++});
