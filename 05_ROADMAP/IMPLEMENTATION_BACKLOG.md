@@ -1681,7 +1681,7 @@ T-067 regressions: 0
 ### T-063 — Map Accessibility
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-042 ✅, T-054 ✅, T-056 ✅, T-057 ✅, T-058 ✅, T-064 ✅, T-067 ✅ (Visual Baseline v1 complete, so marker/popup internals were still untouched when this started)
-**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
+**Status:** ✅ Completed. Reviewed (one round of **REQUEST CHANGES** on the container tab stop, fixed and re-verified), **APPROVE**, merged via PR #63 (`089d4b8` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
 
 **Ticket-identity note:** T-063 had been carried as an informal placeholder since the T-061→T-062 collision and was formally claimed here. No competing use existed.
 
@@ -1726,8 +1726,18 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
 - [x] One-time announcement with the real set size, in 4 locales
 - [x] Leaflet zoom/attribution controls preserved in tab order
 - [x] No clustering, ranking, marker-data or fetching changes; `salon_open` contract unchanged
-- [ ] Live production verification — pending merge/deploy
-- [ ] Independent review — pending **APPROVE**
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE** (after one REQUEST CHANGES round)
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 2000 markers still rendered; container `tabindex: null` with `role="group"` and a localized name in every locale; exactly **1** marker at `tabindex="0"`, 49 at `-1`, 1950 with none, **2000/2000 named**; total focusable elements **23**. Tab order confirmed live: `Map toggle → active marker → Zoom in → Zoom out → attribution` — one press from the toggle to the marker, container never a stop. Hint announced once on first marker focus with the real counts, still exactly one entry after arrowing. Four arrows produced four distinct spatial moves; **map pane transform unchanged** during arrow navigation (no residual pan conflict); single-`tabindex=0` invariant held. Space opened the preview with `scrollDelta=0` and moved focus to the first link ("Call"); no `role="dialog"`. Enter also opened it. Escape closed it and restored focus to the originating marker. Pointer click adopted the roving index (clicked `8916` → roving `8916`, one `tabindex=0`) without forcing focus into the card. `salon_open` fired **exactly once** from the preview link with the unchanged shape (`{salon_id, source: "search_map", locale}`). All four locales verified: localized map name, rating word and position clause, localized hint with real counts, **zero** "rating 0" announcements, zero coordinate leaks. List view untouched (24 cards, no Leaflet markers present, `aria-pressed` intact). No horizontal overflow at 320/375/768/1280px. Zero console or page errors throughout.
+
+*One name flagged by the empty-segment scan* — `"Фризерски Салон -,, Дијана\", Berovo, рейтинг 5.0"` — is **pre-existing dirty crawler data**: the `,,` is inside the salon's own stored name, and the composed segments (name, area, rating) are all correct. Data hygiene, not a T-063 defect, and deliberately not fixed here.
+
+**Beta Visual Baseline unaffected:** the analytics baseline continues from `2026-07-30 11:39:31 Europe/Athens (EEST)`. T-063 changed no event taxonomy and no conversion-event contract, so there is nothing to re-anchor.
+
+```text
+T-063 regressions: 0
+```
 
 ---
 
