@@ -1361,7 +1361,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
 Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
 
 - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-063** (shifted again — T-061 collided with the incoming "Homepage Visual Refresh" ticket request, which was assigned **T-062** instead; T-061 itself was never formally reserved, so it's now retired rather than reused) — still not formally reserved.
+- ~~**Map accessibility (keyboard/screen-reader navigation of `MapView`).**~~ — **formally reserved and implemented as T-063** (see the T-063 entry in EPIC-09 below). The number had shifted twice (T-061 → T-062 collision → T-063) before being claimed. The plain-`<a href>` marker-popup link that T-056 documented as a known limitation is **still open**: T-063 made the preview keyboard-operable but did not change that link's hard-navigation behaviour, so it still discards the in-memory search-return snapshot on click.
 - ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
 
 ---
@@ -1675,6 +1675,69 @@ T-067 regressions: 0
 - [x] Live production verification — passed on `https://lookla.gr`
 - [x] Beta Visual Baseline timestamp recorded — `2026-07-30 11:39:31 Europe/Athens (EEST)`
 - [x] Independent review — **APPROVE**
+
+---
+
+### T-063 — Map Accessibility
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-042 ✅, T-054 ✅, T-056 ✅, T-057 ✅, T-058 ✅, T-064 ✅, T-067 ✅ (Visual Baseline v1 complete, so marker/popup internals were still untouched when this started)
+**Status:** ✅ Completed. Reviewed (one round of **REQUEST CHANGES** on the container tab stop, fixed and re-verified), **APPROVE**, merged via PR #63 (`089d4b8` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`.
+
+**Ticket-identity note:** T-063 had been carried as an informal placeholder since the T-061→T-062 collision and was formally claimed here. No competing use existed.
+
+**The defect, measured on production before any change:**
+
+| Measure | Before | After |
+|---|---|---|
+| Markers rendered | 2000 | 2000 (unchanged) |
+| Markers with `tabindex="0"` | **2000** | **1** |
+| Markers with an accessible name | **0** | **2000** |
+| Total focusable elements on the page | **2023** | **20** |
+| Map container accessible name | none | localized |
+
+Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="button"`. With 2000 markers that made the map ~99% of the page's tab stops, all of them unnamed — a keyboard user needed ~2000 presses to reach the footer, and a screen reader announced "button" 2000 times with no label.
+
+**Approach — a true roving tabindex**, per the WAI-ARIA composite-widget convention (Tab moves between components, arrows move within one, only one element of the composite is in the tab sequence):
+- `keyboard: false` on markers removes Leaflet's per-marker tabindex; focus is managed explicitly. Exactly one marker carries `tabindex="0"`, the remaining set members carry `-1`, and **Tab lands directly on the active marker** — not on a wrapper that needs a further keypress (that would be closer to `aria-activedescendant`, which is harder to verify in real screen readers on this DOM).
+- **`keyboard: false` on the *map* as well — a review finding.** The first implementation left Leaflet's map-level keyboard handler enabled, which puts `tabindex="0"` on the *container*. That made the container an extra tab stop in front of the marker collection, so reaching the active marker took **two** Tab presses — not a roving tabindex, and directly contradicted the contract. Disabling it also removes Leaflet's container-level arrow-panning, which would otherwise bind the same keys as marker navigation. Panning is not needed to reach any navigable marker, because the keyboard set is viewport-bounded so every arrow target is already on screen; the zoom controls remain independently tabbable. The container keeps `role="group"` and a localized `aria-label` for browse-mode context, and its `tabindex` is additionally cleared defensively in case a future Leaflet version sets it regardless of the option. Verified live: container `tabindex` is `null`, and the tab order is `… → Map toggle → active marker → Zoom in → Zoom out → attribution links`.
+- **Bounded set:** viewport markers, capped at 50 nearest the map centre, salon id as a stable tie-breaker so identical geometry yields an identical set. Recomputed on `moveend`/`zoomend` only, and **frozen** while a marker holds focus, a preview is open, or the user is arrowing; a pan that arrives while frozen is applied once the lock releases. If the active marker leaves the set, focus falls back to the nearest remaining member.
+- **Spatial arrows** computed from projected container points, never raw lat/lng — under Web Mercator "north" is not a constant screen direction. Two-pass cone: a narrow pass first, then a wide fallback. The narrow pass exists because a single permissive cone let ArrowRight and ArrowUp resolve to the *same* diagonal marker (observed live), which reads as the direction keys being broken; the wide fallback keeps sparse scatters reachable rather than dead-ending. No wrapping — a dead end leaves focus put and stays silent. `Home`/`End` jump to the ends of the stable visual order.
+- **Activation & preview lifecycle:** Enter and Space both open the existing preview, Space with `preventDefault` so the page does not scroll. Keyboard activation moves focus to the first interactive link in the card; **pointer activation deliberately does not move focus**. Escape closes and restores focus to the originating marker. The preview is *not* a modal — no `role="dialog"`, no `aria-modal`, no focus trap, and Tab continues through the page normally.
+- **Pointer/keyboard sync:** a mouse click adopts the roving index, so a later Tab returns to the last marker used and the two input modes cannot diverge.
+- **Accessible names:** `{name}, {area}, rating {rating}, {position} of {count} visible salons`. A missing area is omitted and a missing rating is omitted rather than announced as "rating 0". Coordinates, phone and street address are excluded to keep names short enough to arrow through. Markers *outside* the keyboard set are still named, so browse-mode users are not left with bare unnamed buttons.
+- **Announcement:** one polite message on first entry, carrying the real set size ("50 of 2000"), never repeated per arrow — per-marker position already lives in each marker's own name, so arrowing is not announced twice.
+- **Preserved:** the map container gained a name but no invented role; Leaflet's zoom and attribution controls remain exactly where they were in the tab order (verified: they follow the single marker stop).
+
+**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. Also still open (unchanged by this ticket): the preview's plain-`<a href>` link performs a hard navigation and therefore still discards T-056's in-memory search-return snapshot.
+
+**Verification:** 54 new tests in `lib/mapKeyboardNav.test.ts` — the pure geometry/selection module is unit-tested without Leaflet or a DOM, plus source-level assertions on the wiring. 1 pre-existing T-067 guard retired (it asserted *no* keyboard work existed in `MapView` specifically to stop a visual pass from starting T-063; that purpose is now fulfilled, and it was replaced with an assertion that still holds — that `MapView` owns no data/fetching/clustering concerns). Full suite **1125/1125**. Lint/build clean; search bundle unchanged at 9.58kB (`MapView` is dynamically imported). Isolated Playwright: tab-stop census (2023→20), a tab walk confirming the container is **not** a stop and Tab reaches the marker in one press before continuing through Leaflet's controls, four distinct arrow moves, single-`tabindex=0` invariant maintained after arrowing, no map panning during marker arrow navigation (the conflict `keyboard: false` removes), Space opening with `scrollDelta=0`, focus landing on the first preview link, Escape restoring marker focus, pointer sync without forced focus, the hint announced from marker focus and still exactly once after leaving and re-entering the collection, and all four locales confirmed localized (map label, rating word, position, hint).
+
+**Acceptance Criteria:**
+- [x] Exactly one marker in the tab sequence; Tab lands on it directly in one press
+- [x] The map container is named but **not** tabbable — no extra stop before the markers
+- [x] Container-level arrow panning does not compete with marker arrow navigation
+- [x] Bounded, deterministically ordered keyboard set (≤50, viewport, nearest-to-centre, id tie-break)
+- [x] Set frozen during focus/preview/arrow interaction; nearest-member fallback after pan/zoom
+- [x] Spatial arrow navigation from projected points; no wrapping; silent dead ends
+- [x] Enter and Space activate; Space does not scroll
+- [x] Focus enters preview on keyboard activation only; Escape restores marker focus; no focus trap
+- [x] Pointer clicks sync the roving index
+- [x] Localized accessible names omitting missing area/rating; no coordinates/phone/address
+- [x] One-time announcement with the real set size, in 4 locales
+- [x] Leaflet zoom/attribution controls preserved in tab order
+- [x] No clustering, ranking, marker-data or fetching changes; `salon_open` contract unchanged
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Independent review — **APPROVE** (after one REQUEST CHANGES round)
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 2000 markers still rendered; container `tabindex: null` with `role="group"` and a localized name in every locale; exactly **1** marker at `tabindex="0"`, 49 at `-1`, 1950 with none, **2000/2000 named**; total focusable elements **23**. Tab order confirmed live: `Map toggle → active marker → Zoom in → Zoom out → attribution` — one press from the toggle to the marker, container never a stop. Hint announced once on first marker focus with the real counts, still exactly one entry after arrowing. Four arrows produced four distinct spatial moves; **map pane transform unchanged** during arrow navigation (no residual pan conflict); single-`tabindex=0` invariant held. Space opened the preview with `scrollDelta=0` and moved focus to the first link ("Call"); no `role="dialog"`. Enter also opened it. Escape closed it and restored focus to the originating marker. Pointer click adopted the roving index (clicked `8916` → roving `8916`, one `tabindex=0`) without forcing focus into the card. `salon_open` fired **exactly once** from the preview link with the unchanged shape (`{salon_id, source: "search_map", locale}`). All four locales verified: localized map name, rating word and position clause, localized hint with real counts, **zero** "rating 0" announcements, zero coordinate leaks. List view untouched (24 cards, no Leaflet markers present, `aria-pressed` intact). No horizontal overflow at 320/375/768/1280px. Zero console or page errors throughout.
+
+*One name flagged by the empty-segment scan* — `"Фризерски Салон -,, Дијана\", Berovo, рейтинг 5.0"` — is **pre-existing dirty crawler data**: the `,,` is inside the salon's own stored name, and the composed segments (name, area, rating) are all correct. Data hygiene, not a T-063 defect, and deliberately not fixed here.
+
+**Beta Visual Baseline unaffected:** the analytics baseline continues from `2026-07-30 11:39:31 Europe/Athens (EEST)`. T-063 changed no event taxonomy and no conversion-event contract, so there is nothing to re-anchor.
+
+```text
+T-063 regressions: 0
+```
 
 ---
 

@@ -1,0 +1,1137 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 4c5b22c..6c22a6a 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -1361,7 +1361,7 @@ Two findings during this pass, both investigated to a root cause and confirmed *
+ Recorded from the SQC-01A search-page inventory/scoring pass (2026-07-24) plus a T-056 production-verification finding (2026-07-27). None of these have an assigned ticket number, branch, or implementation spec yet — listed here so they aren't lost before SQC-01B planning.
+ 
+ - ~~Combined search-controls accessibility ticket~~ — became **T-057 — Search Controls Accessibility & Mobile Operability** (see full entry above), implemented 2026-07-27.
+-- **Map accessibility (keyboard/screen-reader navigation of `MapView`).** Separate, larger scope than the above — includes the plain-`<a href>` marker-popup link already documented as a known limitation in T-056 (destroys the in-memory search-return snapshot on click, since it's a hard navigation). Deliberately sequenced *after* the search-controls ticket stabilizes. Unofficial working number **T-063** (shifted again — T-061 collided with the incoming "Homepage Visual Refresh" ticket request, which was assigned **T-062** instead; T-061 itself was never formally reserved, so it's now retired rather than reused) — still not formally reserved.
++- ~~**Map accessibility (keyboard/screen-reader navigation of `MapView`).**~~ — **formally reserved and implemented as T-063** (see the T-063 entry in EPIC-09 below). The number had shifted twice (T-061 → T-062 collision → T-063) before being claimed. The plain-`<a href>` marker-popup link that T-056 documented as a known limitation is **still open**: T-063 made the preview keyboard-operable but did not change that link's hard-navigation behaviour, so it still discards the in-memory search-return snapshot on click.
+ - ~~`search_results_view` re-fires on every Back-restoration~~ — became **T-058 — Prevent Duplicate Search Results Analytics on Back Restoration** (see full entry above), implemented 2026-07-27.
+ 
+ ---
+@@ -1678,6 +1678,59 @@ T-067 regressions: 0
+ 
+ ---
+ 
++### T-063 — Map Accessibility
++**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
++**Dependencies:** T-042 ✅, T-054 ✅, T-056 ✅, T-057 ✅, T-058 ✅, T-064 ✅, T-067 ✅ (Visual Baseline v1 complete, so marker/popup internals were still untouched when this started)
++**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
++
++**Ticket-identity note:** T-063 had been carried as an informal placeholder since the T-061→T-062 collision and was formally claimed here. No competing use existed.
++
++**The defect, measured on production before any change:**
++
++| Measure | Before | After |
++|---|---|---|
++| Markers rendered | 2000 | 2000 (unchanged) |
++| Markers with `tabindex="0"` | **2000** | **1** |
++| Markers with an accessible name | **0** | **2000** |
++| Total focusable elements on the page | **2023** | **20** |
++| Map container accessible name | none | localized |
++
++Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="button"`. With 2000 markers that made the map ~99% of the page's tab stops, all of them unnamed — a keyboard user needed ~2000 presses to reach the footer, and a screen reader announced "button" 2000 times with no label.
++
++**Approach — a true roving tabindex**, per the WAI-ARIA composite-widget convention (Tab moves between components, arrows move within one, only one element of the composite is in the tab sequence):
++- `keyboard: false` on markers removes Leaflet's per-marker tabindex; focus is managed explicitly. Exactly one marker carries `tabindex="0"`, the remaining set members carry `-1`, and **Tab lands directly on the active marker** — not on a wrapper that needs a further keypress (that would be closer to `aria-activedescendant`, which is harder to verify in real screen readers on this DOM).
++- **`keyboard: false` on the *map* as well — a review finding.** The first implementation left Leaflet's map-level keyboard handler enabled, which puts `tabindex="0"` on the *container*. That made the container an extra tab stop in front of the marker collection, so reaching the active marker took **two** Tab presses — not a roving tabindex, and directly contradicted the contract. Disabling it also removes Leaflet's container-level arrow-panning, which would otherwise bind the same keys as marker navigation. Panning is not needed to reach any navigable marker, because the keyboard set is viewport-bounded so every arrow target is already on screen; the zoom controls remain independently tabbable. The container keeps `role="group"` and a localized `aria-label` for browse-mode context, and its `tabindex` is additionally cleared defensively in case a future Leaflet version sets it regardless of the option. Verified live: container `tabindex` is `null`, and the tab order is `… → Map toggle → active marker → Zoom in → Zoom out → attribution links`.
++- **Bounded set:** viewport markers, capped at 50 nearest the map centre, salon id as a stable tie-breaker so identical geometry yields an identical set. Recomputed on `moveend`/`zoomend` only, and **frozen** while a marker holds focus, a preview is open, or the user is arrowing; a pan that arrives while frozen is applied once the lock releases. If the active marker leaves the set, focus falls back to the nearest remaining member.
++- **Spatial arrows** computed from projected container points, never raw lat/lng — under Web Mercator "north" is not a constant screen direction. Two-pass cone: a narrow pass first, then a wide fallback. The narrow pass exists because a single permissive cone let ArrowRight and ArrowUp resolve to the *same* diagonal marker (observed live), which reads as the direction keys being broken; the wide fallback keeps sparse scatters reachable rather than dead-ending. No wrapping — a dead end leaves focus put and stays silent. `Home`/`End` jump to the ends of the stable visual order.
++- **Activation & preview lifecycle:** Enter and Space both open the existing preview, Space with `preventDefault` so the page does not scroll. Keyboard activation moves focus to the first interactive link in the card; **pointer activation deliberately does not move focus**. Escape closes and restores focus to the originating marker. The preview is *not* a modal — no `role="dialog"`, no `aria-modal`, no focus trap, and Tab continues through the page normally.
++- **Pointer/keyboard sync:** a mouse click adopts the roving index, so a later Tab returns to the last marker used and the two input modes cannot diverge.
++- **Accessible names:** `{name}, {area}, rating {rating}, {position} of {count} visible salons`. A missing area is omitted and a missing rating is omitted rather than announced as "rating 0". Coordinates, phone and street address are excluded to keep names short enough to arrow through. Markers *outside* the keyboard set are still named, so browse-mode users are not left with bare unnamed buttons.
++- **Announcement:** one polite message on first entry, carrying the real set size ("50 of 2000"), never repeated per arrow — per-marker position already lives in each marker's own name, so arrowing is not announced twice.
++- **Preserved:** the map container gained a name but no invented role; Leaflet's zoom and attribution controls remain exactly where they were in the tab order (verified: they follow the single marker stop).
++
++**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. Also still open (unchanged by this ticket): the preview's plain-`<a href>` link performs a hard navigation and therefore still discards T-056's in-memory search-return snapshot.
++
++**Verification:** 54 new tests in `lib/mapKeyboardNav.test.ts` — the pure geometry/selection module is unit-tested without Leaflet or a DOM, plus source-level assertions on the wiring. 1 pre-existing T-067 guard retired (it asserted *no* keyboard work existed in `MapView` specifically to stop a visual pass from starting T-063; that purpose is now fulfilled, and it was replaced with an assertion that still holds — that `MapView` owns no data/fetching/clustering concerns). Full suite **1125/1125**. Lint/build clean; search bundle unchanged at 9.58kB (`MapView` is dynamically imported). Isolated Playwright: tab-stop census (2023→20), a tab walk confirming the container is **not** a stop and Tab reaches the marker in one press before continuing through Leaflet's controls, four distinct arrow moves, single-`tabindex=0` invariant maintained after arrowing, no map panning during marker arrow navigation (the conflict `keyboard: false` removes), Space opening with `scrollDelta=0`, focus landing on the first preview link, Escape restoring marker focus, pointer sync without forced focus, the hint announced from marker focus and still exactly once after leaving and re-entering the collection, and all four locales confirmed localized (map label, rating word, position, hint).
++
++**Acceptance Criteria:**
++- [x] Exactly one marker in the tab sequence; Tab lands on it directly in one press
++- [x] The map container is named but **not** tabbable — no extra stop before the markers
++- [x] Container-level arrow panning does not compete with marker arrow navigation
++- [x] Bounded, deterministically ordered keyboard set (≤50, viewport, nearest-to-centre, id tie-break)
++- [x] Set frozen during focus/preview/arrow interaction; nearest-member fallback after pan/zoom
++- [x] Spatial arrow navigation from projected points; no wrapping; silent dead ends
++- [x] Enter and Space activate; Space does not scroll
++- [x] Focus enters preview on keyboard activation only; Escape restores marker focus; no focus trap
++- [x] Pointer clicks sync the roving index
++- [x] Localized accessible names omitting missing area/rating; no coordinates/phone/address
++- [x] One-time announcement with the real set size, in 4 locales
++- [x] Leaflet zoom/attribution controls preserved in tab order
++- [x] No clustering, ranking, marker-data or fetching changes; `salon_open` contract unchanged
++- [ ] Live production verification — pending merge/deploy
++- [ ] Independent review — pending **APPROVE**
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
+diff --git a/frontend/components/MapView.tsx b/frontend/components/MapView.tsx
+index ff1875a..a8a39b1 100644
+--- a/frontend/components/MapView.tsx
++++ b/frontend/components/MapView.tsx
+@@ -3,6 +3,13 @@ import { useEffect, useRef, useState } from 'react';
+ import { useTranslations } from 'next-intl';
+ import { MapPin, X, Star, Phone } from 'lucide-react';
+ import Icon from '@/components/ui/Icon';
++import {
++  selectKeyboardSet,
++  findSpatialNeighbour,
++  nearestInSet,
++  arrowFromKey,
++  type MarkerPoint,
++} from '@/lib/mapKeyboardNav';
+ import type { SalonMapItem } from '@/lib/api';
+ import { trackEvent } from '@/lib/analytics';
+ import type { Locale } from '@/i18n/request';
+@@ -51,6 +58,23 @@ export default function MapView({ salons, locale }: Props) {
+   const t = useTranslations('salon');
+   const prefix = locale === 'el' ? '' : `/${locale}`;
+ 
++  // T-063 keyboard model state.
++  const markerEntriesRef = useRef<{ salon: SalonMapItem; marker: any }[]>([]);
++  /** Ordered salon ids in the bounded keyboard set (visual reading order). */
++  const keyboardSetRef = useRef<number[]>([]);
++  /** The single marker currently holding tabindex="0". */
++  const activeIdRef = useRef<number | null>(null);
++  /** The hint is announced once per mount, not on every arrow press. */
++  const hintAnnouncedRef = useRef(false);
++  /** Freezes set recomputation while the user is actually navigating. */
++  const navLockRef = useRef(false);
++  /** A pan/zoom arrived while locked; recompute once the lock releases. */
++  const pendingRecomputeRef = useRef(false);
++  /** Distinguishes keyboard activation (move focus in) from pointer (do not). */
++  const keyboardActivationRef = useRef(false);
++  const previewRef = useRef<HTMLDivElement>(null);
++  const [liveMessage, setLiveMessage] = useState('');
++
+   const buildIcon = (L: any) =>
+     L.divIcon({
+       html: `<div style="background:#db2777;width:10px;height:10px;border-radius:50%;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></div>`,
+@@ -65,15 +89,130 @@ export default function MapView({ salons, locale }: Props) {
+     return all.filter(s => s.lat && s.lng && haversineKm(pos[0], pos[1], s.lat!, s.lng!) <= NEARBY_KM);
+   };
+ 
++  /**
++   * T-063 — builds a marker's accessible name. Segments are omitted rather
++   * than filled with placeholders: a missing area is skipped, and a missing
++   * rating is skipped rather than announced as "rating 0". Coordinates, the
++   * phone number and the full street address are deliberately excluded — the
++   * name has to stay short enough to be useful when arrowing through markers.
++   * The word "marker" never appears; role="button" already conveys that.
++   */
++  const buildMarkerName = (salon: SalonMapItem, position?: number, count?: number): string => {
++    const parts: string[] = [salon.name];
++    if (salon.address_city) parts.push(salon.address_city);
++    if (salon.rating_google) parts.push(t('map_marker_rating', { rating: salon.rating_google.toFixed(1) }));
++    if (position !== undefined && count !== undefined) {
++      parts.push(t('map_marker_position', { position, count }));
++    }
++    return parts.join(', ');
++  };
++
++  /** Container-space point for a salon, projected by Leaflet (never raw lat/lng). */
++  const pointOf = (salon: SalonMapItem): MarkerPoint | null => {
++    const map = mapInstanceRef.current;
++    if (!map) return null;
++    const p = map.latLngToContainerPoint([salon.lat, salon.lng]);
++    return { id: salon.id, x: p.x, y: p.y };
++  };
++
++  const setPoints = (): MarkerPoint[] => {
++    const ids = keyboardSetRef.current;
++    const out: MarkerPoint[] = [];
++    for (const id of ids) {
++      const entry = markerEntriesRef.current.find(e => e.salon.id === id);
++      const pt = entry ? pointOf(entry.salon) : null;
++      if (pt) out.push(pt);
++    }
++    return out;
++  };
++
++  /**
++   * Recomputes the bounded keyboard set and rewrites the roving attributes.
++   * Exactly one member carries tabindex="0"; the rest carry "-1"; markers
++   * outside the set carry no tabindex at all but still get an accessible
++   * name, so browse-mode users are not left with unnamed buttons.
++   */
++  const applyKeyboardSet = () => {
++    const map = mapInstanceRef.current;
++    if (!map) return;
++    const size = map.getSize();
++    const pts = markerEntriesRef.current
++      .map(e => pointOf(e.salon))
++      .filter((p): p is MarkerPoint => p !== null);
++
++    const set = selectKeyboardSet(pts, { width: size.x, height: size.y });
++    const setIds = set.map(p => p.id);
++    keyboardSetRef.current = setIds;
++    const idSet = new Set(setIds);
++
++    // If the active marker fell out of the set after a pan/zoom, fall back to
++    // the nearest remaining member so focus never points at nothing.
++    if (activeIdRef.current !== null && !idSet.has(activeIdRef.current)) {
++      const prev = pts.find(p => p.id === activeIdRef.current) ?? null;
++      const fallback = prev ? nearestInSet(prev, set) : null;
++      activeIdRef.current = (fallback ?? set[0])?.id ?? null;
++    }
++    if (activeIdRef.current === null) activeIdRef.current = set[0]?.id ?? null;
++
++    const count = set.length;
++    const position = new Map(set.map((p, i) => [p.id, i + 1]));
++
++    for (const entry of markerEntriesRef.current) {
++      const el: HTMLElement | undefined = entry.marker.getElement?.();
++      if (!el) continue;
++      const pos = position.get(entry.salon.id);
++      el.setAttribute('role', 'button');
++      el.setAttribute('aria-label', buildMarkerName(entry.salon, pos, pos !== undefined ? count : undefined));
++      el.dataset.salonId = String(entry.salon.id);
++      if (pos !== undefined) {
++        el.setAttribute('tabindex', entry.salon.id === activeIdRef.current ? '0' : '-1');
++      } else {
++        el.removeAttribute('tabindex');
++      }
++    }
++  };
++
++  /** Moves the single tabindex="0" without changing focus (used by pointer sync). */
++  const setRovingTo = (id: number) => {
++    activeIdRef.current = id;
++    const idSet = new Set(keyboardSetRef.current);
++    for (const entry of markerEntriesRef.current) {
++      if (!idSet.has(entry.salon.id)) continue;
++      const el: HTMLElement | undefined = entry.marker.getElement?.();
++      el?.setAttribute('tabindex', entry.salon.id === id ? '0' : '-1');
++    }
++  };
++
++  /** Moves the roving tabindex and real DOM focus to a marker. */
++  const focusMarker = (id: number) => {
++    setRovingTo(id);
++    const entry = markerEntriesRef.current.find(e => e.salon.id === id);
++    entry?.marker.getElement?.()?.focus();
++  };
++
+   const refreshMarkers = (L: any, visible: SalonMapItem[]) => {
+     if (!layerGroupRef.current) return;
+     layerGroupRef.current.clearLayers();
++    markerEntriesRef.current = [];
++    keyboardSetRef.current = [];
++    activeIdRef.current = null;
+     const icon = buildIcon(L);
+     visible.filter(s => s.lat && s.lng).forEach(salon => {
+-      L.marker([salon.lat!, salon.lng!], { icon })
+-        .on('click', () => setSelected(salon))
++      // T-063: keyboard:false removes Leaflet's per-marker tabindex, which
++      // put all ~2000 markers in the tab sequence with no accessible name.
++      // Focus is managed here instead as a proper roving tabindex.
++      const marker = L.marker([salon.lat!, salon.lng!], { icon, keyboard: false })
++        .on('click', () => {
++          // Pointer activation syncs the roving index so a later Tab returns
++          // to the last marker used, but must not steal focus into the card.
++          setRovingTo(salon.id);
++          keyboardActivationRef.current = false;
++          setSelected(salon);
++        })
+         .addTo(layerGroupRef.current);
++      markerEntriesRef.current.push({ salon, marker });
+     });
++    applyKeyboardSet();
+   };
+ 
+   // Init map once, then try geolocation
+@@ -85,12 +224,40 @@ export default function MapView({ salons, locale }: Props) {
+       if (!mapRef.current || mapInstanceRef.current) return;
+       leafletRef.current = L;
+ 
+-      const map = L.map(mapRef.current, { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM });
++      // T-063 — keyboard:false on the *map* stops Leaflet putting tabindex="0"
++      // on the container itself. Without this the container became an extra
++      // tab stop sitting in front of the marker collection, so reaching the
++      // active marker took two presses instead of one, which is not a roving
++      // tabindex. It also removes Leaflet's container-level arrow-panning,
++      // which would otherwise fight the marker arrow navigation for the same
++      // keys. Panning is not needed to reach any navigable marker: the
++      // keyboard set is viewport-bounded, so every arrow target is already on
++      // screen, and the zoom controls stay independently tabbable.
++      const map = L.map(mapRef.current, { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, keyboard: false });
+       const tiles = getTiles(locale);
+       L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 19 }).addTo(map);
+       layerGroupRef.current = L.layerGroup().addTo(map);
+       mapInstanceRef.current = map;
+ 
++      // T-063 — the container carries the group's accessible name so browse
++      // mode has context for the markers inside it, but is deliberately NOT
++      // in the tab sequence (see keyboard:false above): the active marker is
++      // the single entry point. tabindex is cleared defensively in case a
++      // future Leaflet version sets it regardless of the option.
++      mapRef.current.setAttribute('role', 'group');
++      mapRef.current.setAttribute('aria-label', t('map_region_label'));
++      mapRef.current.removeAttribute('tabindex');
++
++      // The bounded keyboard set follows the viewport, but never changes
++      // under the user mid-navigation — deferred until the lock releases.
++      map.on('moveend zoomend', () => {
++        if (navLockRef.current) {
++          pendingRecomputeRef.current = true;
++          return;
++        }
++        applyKeyboardSet();
++      });
++
+       // Show all salons initially (before geolocation resolves)
+       refreshMarkers(L, salons);
+ 
+@@ -149,6 +316,128 @@ export default function MapView({ salons, locale }: Props) {
+     setSelected(null);
+   }, [salons]); // eslint-disable-line react-hooks/exhaustive-deps
+ 
++  /**
++   * T-063 — keyboard interaction for the marker collection, delegated from the
++   * map container so it survives Leaflet recreating marker elements.
++   *
++   * Arrow keys move real DOM focus spatially; Enter/Space open the existing
++   * preview; Home/End jump to the ends of the visual order. Nothing here
++   * wraps around an edge, and a dead-end arrow leaves focus put and stays
++   * silent rather than announcing an error.
++   */
++  useEffect(() => {
++    const container = mapRef.current;
++    if (!container) return;
++
++    const markerIdFrom = (node: EventTarget | null): number | null => {
++      const el = node as HTMLElement | null;
++      const raw = el?.dataset?.salonId;
++      return raw ? Number(raw) : null;
++    };
++
++    const onKeyDown = (e: KeyboardEvent) => {
++      const currentId = markerIdFrom(e.target);
++      if (currentId === null) return;
++
++      const dir = arrowFromKey(e.key);
++      if (dir) {
++        e.preventDefault();
++        navLockRef.current = true;
++        const pts = setPoints();
++        const from = pts.find(p => p.id === currentId);
++        if (!from) return;
++        const next = findSpatialNeighbour(from, pts, dir);
++        if (next) focusMarker(next.id);   // no wrap: stay put when null
++        return;
++      }
++
++      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
++        e.preventDefault();               // Space must not scroll the page
++        const entry = markerEntriesRef.current.find(en => en.salon.id === currentId);
++        if (!entry) return;
++        setRovingTo(currentId);
++        keyboardActivationRef.current = true;
++        setSelected(entry.salon);
++        return;
++      }
++
++      if (e.key === 'Home' || e.key === 'End') {
++        e.preventDefault();
++        const ids = keyboardSetRef.current;
++        const id = e.key === 'Home' ? ids[0] : ids[ids.length - 1];
++        if (id !== undefined) focusMarker(id);
++      }
++    };
++
++    const onFocusIn = (e: FocusEvent) => {
++      const id = markerIdFrom(e.target);
++      if (id === null) return;
++      navLockRef.current = true;
++      activeIdRef.current = id;
++      if (!hintAnnouncedRef.current) {
++        hintAnnouncedRef.current = true;
++        setLiveMessage(
++          t('map_keyboard_hint', {
++            count: keyboardSetRef.current.length,
++            total: markerEntriesRef.current.length,
++          }),
++        );
++      }
++    };
++
++    const onFocusOut = (e: FocusEvent) => {
++      if (markerIdFrom(e.target) === null) return;
++      // Release the lock only once focus has actually left both the marker
++      // collection and the preview card.
++      window.setTimeout(() => {
++        const active = document.activeElement as HTMLElement | null;
++        const stillOnMarker = !!active?.dataset?.salonId;
++        const inPreview = previewRef.current?.contains(active) ?? false;
++        if (stillOnMarker || inPreview) return;
++        navLockRef.current = false;
++        if (pendingRecomputeRef.current) {
++          pendingRecomputeRef.current = false;
++          applyKeyboardSet();
++        }
++      }, 0);
++    };
++
++    container.addEventListener('keydown', onKeyDown);
++    container.addEventListener('focusin', onFocusIn);
++    container.addEventListener('focusout', onFocusOut);
++    return () => {
++      container.removeEventListener('keydown', onKeyDown);
++      container.removeEventListener('focusin', onFocusIn);
++      container.removeEventListener('focusout', onFocusOut);
++    };
++  }, []); // eslint-disable-line react-hooks/exhaustive-deps
++
++  /**
++   * Preview focus lifecycle. Keyboard activation moves focus to the first
++   * interactive link inside the card; pointer activation deliberately leaves
++   * focus alone. The card is not a modal: no focus trap, and Tab continues
++   * through the page normally.
++   */
++  useEffect(() => {
++    if (!selected || !keyboardActivationRef.current) return;
++    keyboardActivationRef.current = false;
++    const link = previewRef.current?.querySelector<HTMLElement>('a[href]');
++    (link ?? previewRef.current)?.focus();
++  }, [selected]);
++
++  /** Escape closes the preview and returns focus to the originating marker. */
++  useEffect(() => {
++    if (!selected) return;
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key !== 'Escape') return;
++      const id = activeIdRef.current;
++      setSelected(null);
++      if (id !== null) focusMarker(id);
++    };
++    window.addEventListener('keydown', onKey);
++    return () => window.removeEventListener('keydown', onKey);
++  }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
++
+   return (
+     <div className="relative">
+       {/* T-067 — this status pill previously rendered a hardcoded Greek
+@@ -163,8 +452,17 @@ export default function MapView({ salons, locale }: Props) {
+       )}
+       <div ref={mapRef} className="w-full rounded-md overflow-hidden" style={{ height: '60vh', minHeight: 400 }} />
+ 
++      {/* T-063 — carries the one-time "N of M are keyboard accessible" hint on
++          first entry into the marker collection. Per-marker position is in each
++          marker's own accessible name, so arrowing is not announced twice. */}
++      <div aria-live="polite" className="sr-only">{liveMessage}</div>
++
+       {selected && (
+-        <div className="absolute bottom-4 left-4 right-4 bg-surface rounded-md shadow-elevated p-4 z-[1000]">
++        <div
++          ref={previewRef}
++          tabIndex={-1}
++          className="absolute bottom-4 left-4 right-4 bg-surface rounded-md shadow-elevated p-4 z-[1000]"
++        >
+           <button
+             onClick={() => setSelected(null)}
+             aria-label={t('close_preview')}
+diff --git a/frontend/lib/mapKeyboardNav.test.ts b/frontend/lib/mapKeyboardNav.test.ts
+new file mode 100644
+index 0000000..b174bf5
+--- /dev/null
++++ b/frontend/lib/mapKeyboardNav.test.ts
+@@ -0,0 +1,441 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++import {
++  KEYBOARD_MARKER_LIMIT,
++  isWithinViewport,
++  selectKeyboardSet,
++  sortVisualOrder,
++  findSpatialNeighbour,
++  nearestInSet,
++  arrowFromKey,
++  type MarkerPoint,
++} from './mapKeyboardNav';
++
++const p = (id: number, x: number, y: number): MarkerPoint => ({ id, x, y });
++const VIEW = { width: 1000, height: 800 };
++
++describe('T-063: viewport containment', () => {
++  test('includes points on the edges, excludes points outside', () => {
++    assert.equal(isWithinViewport(p(1, 0, 0), VIEW), true);
++    assert.equal(isWithinViewport(p(2, 1000, 800), VIEW), true);
++    assert.equal(isWithinViewport(p(3, -1, 400), VIEW), false);
++    assert.equal(isWithinViewport(p(4, 1001, 400), VIEW), false);
++    assert.equal(isWithinViewport(p(5, 500, -1), VIEW), false);
++    assert.equal(isWithinViewport(p(6, 500, 801), VIEW), false);
++  });
++});
++
++describe('T-063: bounded keyboard set', () => {
++  test('off-screen markers are never keyboard-reachable', () => {
++    const set = selectKeyboardSet([p(1, 500, 400), p(2, -50, 400), p(3, 5000, 400)], VIEW);
++    assert.deepEqual(set.map(m => m.id), [1]);
++  });
++
++  test('returns everything when the viewport holds fewer than the limit', () => {
++    const pts = Array.from({ length: 10 }, (_, i) => p(i + 1, 100 + i * 10, 400));
++    assert.equal(selectKeyboardSet(pts, VIEW).length, 10);
++  });
++
++  test('caps at the limit, keeping those nearest the viewport centre', () => {
++    // 200 markers marching away from centre on the x axis.
++    const pts = Array.from({ length: 200 }, (_, i) => p(i + 1, 500 + i * 2, 400));
++    const set = selectKeyboardSet(pts, VIEW);
++    assert.equal(set.length, KEYBOARD_MARKER_LIMIT);
++    // id 1 sits exactly on the centre, so it must survive the cut.
++    assert.ok(set.some(m => m.id === 1));
++    // The far edge must not.
++    assert.ok(!set.some(m => m.id === 200));
++  });
++
++  test('is deterministic for equidistant markers, breaking ties on salon id', () => {
++    // Four markers at identical distance from centre, declared out of order.
++    const pts = [p(40, 400, 400), p(10, 600, 400), p(30, 500, 300), p(20, 500, 500)];
++    const a = selectKeyboardSet(pts, VIEW, 2).map(m => m.id);
++    const b = selectKeyboardSet([...pts].reverse(), VIEW, 2).map(m => m.id);
++    assert.deepEqual(a, b, 'input order must not change the chosen set');
++  });
++
++  test('the limit is 50', () => {
++    assert.equal(KEYBOARD_MARKER_LIMIT, 50);
++  });
++});
++
++describe('T-063: stable visual order', () => {
++  test('reads top-to-bottom, then left-to-right', () => {
++    const pts = [p(1, 900, 100), p(2, 100, 100), p(3, 500, 500)];
++    assert.deepEqual(sortVisualOrder(pts).map(m => m.id), [2, 1, 3]);
++  });
++
++  test('markers at visually similar heights read left-to-right, not by sub-pixel y', () => {
++    // 2px apart vertically: same row band, so x decides.
++    const pts = [p(1, 800, 301), p(2, 200, 299)];
++    assert.deepEqual(sortVisualOrder(pts).map(m => m.id), [2, 1]);
++  });
++
++  test('is stable for fully coincident points via id tie-break', () => {
++    const pts = [p(9, 500, 500), p(3, 500, 500), p(7, 500, 500)];
++    assert.deepEqual(sortVisualOrder(pts).map(m => m.id), [3, 7, 9]);
++  });
++});
++
++describe('T-063: spatial arrow navigation', () => {
++  const from = p(0, 500, 400);
++
++  test('each arrow moves to the neighbour in that direction', () => {
++    const cands = [from, p(1, 700, 400), p(2, 300, 400), p(3, 500, 200), p(4, 500, 600)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 1);
++    assert.equal(findSpatialNeighbour(from, cands, 'left')?.id, 2);
++    assert.equal(findSpatialNeighbour(from, cands, 'up')?.id, 3);
++    assert.equal(findSpatialNeighbour(from, cands, 'down')?.id, 4);
++  });
++
++  test('prefers the nearest candidate along the axis', () => {
++    const cands = [from, p(1, 900, 400), p(2, 600, 400)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 2);
++  });
++
++  test('does not jump to a marker that is almost perpendicular', () => {
++    // 20px right but 400px up — outside the cone for ArrowRight.
++    const cands = [from, p(1, 520, 0)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right'), null);
++  });
++
++  test('returns null at a dead end rather than wrapping to the far side', () => {
++    // Everything is to the LEFT; ArrowRight must not wrap around.
++    const cands = [from, p(1, 100, 400), p(2, 200, 400)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right'), null);
++  });
++
++  test('never returns the marker it started from', () => {
++    assert.equal(findSpatialNeighbour(from, [from], 'right'), null);
++    assert.equal(findSpatialNeighbour(from, [from], 'up'), null);
++  });
++
++  test('is deterministic when two candidates score identically', () => {
++    const cands = [from, p(8, 600, 400), p(4, 600, 400)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 4);
++  });
++
++  test('prefers a well-aligned candidate over a nearer diagonal one', () => {
++    // id 1 is closer in raw distance but 45-degrees off; id 2 is squarely right.
++    const cands = [from, p(1, 540, 340), p(2, 640, 400)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 2);
++  });
++
++  test('arrows diverge when aligned alternatives exist alongside a diagonal', () => {
++    // Regression guard for the real defect seen live: with a single permissive
++    // cone, the diagonal (id 1) was returned for BOTH ArrowRight and ArrowUp
++    // even though squarely-aligned candidates were available, which reads as
++    // the direction keys being broken.
++    const cands = [
++      from,
++      p(1, 530, 360), // diagonal: 30 right, 40 up
++      p(2, 640, 400), // squarely right
++      p(3, 500, 260), // squarely up
++    ];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 2, 'right must take the aligned one');
++    assert.equal(findSpatialNeighbour(from, cands, 'up')?.id, 3, 'up must take the aligned one');
++  });
++
++  test('a lone diagonal stays reachable from both arrows (reachability beats purity)', () => {
++    // With nothing aligned, refusing the diagonal would make the marker
++    // unreachable by keyboard. Overlap is the correct trade-off here.
++    const cands = [from, p(1, 530, 360)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 1);
++    assert.equal(findSpatialNeighbour(from, cands, 'up')?.id, 1);
++  });
++
++  test('falls back to the wide cone when nothing is well aligned', () => {
++    // Only a steep diagonal exists; ArrowRight should still reach it rather
++    // than dead-ending, since no better candidate is available.
++    const cands = [from, p(1, 560, 300)];
++    assert.equal(findSpatialNeighbour(from, cands, 'right')?.id, 1);
++  });
++});
++
++describe('T-063: fallback when the active marker leaves the set', () => {
++  test('picks the geometrically nearest remaining member', () => {
++    const gone = p(99, 500, 400);
++    const set = [p(1, 520, 410), p(2, 900, 700)];
++    assert.equal(nearestInSet(gone, set)?.id, 1);
++  });
++
++  test('returns null for an empty set instead of throwing', () => {
++    assert.equal(nearestInSet(p(1, 0, 0), []), null);
++  });
++});
++
++describe('T-063: arrow key mapping', () => {
++  test('maps the four arrows and ignores everything else', () => {
++    assert.equal(arrowFromKey('ArrowLeft'), 'left');
++    assert.equal(arrowFromKey('ArrowRight'), 'right');
++    assert.equal(arrowFromKey('ArrowUp'), 'up');
++    assert.equal(arrowFromKey('ArrowDown'), 'down');
++    for (const k of ['Enter', ' ', 'Tab', 'Escape', 'Home', 'End', 'a']) {
++      assert.equal(arrowFromKey(k), null, `${k} must not be an arrow`);
++    }
++  });
++});
++
++describe('T-063: MapView wiring', () => {
++  const src = readFileSync('components/MapView.tsx', 'utf8');
++  const codeOnly = src
++    .replace(/\/\*[\s\S]*?\*\//g, '')
++    .replace(/\/\/.*$/gm, '')
++    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
++
++  test('markers opt out of Leaflet per-marker tabindex', () => {
++    assert.ok(/keyboard: false/.test(codeOnly), 'must pass keyboard:false to L.marker');
++  });
++
++  test('exactly one marker holds tabindex 0 — a true roving tabindex', () => {
++    assert.ok(
++      /tabindex',\s*entry\.salon\.id === (?:activeIdRef\.current|id) \? '0' : '-1'/.test(codeOnly),
++      'roving assignment must be a 0/-1 ternary keyed on the active id',
++    );
++  });
++
++  test('direction comes from projected container points, not raw lat/lng', () => {
++    assert.ok(/latLngToContainerPoint/.test(codeOnly), 'must project through Leaflet');
++    const nav = readFileSync('lib/mapKeyboardNav.ts', 'utf8');
++    assert.ok(!/\blat\b|\blng\b/.test(nav.replace(/\/\*[\s\S]*?\*\//g, '')), 'geometry module must be lat/lng-free');
++  });
++
++  test('Space is prevented from scrolling the page', () => {
++    const block = codeOnly.slice(codeOnly.indexOf("e.key === 'Enter'"));
++    assert.ok(/e\.preventDefault\(\)/.test(block.slice(0, 200)), 'Enter/Space handler must preventDefault');
++  });
++
++  test('Enter and Space both activate the preview', () => {
++    assert.ok(/e\.key === 'Enter' \|\| e\.key === ' '/.test(codeOnly));
++  });
++
++  test('Escape closes the preview and restores focus to the marker', () => {
++    const idx = codeOnly.indexOf("e.key !== 'Escape'");
++    assert.ok(idx > -1, 'must handle Escape');
++    const block = codeOnly.slice(idx, idx + 260);
++    assert.ok(/setSelected\(null\)/.test(block), 'Escape must close the preview');
++    assert.ok(/focusMarker\(id\)/.test(block), 'Escape must return focus to the marker');
++  });
++
++  test('the preview is not a modal dialog and has no focus trap', () => {
++    assert.ok(!/role="dialog"/.test(codeOnly), 'preview must not claim dialog semantics');
++    assert.ok(!/aria-modal/.test(codeOnly), 'preview must not be modal');
++  });
++
++  test('pointer activation syncs the roving index without moving focus', () => {
++    const idx = codeOnly.indexOf(".on('click'");
++    const block = codeOnly.slice(idx, idx + 300);
++    assert.ok(/setRovingTo\(salon\.id\)/.test(block), 'click must adopt the roving index');
++    assert.ok(/keyboardActivationRef\.current = false/.test(block), 'click must not flag keyboard activation');
++    assert.ok(!/\.focus\(\)/.test(block), 'click must not force focus');
++  });
++
++  test('keyboard activation moves focus to the first interactive link in the preview', () => {
++    assert.ok(/querySelector<HTMLElement>\('a\[href\]'\)/.test(codeOnly));
++  });
++
++  test('the set is frozen while the user is navigating', () => {
++    assert.ok(/navLockRef/.test(codeOnly), 'must guard recomputation');
++    const idx = codeOnly.indexOf("map.on('moveend zoomend'");
++    assert.ok(idx > -1, 'must recompute on moveend/zoomend only');
++    assert.ok(/navLockRef\.current/.test(codeOnly.slice(idx, idx + 240)), 'the handler must respect the lock');
++  });
++
++  test('the keyboard hint is announced once, not on every arrow', () => {
++    assert.ok(/hintAnnouncedRef\.current = true/.test(codeOnly));
++    const idx = codeOnly.indexOf('const onKeyDown');
++    const end = codeOnly.indexOf('const onFocusIn');
++    assert.ok(!/setLiveMessage/.test(codeOnly.slice(idx, end)), 'arrow handling must not announce the hint');
++  });
++
++  test('the hint reports the real set size, not a hardcoded 50', () => {
++    const idx = codeOnly.indexOf('map_keyboard_hint');
++    const block = codeOnly.slice(idx, idx + 220);
++    assert.ok(/count: keyboardSetRef\.current\.length/.test(block), 'count must be the actual set size');
++    assert.ok(/total: markerEntriesRef\.current\.length/.test(block), 'total must be the rendered count');
++    assert.ok(!/\b50\b/.test(block), 'must not hardcode 50 in the announcement');
++  });
++
++  test('a polite live region exists for the announcement', () => {
++    assert.ok(/aria-live="polite"/.test(codeOnly));
++  });
++
++  test('the map container gets an accessible name and a group role', () => {
++    assert.ok(/setAttribute\('aria-label', t\('map_region_label'\)\)/.test(codeOnly));
++    assert.ok(/setAttribute\('role', 'group'\)/.test(codeOnly));
++  });
++
++  test('the map container is NOT a tab stop in front of the marker collection', () => {
++    // Review finding: Leaflet's own keyboard handler put tabindex="0" on the
++    // container, so reaching the active marker took two Tab presses. That is
++    // not a roving tabindex — the active marker must be the single entry point.
++    assert.ok(
++      /L\.map\([^)]*keyboard: false/.test(codeOnly),
++      'the map must be created with keyboard:false so Leaflet does not make the container tabbable',
++    );
++    assert.ok(
++      /mapRef\.current\.removeAttribute\('tabindex'\)/.test(codeOnly),
++      'container tabindex must be cleared defensively',
++    );
++  });
++
++  test('container-level arrow panning is not left competing with marker arrows', () => {
++    // keyboard:false also disables Leaflet's arrow-pan on the container, which
++    // would otherwise bind the same keys as marker navigation.
++    const idx = codeOnly.indexOf('L.map(');
++    assert.ok(/keyboard: false/.test(codeOnly.slice(idx, idx + 160)));
++  });
++
++  test('the hint is triggered by focus on a marker, not on the container', () => {
++    const start = codeOnly.indexOf('const onFocusIn');
++    const end = codeOnly.indexOf('const onFocusOut');
++    const block = codeOnly.slice(start, end);
++    assert.ok(/markerIdFrom\(e\.target\)/.test(block), 'must key off a marker id');
++    assert.ok(/if \(id === null\) return;/.test(block), 'non-marker focus must not announce');
++    assert.ok(/setLiveMessage/.test(block), 'marker focus is what announces');
++  });
++
++  test('the hint is once per page, guarded by a ref rather than re-announced', () => {
++    const start = codeOnly.indexOf('const onFocusIn');
++    const end = codeOnly.indexOf('const onFocusOut');
++    const block = codeOnly.slice(start, end);
++    assert.ok(
++      /if \(!hintAnnouncedRef\.current\)/.test(block),
++      'must check the guard before announcing',
++    );
++    assert.ok(/hintAnnouncedRef\.current = true/.test(block), 'must set the guard');
++    // The guard is never reset anywhere, which is what makes it once-per-page.
++    assert.equal(
++      (codeOnly.match(/hintAnnouncedRef\.current = false/g) ?? []).length,
++      0,
++      'the hint guard must never be reset, or re-entry would re-announce',
++    );
++  });
++
++  test('pointer activation does not introduce a second tab stop', () => {
++    // Clicking adopts the roving index by swapping 0/-1 within the existing
++    // set; it must never add tabindex to anything new.
++    const idx = codeOnly.indexOf(".on('click'");
++    const block = codeOnly.slice(idx, idx + 300);
++    assert.ok(!/setAttribute\('tabindex'/.test(block), 'click must not assign tabindex directly');
++    assert.ok(/setRovingTo\(salon\.id\)/.test(block), 'click must go through the roving helper');
++    // setRovingTo only ever writes '0' or '-1', and only to existing set members.
++    const rov = codeOnly.slice(codeOnly.indexOf('const setRovingTo'), codeOnly.indexOf('const focusMarker'));
++    assert.ok(/idSet\.has\(entry\.salon\.id\)/.test(rov), 'roving must stay within the bounded set');
++    assert.ok(/\? '0' : '-1'/.test(rov), 'roving must only ever write 0 or -1');
++  });
++
++  test('every non-active member of the set is explicitly tabindex="-1"', () => {
++    const apply = codeOnly.slice(
++      codeOnly.indexOf('const applyKeyboardSet'),
++      codeOnly.indexOf('const setRovingTo'),
++    );
++    assert.ok(/'tabindex', entry\.salon\.id === activeIdRef\.current \? '0' : '-1'/.test(apply));
++  });
++
++  test('Leaflet zoom/attribution controls are left in the normal tab order', () => {
++    assert.ok(!/zoomControl:\s*false/.test(codeOnly), 'zoom control must not be removed');
++    assert.ok(!/attributionControl:\s*false/.test(codeOnly), 'attribution must not be removed');
++  });
++
++  test('markers outside the keyboard set are still named but not tabbable', () => {
++    const idx = codeOnly.indexOf('el.setAttribute(\'role\', \'button\')');
++    const block = codeOnly.slice(idx, idx + 420);
++    assert.ok(/aria-label/.test(block), 'every marker gets a name');
++    assert.ok(/removeAttribute\('tabindex'\)/.test(block), 'out-of-set markers lose tabindex');
++  });
++
++  test('the salon_open analytics contract from the map is unchanged', () => {
++    assert.ok(
++      /trackEvent\('salon_open', \{ salon_id: String\(selected\.id\), source: 'search_map', locale: locale as Locale \}\)/.test(
++        codeOnly,
++      ),
++    );
++  });
++
++  test('no clustering, ranking, marker data or fetching was introduced', () => {
++    for (const forbidden of ['markercluster', 'MarkerCluster', 'cluster(', 'fetch(']) {
++      assert.ok(!codeOnly.includes(forbidden), `${forbidden} is out of scope for T-063`);
++    }
++  });
++});
++
++describe('T-063: accessible name composition', () => {
++  const src = readFileSync('components/MapView.tsx', 'utf8');
++  const readMessages = (l: string) =>
++    JSON.parse(readFileSync(`messages/${l}.json`, 'utf8')) as Record<string, Record<string, string>>;
++
++  test('omits a missing area rather than leaving an empty segment', () => {
++    assert.ok(/if \(salon\.address_city\) parts\.push/.test(src));
++  });
++
++  test('omits a missing rating rather than announcing "rating 0"', () => {
++    assert.ok(/if \(salon\.rating_google\) parts\.push/.test(src), 'must be a truthy gate, so 0 is skipped');
++  });
++
++  test('excludes coordinates, phone and street address from the name', () => {
++    // Comments must be stripped first: the JSDoc for the *next* helper
++    // legitimately mentions "raw lat/lng", which a naive slice would flag.
++    const fn = src
++      .slice(src.indexOf('const buildMarkerName'), src.indexOf('const pointOf'))
++      .replace(/\/\*[\s\S]*?\*\//g, '')
++      .replace(/\/\/.*$/gm, '');
++    for (const banned of ['lat', 'lng', 'phone_primary', 'address_street']) {
++      assert.ok(!fn.includes(banned), `${banned} must not appear in the accessible name`);
++    }
++  });
++
++  test('never says the word "marker" in the name segments', () => {
++    for (const l of ['el', 'en', 'ru', 'uk']) {
++      const m = readMessages(l).salon;
++      assert.ok(!/marker/i.test(m.map_marker_position), `${l} position string must not say "marker"`);
++      assert.ok(!/marker/i.test(m.map_marker_rating), `${l} rating string must not say "marker"`);
++    }
++  });
++
++  test('position uses ICU pluralisation in all four locales', () => {
++    for (const l of ['el', 'en', 'ru', 'uk']) {
++      const s = readMessages(l).salon.map_marker_position;
++      assert.ok(s.includes('{count, plural,'), `${l} must pluralise count`);
++      assert.ok(s.includes('{position}'), `${l} must include position`);
++    }
++  });
++
++  test('Slavic locales carry the full plural category set', () => {
++    for (const l of ['ru', 'uk']) {
++      const s = readMessages(l).salon.map_marker_position;
++      for (const cat of ['one', 'few', 'many', 'other']) {
++        assert.ok(s.includes(`${cat} {`), `${l} missing the "${cat}" category`);
++      }
++    }
++  });
++
++  test('all four locales define every new map key and are really translated', () => {
++    const keys = ['map_region_label', 'map_keyboard_hint', 'map_marker_rating', 'map_marker_position'];
++    const locales = ['el', 'en', 'ru', 'uk'];
++    for (const k of keys) {
++      const vals = locales.map(l => readMessages(l).salon[k]);
++      vals.forEach((v, i) => assert.ok(v && v.length > 0, `${locales[i]} missing ${k}`));
++
++      // Not "all four distinct": Russian and Ukrainian genuinely share some
++      // words (e.g. "рейтинг"), so demanding four unique strings would force
++      // a wrong translation. Requiring 3+ still catches copy-paste of one
++      // language into all four.
++      assert.ok(
++        new Set(vals).size >= 3,
++        `${k} looks untranslated across locales: ${JSON.stringify(vals)}`,
++      );
++      const [el, en] = vals;
++      assert.notEqual(el, en, `${k} is identical in Greek and English`);
++    }
++  });
++
++  test('the hint placeholders are present in every locale', () => {
++    for (const l of ['el', 'en', 'ru', 'uk']) {
++      const s = readMessages(l).salon.map_keyboard_hint;
++      assert.ok(s.includes('{count}') && s.includes('{total}'), `${l} hint must use both counts`);
++    }
++  });
++});
+diff --git a/frontend/lib/mapKeyboardNav.ts b/frontend/lib/mapKeyboardNav.ts
+new file mode 100644
+index 0000000..2dfa3d5
+--- /dev/null
++++ b/frontend/lib/mapKeyboardNav.ts
+@@ -0,0 +1,158 @@
++/**
++ * T-063 — pure geometry/selection helpers for the map's keyboard model.
++ *
++ * Kept free of Leaflet and React so the two genuinely tricky parts (which
++ * markers join the bounded keyboard set, and which marker an arrow key moves
++ * to) are unit-testable without a map instance or a DOM.
++ *
++ * All coordinates here are **screen/container points**, already projected by
++ * Leaflet. Direction is deliberately not derived from latitude/longitude:
++ * under Web Mercator, "north" in degrees is not a constant screen direction,
++ * and at the zoom levels this map uses the divergence is visible.
++ */
++
++/** Max markers exposed to keyboard navigation at once. Rendering is unbounded. */
++export const KEYBOARD_MARKER_LIMIT = 50;
++
++export type ArrowDirection = 'left' | 'right' | 'up' | 'down';
++
++export interface MarkerPoint {
++  /** Stable salon id — also the tie-breaker for equal distances. */
++  id: number;
++  /** Container-space x (px), already projected. */
++  x: number;
++  /** Container-space y (px), already projected. */
++  y: number;
++}
++
++export interface ViewportRect {
++  width: number;
++  height: number;
++}
++
++/** True when the point lies within the visible container box. */
++export function isWithinViewport(p: MarkerPoint, view: ViewportRect): boolean {
++  return p.x >= 0 && p.y >= 0 && p.x <= view.width && p.y <= view.height;
++}
++
++/**
++ * Chooses the bounded keyboard set: markers inside the viewport, and if more
++ * than `limit` of them, the `limit` closest to the viewport centre.
++ *
++ * Ties break on ascending salon id, so the set is deterministic for identical
++ * geometry — without that, two markers at the same distance could swap places
++ * between recomputes and silently reorder arrow navigation.
++ */
++export function selectKeyboardSet(
++  points: MarkerPoint[],
++  view: ViewportRect,
++  limit: number = KEYBOARD_MARKER_LIMIT,
++): MarkerPoint[] {
++  const cx = view.width / 2;
++  const cy = view.height / 2;
++  const visible = points.filter(p => isWithinViewport(p, view));
++  if (visible.length <= limit) return sortVisualOrder(visible);
++
++  const byCentre = [...visible].sort((a, b) => {
++    const da = (a.x - cx) ** 2 + (a.y - cy) ** 2;
++    const db = (b.x - cx) ** 2 + (b.y - cy) ** 2;
++    if (da !== db) return da - db;
++    return a.id - b.id;
++  });
++  return sortVisualOrder(byCentre.slice(0, limit));
++}
++
++/**
++ * Stable reading order (top-to-bottom, then left-to-right) used for Home/End
++ * and for the "N of M" position in each marker's accessible name. Rows are
++ * banded so markers at visually similar heights read left-to-right rather
++ * than by sub-pixel y differences.
++ */
++export function sortVisualOrder(points: MarkerPoint[], rowBand = 24): MarkerPoint[] {
++  return [...points].sort((a, b) => {
++    const rowA = Math.round(a.y / rowBand);
++    const rowB = Math.round(b.y / rowBand);
++    if (rowA !== rowB) return rowA - rowB;
++    if (a.x !== b.x) return a.x - b.x;
++    return a.id - b.id;
++  });
++}
++
++/**
++ * Picks the marker an arrow key should move to, or null to stay put.
++ *
++ * A candidate must lie in the requested direction and inside a widening cone
++ * around it, so ArrowRight cannot jump to something almost directly above.
++ * Deliberately does **not** wrap around the opposite edge: wrapping in a
++ * spatial widget reads as the focus teleporting.
++ */
++export function findSpatialNeighbour(
++  from: MarkerPoint,
++  candidates: MarkerPoint[],
++  direction: ArrowDirection,
++): MarkerPoint | null {
++  /** Decomposes the offset into "towards the direction" and "sideways". */
++  const project = (c: MarkerPoint): { along: number; across: number } => {
++    const dx = c.x - from.x;
++    const dy = c.y - from.y;
++    switch (direction) {
++      case 'right': return { along: dx, across: Math.abs(dy) };
++      case 'left': return { along: -dx, across: Math.abs(dy) };
++      case 'down': return { along: dy, across: Math.abs(dx) };
++      case 'up': return { along: -dy, across: Math.abs(dx) };
++    }
++  };
++
++  const pick = (maxAcross: (along: number) => number): MarkerPoint | null => {
++    let best: MarkerPoint | null = null;
++    let bestScore = Infinity;
++    for (const c of candidates) {
++      if (c.id === from.id) continue;
++      const { along, across } = project(c);
++      if (along <= 0) continue;                  // not in this direction at all
++      if (across > maxAcross(along)) continue;   // outside this pass's cone
++      // Weight lateral drift so a well-aligned far marker beats a skewed near one.
++      const score = along + across * 2;
++      if (score < bestScore || (score === bestScore && best && c.id < best.id)) {
++        bestScore = score;
++        best = c;
++      }
++    }
++    return best;
++  };
++
++  // Two passes. A narrow cone first, so ArrowRight prefers something actually
++  // to the right rather than a diagonal that would equally satisfy ArrowUp —
++  // without it, two different arrows can land on the same marker, which reads
++  // as the direction keys being broken. The wide cone is only a fallback, so
++  // sparse scatters still stay reachable instead of dead-ending everywhere.
++  return pick(along => along * 0.5) ?? pick(along => along * 2 + 24);
++}
++
++/**
++ * After a pan/zoom the previously active marker may have left the set. Falls
++ * back to the geometrically nearest member so focus never lands nowhere.
++ */
++export function nearestInSet(from: MarkerPoint, set: MarkerPoint[]): MarkerPoint | null {
++  let best: MarkerPoint | null = null;
++  let bestD = Infinity;
++  for (const c of set) {
++    const d = (c.x - from.x) ** 2 + (c.y - from.y) ** 2;
++    if (d < bestD || (d === bestD && best && c.id < best.id)) {
++      bestD = d;
++      best = c;
++    }
++  }
++  return best;
++}
++
++/** Maps a KeyboardEvent key to a direction, or null if it isn't an arrow. */
++export function arrowFromKey(key: string): ArrowDirection | null {
++  switch (key) {
++    case 'ArrowLeft': return 'left';
++    case 'ArrowRight': return 'right';
++    case 'ArrowUp': return 'up';
++    case 'ArrowDown': return 'down';
++    default: return null;
++  }
++}
+diff --git a/frontend/lib/visualBaselineConsistency.test.ts b/frontend/lib/visualBaselineConsistency.test.ts
+index 2a59f63..ebdc30b 100644
+--- a/frontend/lib/visualBaselineConsistency.test.ts
++++ b/frontend/lib/visualBaselineConsistency.test.ts
+@@ -180,11 +180,18 @@ describe('T-067: MapView overlay — hardcoded-locale fix and accessible names',
+     assert.deepEqual(found, [], `legacy colours remain: ${JSON.stringify(found)}`);
+   });
+ 
+-  test('T-063 boundary: no keyboard/marker accessibility work was introduced', () => {
+-    // T-067 restyles overlay chrome only. Marker/popup keyboard navigation
+-    // is reserved for T-063 and must not be started here.
+-    assert.ok(!/tabIndex/i.test(code), 'no tabindex added to map internals');
+-    assert.ok(!/keydown|onKeyDown/.test(code), 'no keyboard handlers added to map internals');
++  // The original T-067 guard here asserted that *no* keyboard/tabindex work
++  // existed in MapView, to stop a visual pass from quietly starting T-063.
++  // T-063 has since landed and now owns exactly that code, so the guard has
++  // served its purpose and would only fail on the work it was protecting.
++  // Its replacement keeps the half that is still T-067's business — that this
++  // file stayed a presentation + keyboard concern and never grew data or
++  // fetching responsibilities. The keyboard contract itself is asserted in
++  // lib/mapKeyboardNav.test.ts, which is where it belongs.
++  test('MapView still owns no data-fetching, clustering or ranking concerns', () => {
++    for (const forbidden of ['fetch(', 'markercluster', 'MarkerCluster', 'useSWR', 'axios']) {
++      assert.ok(!code.includes(forbidden), `${forbidden} does not belong in MapView`);
++    }
+   });
+ 
+   test('salon_open analytics from the map is unchanged in name, shape and source', () => {
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index d4811e8..1a334ad 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -96,6 +96,10 @@
+     "locating_position": "Εντοπισμός τοποθεσίας...",
+     "close_preview": "Κλείσιμο προεπισκόπησης",
+     "your_location": "Η θέση σας",
++    "map_region_label": "Χάρτης σαλονιών",
++    "map_keyboard_hint": "{count} από {total} αποτελέσματα του χάρτη είναι προσβάσιμα με πληκτρολόγιο. Χρησιμοποιήστε τα βελάκια για μετακίνηση και Enter για προεπισκόπηση.",
++    "map_marker_rating": "βαθμολογία {rating}",
++    "map_marker_position": "{position} από {count, plural, one {# ορατό σαλόνι} other {# ορατά σαλόνια}}",
+     "location": "Τοποθεσία",
+     "anonymous": "Ανώνυμος",
+     "data_updated": "Δεδομένα ενημερώθηκαν",
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index a624011..a9f5121 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -96,6 +96,10 @@
+     "locating_position": "Locating your position...",
+     "close_preview": "Close preview",
+     "your_location": "Your location",
++    "map_region_label": "Salon map",
++    "map_keyboard_hint": "{count} of {total} map results are keyboard accessible. Use arrow keys to move between markers and Enter to open a preview.",
++    "map_marker_rating": "rating {rating}",
++    "map_marker_position": "{position} of {count, plural, one {# visible salon} other {# visible salons}}",
+     "location": "Location",
+     "anonymous": "Anonymous",
+     "data_updated": "Data updated",
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index a92a3cb..d102373 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -96,6 +96,10 @@
+     "locating_position": "Определение местоположения...",
+     "close_preview": "Закрыть превью",
+     "your_location": "Ваше местоположение",
++    "map_region_label": "Карта салонов",
++    "map_keyboard_hint": "{count} из {total} результатов на карте доступны с клавиатуры. Используйте стрелки для перехода между метками и Enter для предпросмотра.",
++    "map_marker_rating": "рейтинг {rating}",
++    "map_marker_position": "{position} из {count, plural, one {# видимого салона} few {# видимых салонов} many {# видимых салонов} other {# видимых салонов}}",
+     "location": "Расположение",
+     "anonymous": "Аноним",
+     "data_updated": "Данные обновлены",
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 15b5f2e..32c3450 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -96,6 +96,10 @@
+     "locating_position": "Визначення місцезнаходження...",
+     "close_preview": "Закрити попередній перегляд",
+     "your_location": "Ваше місцезнаходження",
++    "map_region_label": "Карта салонів",
++    "map_keyboard_hint": "{count} з {total} результатів на карті доступні з клавіатури. Використовуйте стрілки для переходу між позначками та Enter для попереднього перегляду.",
++    "map_marker_rating": "рейтинг {rating}",
++    "map_marker_position": "{position} з {count, plural, one {# видимого салону} few {# видимих салонів} many {# видимих салонів} other {# видимих салонів}}",
+     "location": "Розташування",
+     "anonymous": "Анонім",
+     "data_updated": "Дані оновлено",
