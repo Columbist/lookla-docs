@@ -1708,7 +1708,7 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
 - **Announcement:** one polite message on first entry, carrying the real set size ("50 of 2000"), never repeated per arrow — per-marker position already lives in each marker's own name, so arrowing is not announced twice.
 - **Preserved:** the map container gained a name but no invented role; Leaflet's zoom and attribution controls remain exactly where they were in the tab order (verified: they follow the single marker stop).
 
-**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. Also still open (unchanged by this ticket): the preview's plain-`<a href>` link performs a hard navigation and therefore still discards T-056's in-memory search-return snapshot.
+**Explicitly out of scope and untouched:** clustering, ranking, marker data, map fetching, and the `salon_open` analytics contract from the map. The preview's plain-`<a href>` hard navigation was left open here and is **fixed by T-068** (see below).
 
 **Verification:** 54 new tests in `lib/mapKeyboardNav.test.ts` — the pure geometry/selection module is unit-tested without Leaflet or a DOM, plus source-level assertions on the wiring. 1 pre-existing T-067 guard retired (it asserted *no* keyboard work existed in `MapView` specifically to stop a visual pass from starting T-063; that purpose is now fulfilled, and it was replaced with an assertion that still holds — that `MapView` owns no data/fetching/clustering concerns). Full suite **1125/1125**. Lint/build clean; search bundle unchanged at 9.58kB (`MapView` is dynamically imported). Isolated Playwright: tab-stop census (2023→20), a tab walk confirming the container is **not** a stop and Tab reaches the marker in one press before continuing through Leaflet's controls, four distinct arrow moves, single-`tabindex=0` invariant maintained after arrowing, no map panning during marker arrow navigation (the conflict `keyboard: false` removes), Space opening with `scrollDelta=0`, focus landing on the first preview link, Escape restoring marker focus, pointer sync without forced focus, the hint announced from marker focus and still exactly once after leaving and re-entering the collection, and all four locales confirmed localized (map label, rating word, position, hint).
 
@@ -1738,6 +1738,46 @@ Leaflet's `keyboard: true` default gives every marker `tabindex="0"` and `role="
 ```text
 T-063 regressions: 0
 ```
+
+---
+
+### T-068 — Map Preview Client Navigation & Search Return Preservation
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅
+**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
+
+**Ticket-identity note:** T-068 confirmed free before branching (highest number previously in use was T-067).
+
+**The defect.** The map preview's "view salon" control was a plain `<a href>`, so activating it performed a full-document navigation. T-056 stores its search-return snapshot in a **module-scope Map** and writes it from a **save-on-unmount cleanup**. A hard navigation destroys the JS realm — the cleanup's write is lost along with the store — so returning from a salon opened via the map always remounted the search page at page 1 with scroll discarded. Registered as a known limitation in T-056 and carried unchanged through T-063.
+
+**Root-cause detail worth keeping:** the search page's capture-phase scroll-freeze listener was *never* the problem. Its selector is `a[href*="/salons/"]`, which already matched the map preview link (and still matches what `next/link` renders). The only broken link in the chain was realm survival.
+
+**The fix.** One element swap: `<a href>` → `next/link`'s `<Link href>`. Nothing else changed — the destination expression, the `salon_open` call, and the className are byte-identical, and the search page was not touched at all.
+
+Deliberately **not** routed through `Link`: the adjacent `tel:` quick-dial. An external protocol is not a route, and handing it to the router would break it.
+
+**Verification:** 16 new tests in `lib/mapPreviewNavigation.test.ts` (client-side mechanism, byte-identical destination/analytics/styling, `tel:` still a plain anchor, no `Link` carrying an external protocol, T-056 machinery untouched with exactly one `saveSnapshot` call site, T-063 keyboard model intact). One T-056 test **inverted**: it existed to document the limitation and explicitly said "if this ever changes to `<Link>`, the limitation (and this test) should be revisited" — the tripwire fired correctly and now asserts the fix, so a regression to a hard navigation fails in two suites. Full suite **1141/1141**. Lint/build clean; search bundle unchanged at 9.58kB.
+
+Isolated Playwright, full `Map → preview → salon detail → Back` flow with the precondition actually established first (48 cards loaded via scroll before switching views):
+- **Client-side navigation proven directly** via a realm probe (`window.__realmProbe`), which survives a client-side transition and dies on a document load. It read `alive` on the destination page. `framenavigated` counts were *not* used, because they fire for both kinds of navigation and cannot discriminate.
+- **48 cards restored** after Back (the exact loss this ticket targets).
+- **Scroll restored exactly.** Worth recording how this was measured: returning lands on **map** view, which is only ~181px scrollable, so an early run showing `scrollY=0` looked like a failure but was in fact correct restoration of a genuinely-zero position. Re-measuring with the map scrolled to its maximum first gave `181 → 181`, exact. This is the same measurement trap that produced false scroll "failures" in T-066 and T-067; the expected value must be captured before the navigation, never assumed.
+- `salon_open` fires **exactly once** per activation with the unchanged shape (`{salon_id, source: "search_map", locale}`).
+- **Ctrl+click still opens a new tab** with the correct destination and leaves the map page in place — `Link` preserves browser modifier defaults (verified on a clean element, after an initial run was invalidated by a `preventDefault` listener left over from the previous step).
+
+**Acceptance Criteria:**
+- [x] Preview navigation is client-side; the T-056 realm and snapshot survive
+- [x] Destination unchanged (slug with numeric id fallback)
+- [x] `salon_open` unchanged in name, shape and source; exactly one call site; fires once
+- [x] Visual treatment unchanged — this is not a visual ticket
+- [x] `tel:` remains a plain anchor; no `Link` carries an external protocol
+- [x] Search page and T-056 snapshot machinery untouched (one `saveSnapshot` site)
+- [x] T-063 keyboard model intact (Enter/Space, Escape, roving tabindex, focus-to-first-link)
+- [x] 48 cards restored after `Map → preview → detail → Back`
+- [x] Scroll restored exactly, against a measured expected value
+- [x] Modifier-click browser defaults preserved
+- [ ] Live production verification — pending merge/deploy
+- [ ] Independent review — pending **APPROVE**
 
 ---
 
