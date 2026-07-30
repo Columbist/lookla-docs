@@ -1,6 +1,8 @@
 # Visual Baseline v1 — foundation specification
 
-**Status:** foundation laid by T-059 (tokens, typography, icon system), T-060 (global shell: header, footer, mobile navigation, language selector), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), and T-066 (salon detail). All conversion-facing screens are now covered. Only a final consistency pass (cookie consent UI, legal pages, remaining shared `AsyncSection` states) and the official Beta Visual Baseline date remain. Do not treat this document as "Visual Baseline v1 complete" until that pass lands.
+**Status: COMPLETE.** All seven tickets landed and verified in production — T-059 (tokens, typography, icon system), T-060 (global shell), T-062 (homepage), T-064 (search shell), T-065 (SalonCard), T-066 (salon detail), T-067 (consistency pass: cookie consent, legal pages, MapView overlay, 404, CI test-coverage fix).
+
+**Official Beta Visual Baseline began: `2026-07-30 11:39:31 Europe/Athens (EEST)`** — T-067's production deployment completion, per Docker's `beauty_web` `State.StartedAt`; not the merge time. Conversion data from that moment onward is the primary post-refresh baseline. Anything earlier is instrumentation and preliminary observation only. Full evidence in the T-067 section below.
 
 **Approved direction:** Direction B — Clean Marketplace, as recommended in the Visual Baseline Audit (2026-07-27) and confirmed by the user without reinterpretation.
 
@@ -164,7 +166,8 @@ Deliberately not generalized further — no abstract component library, no prema
 | Search shell (toolbar, filter popover, results heading, List/Map, active-filter chips) | ~~Search shell visual refresh~~ — **done, T-064** | Included fixing the hardcoded Greek `Όλες οι αξιολογήσεις` rating-filter placeholder |
 | SalonCard | ~~SalonCard visual refresh~~ — **done, T-065** | First ticket in the sequence allowed to touch the card's internal appearance, not just surrounding chrome |
 | Salon detail (7-box consolidation, CTA hierarchy, gallery) | ~~Salon detail visual refresh~~ — **done, T-066** | Fixed the hardcoded Greek `+N φωτογραφίες` overlay; also found and fixed a real gallery-layout bug (see T-066 below) |
-| Cookie consent UI, legal pages, remaining AsyncSection states | Shared async/legal/cookie alignment + final consistency pass | Untouched by T-059 |
+| Cookie consent UI, legal pages, remaining AsyncSection states | ~~Shared async/legal/cookie alignment + final consistency pass~~ — **done, T-067** | `AsyncSection` needed no work (already tokenised). Also fixed two more hardcoded-Greek strings in `MapView`, the 320px legal-page overflow, and a CI gap where 7 test files never ran |
+| Auth / dashboard / admin / account pages | **Not in Visual Baseline v1** — separate future phase | ~394 legacy colour utilities across 12 files; deliberately out of scope (see T-067) |
 
 ## T-060 — Global shell (header, footer, mobile navigation, language selector)
 
@@ -614,6 +617,101 @@ Three tiers, replacing the flat 7-box stack:
 ```text
 T-066 regressions: 0
 ```
+
+## T-067 — Visual Baseline Consistency & Beta Baseline Verification
+
+**Scope:** `components/CookieConsent.tsx`, `app/[locale]/privacy/page.tsx`, `app/[locale]/cookies/page.tsx`, `app/[locale]/not-found.tsx`, `components/MapView.tsx` (overlay chrome only), plus `package.json`'s test script. The final consistency pass of Visual Baseline v1 — no new surfaces, no product behaviour, no analytics changes.
+
+**Ticket identity:** T-067 was confirmed genuinely unused before branching — no collision. T-063 (Map Accessibility) remains reserved and untouched; see the explicit boundary note below.
+
+### Cookie consent UI
+
+Direction B tokens applied. The `×` glyph became a Lucide `X` with its existing accessible name preserved, and every control gained `focus-ring-token` (previously there was no visible focus state at all).
+
+**The one deliberate non-change, now enforced:** Accept and Reject share a *single* class constant rather than two matching literals. Equal visual weight between the two choices is a legal requirement, not a style preference — a more prominent "Accept" is the consent dark pattern that EDPB guidance and GDPR Art. 4(11) ("freely given") treat as invalidating consent. The constant carries a neutral surface, never a brand fill, since brand-filling either side tilts the pair. A pre-existing T-018 test already asserted this; it located the buttons by matching two inline `className="…"` literals, so the refactor to a shared constant broke its *locator* while strengthening the *guarantee*. The test was updated to accept either form and additionally assert the shared constant contains no `bg-brand` — the same "update how it locates, never what it checks" discipline used in T-064/T-065.
+
+Consent logic is untouched: `getAnalyticsConsent`/`setAnalyticsConsent`/`isAnalyticsConsentFeatureEnabled` wiring, the Escape-closes-settings-only rule, and the initial `'hidden'` state are byte-identical. `lib/consent.ts` and `lib/analytics.ts` were not modified at all.
+
+### Legal pages
+
+Both pages moved to `max-w-shell-reading` — T-060 defined that 768px token with legal pages as its stated use case, so this is the swap it was created for. Tokens and the typography scale applied throughout; the cookie→privacy cross-link gained a focus ring.
+
+**A regression found and fixed by this ticket's own sweep:** raising the `h1` from `text-2xl` (24px) to `text-page-title` (28px) pushed the Russian title "конфиденциальности" — a single 19-character unbreakable token — past the 320px viewport. Caught by the isolated breakpoint sweep, not by any test, and precisely located by comparing `scrollWidth` against `clientWidth` per element (the element *boxes* all measured within the viewport; only the text content overflowed, so a bounding-rect check alone reported nothing). Fixed with `break-words` on `<main>`: `overflow-wrap` is an inherited property, so one declaration covers the headings and every paragraph, including body literals like `_ga/_ga_<container-id>` and `«/account/messages»` that would overflow the same way. `hyphens-auto` was added alongside it for cleaner break points — `<html lang>` is correctly set per locale, so hyphenation dictionaries apply, with `break-words` remaining the guaranteed fallback. A regression test now pins the class.
+
+### MapView overlay — and the T-063 boundary
+
+Overlay chrome only: the status pill, the selected-salon preview card, and its two action links. Leaflet marker creation, popup binding, clustering, centre/zoom, and the preview link's navigation semantics (including the plain-`<a href>` behaviour T-056 documented as a known limitation) are all untouched. **No keyboard handlers and no `tabIndex` were added to any map internal** — that is T-063's scope and was deliberately not started; a test asserts their continued absence so this boundary cannot erode silently.
+
+**Two more hardcoded-locale bugs found, the third and fourth of this class:** after T-064's `Όλες οι αξιολογήσεις` and T-066's `+7 φωτογραφίες`, the sweep found `📍 Εντοπισμός τοποθεσίας...` (the geolocation status pill) and `📍 Η θέση σας` (the user-location marker tooltip, bound through Leaflet's `bindTooltip`) — both hardcoded Greek rendered in all four locales. Fixed with new `locating_position` / `your_location` keys across all four locales. This makes four instances of the same bug found in four consecutive tickets, in four different files, which is the strongest argument yet that the pattern is systemic rather than incidental.
+
+The quick-dial link was an **emoji-only control (`📞`) with no text and no `aria-label` — no accessible name whatsoever**. Swapping the emoji for a Lucide icon forced the fix: it now reuses the existing `callSalon` string rather than adding a key. The preview close button likewise had no accessible name (bare `×`) and gained `close_preview`.
+
+The user-location marker's blue (`#2563eb`/`#3b82f6`) was deliberately **not** tokenised to brand pink: blue is the cross-product convention for "your location" and must stay visually distinct from the pink salon markers. It is recorded below as an intentional exception, not outstanding debt.
+
+### Test coverage gap — the most consequential finding
+
+`npm test` enumerated **38 test files by hand while 45 existed on disk.** The seven omitted files were `homepage.test.ts`, `searchShellVisual.test.ts`, `SalonCardVisual.test.tsx`, `salonDetailVisual.test.ts`, `CategoryGrid.test.tsx`, `AreaGrid.test.tsx`, and `SearchBar.test.tsx` — that is, **every visual regression suite created by T-062, T-064, T-065 and T-066 had never run in CI.** Each of those tickets ran its suite manually via an explicit path list and correctly reported it green, and each PR's CI was also genuinely green — but CI was green on a subset, and nothing in the process would have revealed the divergence. Declaring a Beta Visual Baseline on top of that would have meant declaring it on unverified regression coverage.
+
+Fixed by replacing the hardcoded list with filesystem discovery (`find … -print0 | xargs -0 node --import tsx --test`; Node 18 does not support globs in `--test`, and npm runs scripts under `sh`, so shell globstar is unavailable). `xargs` propagates a non-zero exit, so a failing suite still fails CI — verified explicitly. Suite count went **856 → 1020** on the same commit, purely from files that were always there. A guard test now fails if the script ever returns to enumerating individual files.
+
+### Findings recorded, deliberately not "fixed"
+
+Three items were surfaced by the audit and left alone on purpose, each pinned by a test so it cannot spread unnoticed:
+
+- **The 404 page is not what users actually see.** `app/[locale]/not-found.tsx` was restyled and is correct if reached, but there is no root `app/not-found.tsx`, so unmatched paths (`/zz`, `/zz/search`) render Next.js's built-in unstyled error page — verified live. Adding a root 404 requires an i18n decision (which locale for a prefix-less URL?) that belongs in its own ticket. Separately, `/en/salons/<nonexistent>` returns **HTTP 200** with an in-page "not found" state — a pre-existing soft-404 with SEO implications, out of scope here. A test asserts the root file's continued absence so the note stays truthful.
+- **`components/SearchFilters.tsx` is dead code** (zero imports, first noted in T-007). Left on legacy tokens deliberately — restyling dead code implies it ships. A test fails if anything starts importing it.
+- **`SalonCard`'s `♀`/`♂` category glyphs** render as text. Replacing them is a product decision (what the marker means, how to name it for screen readers), not a token swap. A test pins them to the `CATEGORY_GENDER` map so they cannot spread.
+
+The rating filter's `★` inside `<option>` is **not** a missed migration: `<option>` may contain text only, so an SVG icon cannot be nested there. A test asserts `★` appears only on `<option>` lines.
+
+### Scope boundary — what this pass did not sweep
+
+Auth, dashboard, admin and account pages (~394 legacy colour utilities across 12 files) were **not** migrated. Visual Baseline v1 was scoped to the conversion funnel plus shared chrome and legal/consent surfaces; those pages are a separate, larger surface with their own flows and were never in this phase. They are listed under known remaining patterns below.
+
+### Verification
+
+51 new tests in `lib/visualBaselineConsistency.test.ts`; 1 pre-existing T-018 test updated (locator only). Full suite **1071/1071 passing** — and, for the first time, that number reflects every test file in the repository. Lint clean (the two remaining warnings, an `<img>` hint and an `exhaustive-deps` note in `reset-password/page.tsx`, are both pre-existing and in files this ticket did not touch). `next build` clean; bundle flat (`/privacy` 4.21kB, `/cookies` 4.22kB, `/search` 9.58kB).
+
+Isolated Playwright: 32 combinations (4 locales × {privacy, cookies} × {320, 375, 768, 1440}px) — zero horizontal overflow, exactly one `<h1>`, `#main-content` landmark present, reading measure confirmed at 768px, zero console/page errors. Consent gating re-verified with consent absent: **zero** requests to `google-analytics.com`/`googletagmanager.com`, and neither `window.dataLayer` nor `window.gtag` defined.
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):**
+
+- **Legal pages — 48 combinations** (4 locales × {privacy, cookies} × {320, 375, 390, 768, 1024, 1440}px): zero horizontal overflow, reading measure confirmed at exactly 768px, exactly one `<h1>`, `#main-content` present, zero console/page errors. The Russian/Ukrainian long-compound case that overflowed pre-fix now wraps correctly at 320px.
+- **Homepage + search — 48 combinations**: zero overflow, zero console errors, in all four locales.
+- **Consent, denied path:** with no choice made, **zero** requests to `google-analytics.com`/`googletagmanager.com`. After clicking Reject: still zero, cookie written as `lookla_consent=0`.
+- **Equal-weight requirement, verified in the live DOM:** Reject and Accept render **byte-identical `className` strings**, both 44px tall with `focus-ring-token`; the only difference is intrinsic text width (146px vs 150px).
+- **Consent, settings mode:** `role="dialog"` with `aria-label="Cookie settings"`; the close control carries `aria-label="Close"`, renders an inline SVG (Lucide, no glyph), and has a focus ring; Escape closes it.
+- **Consent withdrawal:** after switching the cookie to rejected mid-session, a subsequent card activation fired **no product events at all**.
+- **Analytics dedup and payloads:** `search_results_view` fires exactly once on load and **zero** times on Back-restoration (T-058 holding). `salon_open` fires exactly once (`{salon_id:"12608", source:"search_list", locale:"en"}`). One phone click → exactly one `contact_action`; one WhatsApp click → exactly one. PII scan across every captured payload (phone digits, `wa.me`, external URLs, salon name, Greek address): **clean**.
+- **T-056 restoration:** 48 cards loaded via scroll, then Back → cards restored and **scroll restored exactly** (9059 → 9059). *Methodology note worth keeping:* an earlier run reported `scrollY=0` and looked like a regression. It was the test's fault — clicking the *first* card makes Playwright scroll the element into view (to the top) before dispatching, so the snapshot legitimately captured 0. Clicking a card already in view restores correctly. The same flaw was present in T-066's script, which is why that ticket's smoke also recorded 0; scroll restoration was never actually broken.
+- **MapView, all four locales:** Leaflet renders with 2000 markers; no `📍`/`📞` emoji anywhere; the previously hardcoded Greek strings appear **only** on the Greek locale (where they are the correct translation) and are absent on en/ru/uk. Marker `tabindex` is present on all 2000 markers — that is **Leaflet's own native default, not added by T-067** (a source test asserts `MapView.tsx` adds no `tabIndex`), so marker keyboard behaviour is unchanged and T-063's scope remains untouched.
+- **Salon detail, all four locales:** the T-066 gallery fix holds — 3 tiles on one row, `+N photos` correctly localized (`+7 φωτογραφίες` / `+7 photos` / `+7 фото`), one `<h1>`, no overflow. CLS 0.0029–0.0044.
+- **Shared async states:** with `/api/salons` forced to 500, `role="alert"` and `role="status"` both present, the Retry control renders correctly localized in all four locales, and no legacy palette classes appear.
+- **Legal metadata:** titles unchanged and locale-correct.
+- **Deployed commit's test command:** `npm test` on `c3fc0fc` runs **1071/1071 passing across 192 suites** — the full suite, not the former 856-test subset.
+
+### Beta Visual Baseline — status
+
+**Started.** Taken from Docker's own `beauty_web` `State.StartedAt` (a verifiable record rather than a hand-entered time), following the successful smoke above:
+
+```text
+Beta Visual Baseline began:
+2026-07-30 11:39:31 Europe/Athens (EEST)
+```
+
+Deliberately **not** the merge time (`c3fc0fc`, 08:09 UTC) and **not** the build-start time. From this timestamp onward:
+
+> Post-refresh conversion data is part of the official Beta Visual Baseline.
+
+Everything recorded before it:
+
+> Analytics are valid for instrumentation and preliminary observations only.
+
+```text
+T-067 regressions: 0
+```
+
+**Visual Baseline v1 is officially complete.**
 
 ## Known remaining legacy patterns (unchanged by T-059, listed for later tickets)
 

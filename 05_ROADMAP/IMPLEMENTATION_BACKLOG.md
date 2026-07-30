@@ -1637,6 +1637,47 @@ T-066 regressions: 0
 
 ---
 
+### T-067 — Visual Baseline Consistency & Beta Baseline Verification
+**Priority:** P0 (seventh and final ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
+**Dependencies:** T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅, T-066 ✅
+**Reserved separately:** T-063 — Map Accessibility (explicitly untouched; a test asserts no keyboard/tabIndex work entered `MapView`)
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #62 (`c3fc0fc` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`. **Beta Visual Baseline began `2026-07-30 11:39:31 Europe/Athens (EEST)`.** This ticket closes the Visual Baseline v1 phase.
+
+**Ticket-identity note:** T-067 was confirmed genuinely unused before branching — no collision.
+
+**Scope:** `components/CookieConsent.tsx`, `app/[locale]/privacy/page.tsx`, `app/[locale]/cookies/page.tsx`, `app/[locale]/not-found.tsx`, `components/MapView.tsx` (overlay chrome only), `package.json` test script. Full contract: `docs/06_ENGINEERING/VISUAL_BASELINE_V1.md`'s T-067 section.
+
+**Key changes:**
+- **CI test-coverage gap fixed (most consequential finding):** `npm test` enumerated 38 files by hand while 45 existed — **every visual regression suite from T-062/T-064/T-065/T-066 had never run in CI.** Replaced with filesystem discovery; suite count went 856 → 1071 on the same commit. A guard test blocks any return to a hardcoded list.
+- **Cookie consent:** Direction B tokens, Lucide `X` for the `×` glyph, focus rings added (there were none). Accept/Reject moved onto one shared class constant — equal visual weight is a GDPR requirement, not a style choice; the constant is asserted to carry no brand fill.
+- **Legal pages:** `max-w-shell-reading` (the token T-060 created for exactly this), typography scale, focus ring on the cross-link. Fixed a 320px overflow this ticket introduced by raising the h1 to 28px, which pushed the unbreakable Russian word "конфиденциальности" past the viewport — resolved with inherited `break-words` + `hyphens-auto`.
+- **MapView overlay:** two more hardcoded Greek strings found and fixed (`Εντοπισμός τοποθεσίας`, `Η θέση σας`) — the third and fourth instances of this bug class in four consecutive tickets. The quick-dial link was emoji-only with **no accessible name at all**; now named. Marker/popup/zoom logic untouched.
+- **Recorded, not silently fixed:** the real 404 users see is Next.js's built-in page (no root `app/not-found.tsx`); `SearchFilters.tsx` is dead code; `SalonCard`'s `♀`/`♂` glyphs need a product decision. Each is pinned by a test. Auth/dashboard/admin (~394 legacy utilities) confirmed out of phase scope.
+
+**Verification:** 51 new tests + 1 pre-existing T-018 test updated (locator only, guarantee strengthened). **1071/1071 passing**, and for the first time that covers every test file in the repo. Lint/build clean; bundle flat. Isolated Playwright: 32 combinations (4 locales × 2 legal pages × 4 breakpoints) — zero overflow, one h1, landmark present, 768px reading measure, zero console errors. Consent gating re-verified: zero GA4/GTM requests and no `dataLayer`/`gtag` globals with consent absent.
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 96 breakpoint×locale combinations (legal pages and homepage/search, 4 locales × {320, 375, 390, 768, 1024, 1440}px) — zero overflow, reading measure exactly 768px, one `<h1>`, zero console errors. Consent denied → **zero** GA4/GTM requests; Reject → still zero, cookie `=0`; withdrawal mid-session → no further product events. Accept/Reject confirmed **byte-identical `className`** in the live DOM, both 44px with focus rings. Settings mode: `role="dialog"`, close control with `aria-label="Close"` + Lucide SVG + focus ring, Escape closes. `search_results_view` once on load and **zero** on Back; `salon_open` exactly once; one `contact_action` per click; PII scan clean. T-056: 48 cards **and scroll** restored exactly (9059 → 9059) — an earlier `scrollY=0` reading was a test artifact (clicking the first card makes Playwright scroll to top before dispatching), not a product defect; the same flaw affected T-066's script. MapView in all 4 locales: Leaflet + 2000 markers, no emoji, hardcoded Greek gone from en/ru/uk; marker `tabindex` is Leaflet's native default, unchanged. Salon detail: gallery fix holding (3 tiles, one row), localized `+N photos`, CLS 0.0029–0.0044. Async states: `role="alert"`/`role="status"` + localized Retry in all 4 locales. `npm test` on the deployed commit: **1071/1071**.
+
+```text
+T-067 regressions: 0
+```
+
+**Acceptance Criteria:**
+- [x] Cookie consent UI on Direction B, with equal Accept/Reject weight preserved and enforced
+- [x] Legal pages at reading width with shared typography
+- [x] Shared `AsyncSection` states verified aligned (already tokenised — no change needed)
+- [x] Full cross-page consistency audit, with out-of-scope surfaces explicitly recorded
+- [x] All 4 locales × main breakpoints verified
+- [x] Accessibility verified (landmarks, single h1, accessible names, focus rings)
+- [x] Consent + GA4 invariants verified unchanged; no analytics taxonomy change
+- [x] T-063 Map Accessibility not started (asserted by test)
+- [x] No ranking experiments
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Beta Visual Baseline timestamp recorded — `2026-07-30 11:39:31 Europe/Athens (EEST)`
+- [x] Independent review — **APPROVE**
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
