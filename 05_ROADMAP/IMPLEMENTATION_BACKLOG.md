@@ -1641,7 +1641,7 @@ T-066 regressions: 0
 **Priority:** P0 (seventh and final ticket of the Visual Baseline v1 phase) | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-059 ✅, T-060 ✅, T-062 ✅, T-064 ✅, T-065 ✅, T-066 ✅
 **Reserved separately:** T-063 — Map Accessibility (explicitly untouched; a test asserts no keyboard/tabIndex work entered `MapView`)
-**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge, deploy, and the production smoke that fixes the Beta Baseline timestamp.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #62 (`c3fc0fc` on `main`), `beauty_web` rebuilt and restarted alone — API/DB/Redis/crawler/crawler_worker untouched — production smoke passed on `https://lookla.gr`. **Beta Visual Baseline began `2026-07-30 11:39:31 Europe/Athens (EEST)`.** This ticket closes the Visual Baseline v1 phase.
 
 **Ticket-identity note:** T-067 was confirmed genuinely unused before branching — no collision.
 
@@ -1656,7 +1656,11 @@ T-066 regressions: 0
 
 **Verification:** 51 new tests + 1 pre-existing T-018 test updated (locator only, guarantee strengthened). **1071/1071 passing**, and for the first time that covers every test file in the repo. Lint/build clean; bundle flat. Isolated Playwright: 32 combinations (4 locales × 2 legal pages × 4 breakpoints) — zero overflow, one h1, landmark present, 768px reading measure, zero console errors. Consent gating re-verified: zero GA4/GTM requests and no `dataLayer`/`gtag` globals with consent absent.
 
-**Beta Visual Baseline:** not yet started. Begins at the **production deployment timestamp after a successful smoke**, not at merge. Until recorded: analytics valid for instrumentation and preliminary observations only.
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 96 breakpoint×locale combinations (legal pages and homepage/search, 4 locales × {320, 375, 390, 768, 1024, 1440}px) — zero overflow, reading measure exactly 768px, one `<h1>`, zero console errors. Consent denied → **zero** GA4/GTM requests; Reject → still zero, cookie `=0`; withdrawal mid-session → no further product events. Accept/Reject confirmed **byte-identical `className`** in the live DOM, both 44px with focus rings. Settings mode: `role="dialog"`, close control with `aria-label="Close"` + Lucide SVG + focus ring, Escape closes. `search_results_view` once on load and **zero** on Back; `salon_open` exactly once; one `contact_action` per click; PII scan clean. T-056: 48 cards **and scroll** restored exactly (9059 → 9059) — an earlier `scrollY=0` reading was a test artifact (clicking the first card makes Playwright scroll to top before dispatching), not a product defect; the same flaw affected T-066's script. MapView in all 4 locales: Leaflet + 2000 markers, no emoji, hardcoded Greek gone from en/ru/uk; marker `tabindex` is Leaflet's native default, unchanged. Salon detail: gallery fix holding (3 tiles, one row), localized `+N photos`, CLS 0.0029–0.0044. Async states: `role="alert"`/`role="status"` + localized Retry in all 4 locales. `npm test` on the deployed commit: **1071/1071**.
+
+```text
+T-067 regressions: 0
+```
 
 **Acceptance Criteria:**
 - [x] Cookie consent UI on Direction B, with equal Accept/Reject weight preserved and enforced
@@ -1668,9 +1672,9 @@ T-066 regressions: 0
 - [x] Consent + GA4 invariants verified unchanged; no analytics taxonomy change
 - [x] T-063 Map Accessibility not started (asserted by test)
 - [x] No ranking experiments
-- [ ] Live production verification — pending merge/deploy
-- [ ] Beta Visual Baseline timestamp recorded — pending successful production smoke
-- [ ] Independent review — pending **APPROVE**
+- [x] Live production verification — passed on `https://lookla.gr`
+- [x] Beta Visual Baseline timestamp recorded — `2026-07-30 11:39:31 Europe/Athens (EEST)`
+- [x] Independent review — **APPROVE**
 
 ---
 
