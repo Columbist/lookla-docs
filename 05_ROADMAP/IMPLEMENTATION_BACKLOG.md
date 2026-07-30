@@ -1744,7 +1744,9 @@ T-063 regressions: 0
 ### T-068 — Map Preview Client Navigation & Search Return Preservation
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09
 **Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅
-**Status:** Implemented and isolated-Playwright-verified. Awaiting review, merge and deploy.
+**Status:** ⚠️ Implemented, **APPROVE**, merged via PR #64 (`749aa1e`), deployed to production **2026-07-30 15:52:12 Europe/Athens (EEST)** — `beauty_web` alone, API/DB/Redis/crawler/crawler_worker untouched. Core objective achieved and verified live. **One smoke acceptance point is NOT met** (`search_results_view` still fires on Back via the map path) — root-caused to a pre-existing T-058 limitation outside this ticket's scope, see "Open finding" below. **Not recorded as `regressions: 0`.**
+
+**Map-return-flow UX boundary marker:** `2026-07-30 15:52:12 Europe/Athens (EEST)` — from this deployment, returning from a map-opened salon preserves search state. Useful for segmenting map-path return behaviour in later analysis. This is **not** a baseline reset: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, since T-068 changed no GA4 taxonomy and no conversion-event shape.
 
 **Ticket-identity note:** T-068 confirmed free before branching (highest number previously in use was T-067).
 
@@ -1776,8 +1778,37 @@ Isolated Playwright, full `Map → preview → salon detail → Back` flow with 
 - [x] 48 cards restored after `Map → preview → detail → Back`
 - [x] Scroll restored exactly, against a measured expected value
 - [x] Modifier-click browser defaults preserved
-- [ ] Live production verification — pending merge/deploy
-- [ ] Independent review — pending **APPROVE**
+- [x] Live production verification — passed, except the one item below
+- [x] Independent review — **APPROVE**
+- [ ] ⚠️ `search_results_view` must not fire after Back — **NOT met on the map path** (fires 2×); root cause is outside this ticket, see below
+
+**Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 48 cards established in List first (24 → 48, scrollY 2767), switched to Map, scroll set to its 181px maximum, preview opened by keyboard, navigated to salon detail, browser Back. Results: realm probe read `alive` on the detail page (**client-side, no new document**); returned to `view=map` with Leaflet rendered; **scrollY 181 → 181 exact** against the pre-measured value; **48 cards restored** (confirmed by switching back to List); **no page-1 flash** (card-count sampled 8× during restore, never showed 24); **no repeat initial search fetch** (`/api/salons?limit=24&page=1` did not reappear — only MapView's own `/api/salons/map?` refetch on remount, pre-existing); `salon_open` fired **exactly once** with the unchanged shape and **no second fire on detail mount**; destination, locale (`en`) and query context preserved; `tel:` still a plain `<a href="tel:...">`; Ctrl+click opened a new tab with the correct destination leaving the map page intact; T-063 keyboard model intact; no horizontal overflow; zero console or page errors.
+
+### Open finding — `search_results_view` fires 2× on Back via the map path
+
+**Measured, with a correct comparison baseline:**
+
+| Path | `search_results_view` after `→ detail → Back` |
+|---|---|
+| List (card → detail → Back) | **0** — T-058 dedup works |
+| Map (preview → detail → Back) | **2** |
+
+**Root cause — a pre-existing T-058 design limitation, not caused by T-068.** `lib/searchResultsViewDedup.ts` stores **one** material key per history entry (`Map<entryId, string>`, written with `.set(entryId, key)` and checked with `.get(entryId) === key`). The map view legitimately reports **two different** material keys within a single history entry:
+
+1. `all|0|map|en` — a transient state where `mapLoading` has already gone false but `mapSalons` is still empty
+2. `all|51_plus|map|en` — once map data arrives
+
+The second `.set` **overwrites** the first, so the store ends up holding only key 2. On Back, key 1 no longer matches (fires), then key 2 no longer matches because key 1 was just written (fires). The list path is unaffected because it only ever reports one key per entry. `entryId` was verified **preserved** across the whole cycle (`cddcade6…` before and after), so this is not an entry-identity problem.
+
+**Not a regression.** Before T-068 the map path did a full-document navigation, so the dedup store was destroyed and both keys fired on Back anyway — the count was already 2. T-068 neither improved nor worsened it; it made the gap *visible and fixable* by preserving the realm. (Count-before is inference from the mechanism, not a live measurement, since production now carries T-068.)
+
+**Secondary observation worth its own attention:** the transient `result_count_bucket: "0"` map event reports a "zero results" view that was never a real user-visible state — the map was simply still loading. That inflates the 0-bucket in analytics independently of the dedup issue.
+
+**Candidate fixes (deliberately deferred — T-068's mandate was to change only the navigation mechanism):**
+- *(a)* hold a `Set` of keys per `entryId` instead of a single key — mechanical fix for the dedup;
+- *(b)* suppress the transient empty-map report so the map reports only its settled state — removes the double report at source and also fixes the misleading 0-bucket. Likely the better product fix.
+
+Recommended as a separate ticket covering both, since (b) changes what is reported and therefore needs explicit analytics sign-off.
 
 ---
 
