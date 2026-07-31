@@ -224,10 +224,10 @@ index 645b246..cd6d31f 100644
    test('no new state/ref for map center, zoom, selected marker, or popup was introduced in page.tsx', () => {
 diff --git a/frontend/lib/latestRequest.test.ts b/frontend/lib/latestRequest.test.ts
 new file mode 100644
-index 0000000..b0b46de
+index 0000000..1e0bfe4
 --- /dev/null
 +++ b/frontend/lib/latestRequest.test.ts
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,409 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import { readFileSync } from 'node:fs';
@@ -472,6 +472,39 @@ index 0000000..b0b46de
 +    assert.deepEqual(m.state.salons, ['ok']);
 +  });
 +
++  test('locale change: an old-locale response cannot populate the new-locale page', () => {
++    // Step 8 requires this as its own scenario. Structurally it is the same
++    // guarantee as a filter change — locale is one of loadMapSalons' deps, so
++    // switching it mints a new generation — but it is asserted explicitly
++    // because the failure mode is different: stale data would render under
++    // the *new* locale's accessible names and be reported with the new
++    // locale in analytics, which is worse than merely being out of date.
++    const t = new LatestRequestTracker();
++    const el = t.start();          // request issued while locale = el
++    const ru = t.start();          // user switches to ru
++    assert.equal(t.owns(el), false, 'the el-locale request must lose ownership');
++    assert.equal(t.owns(ru), true);
++    assert.equal(el.signal.aborted, true, 'the superseded locale request is aborted');
++  });
++
++  test('a stale response emits no bucket, so it cannot overwrite the dedup key', async () => {
++    // The dedup key is only written when an event is emitted, and an event is
++    // only emitted when the latest request resolves. A stale response that
++    // cannot resolve therefore cannot touch T-058's per-entry key. Asserted
++    // through the model's event log rather than by reaching into the store.
++    const m = makeMapModel();
++    const A = deferred<string[]>(), B = deferred<string[]>();
++    const runA = m.run(A.promise), runB = m.run(B.promise);
++    B.resolve(new Array(76).fill('glyfada'));
++    await runB;
++    assert.deepEqual(m.events, ['resolved:76'], 'only B reports');
++    A.resolve(new Array(2000).fill('all'));
++    await runA;
++    assert.deepEqual(m.events, ['resolved:76'], 'the stale response must emit nothing at all');
++    assert.equal(m.state.resolved, true);
++    assert.equal(m.state.salons.length, 76, 'and must not change the count the bucket derives from');
++  });
++
 +  test('identical-looking payloads still respect ownership', () => {
 +    // The production stale response was invisible to an analytics-only check
 +    // because both counts bucketed to 51_plus. Ownership must never be
@@ -584,6 +617,18 @@ index 0000000..b0b46de
 +    const map = readFileSync('components/MapView.tsx', 'utf8');
 +    assert.ok(/keyboard: false/.test(map));
 +    assert.ok(/'tabindex', entry\.salon\.id === activeIdRef\.current \? '0' : '-1'/.test(map));
++  });
++
++  test('consent gating is still delegated to trackEvent, not re-implemented', () => {
++    // Consent behaviour (denied emits nothing; withdrawal takes effect on the
++    // next call) is owned by lib/analytics.ts and covered by its own suite plus
++    // T-069's production smoke. What T-070 must guarantee is that it did not
++    // introduce a second, unguarded emission path around it.
++    assert.ok(!/getAnalyticsConsent/.test(codeOnly), 'the page must not gate consent itself');
++    const emissions = [...codeOnly.matchAll(/trackEvent\(/g)].length;
++    assert.equal(emissions, 3, 'no new emission site was added (2 search_results_view + 1 area_select)');
++    const loadFnEmits = /trackEvent\(/.test(loadFn);
++    assert.equal(loadFnEmits, false, 'the fetch path must not emit analytics directly');
 +  });
 +
 +  test('the List fetch was not modified', () => {
