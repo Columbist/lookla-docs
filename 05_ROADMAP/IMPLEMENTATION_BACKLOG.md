@@ -1884,7 +1884,7 @@ Isolated Playwright (map API artificially delayed 6s to reproduce the real produ
 - [x] Live production verification — passed for every T-069 item
 - [x] `Map search_results_view correction boundary` recorded
 - [x] Independent review — **APPROVE**
-- [ ] Stale-response race — **FAILED**; pre-existing, not introduced by T-069, owned by **T-070** (see below)
+- [x] Stale-response race — **FAILED** here; pre-existing, not introduced by T-069, owned by **T-070** ✅ (fixed and verified live on `2026-07-31`)
 
 **Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy, real `gtag.js` intercepted via `dataLayer.push`):**
 
@@ -1900,7 +1900,7 @@ Isolated Playwright (map API artificially delayed 6s to reproduce the real produ
 | 9 | Consent denied | 0 GA/GTM requests, 0 product events ✅ |
 | 10 | Consent withdrawal | 0 further product events ✅ |
 
-### Open finding — stale map response replaces current data (pre-existing, → T-070)
+### Open finding — stale map response replaces current data (pre-existing, → T-070) — ✅ RESOLVED by T-070
 
 There is **no** request-cancellation or latest-request guard in `search/page.tsx`: no `AbortController`, no request token, no `signal`. Confirmed by inspection and then by live measurement.
 
@@ -1929,7 +1929,129 @@ Against the four required properties of a stale response:
 
 **→ T-070 — Map Request Cancellation & Latest-Request Contract.** Should ensure a superseded map request cannot replace current data, re-assert resolution, or emit a bucket, via an `AbortController` or a request-token guard. Needs its own verification including the differing-bucket case that this run could not distinguish.
 
+**Resolved:** T-070 shipped `2026-07-31 17:34:10 Europe/Athens`. The same scenario now leaves 76 markers at 76 in production. The differing-bucket concern was addressed by measuring **marker counts** directly rather than relying on analytics, since both counts share the `51_plus` bucket.
+
 **Analytics data boundary (to be recorded after deploy):** T-069 changes both the meaning and the count of Map `search_results_view`, so its production deployment timestamp must be recorded as a `Map search_results_view correction boundary`. For KPIs using `search_results_view` as a denominator, Map data either side of that boundary must not be mixed without annotation. This does **not** reset the conversion baseline: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, and `salon_open` / `contact_action` are unaffected.
+
+---
+
+### T-070 — Map Request Cancellation & Latest-Request Contract
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-09 | **Phase:** Post-Baseline correctness
+**Dependencies:** T-056 ✅, T-058 ✅, T-063 ✅, T-068 ✅, T-069 ✅
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #66 (`47371ae` on `main`), `beauty_web` rebuilt and recreated alone — API/DB/Redis/crawler/crawler_worker untouched (`Up 2 weeks` / `Up 10 days` across the deploy) — production verification passed on `https://lookla.gr`, including a live reproduction of the original defect.
+
+**The defect** (found during T-069 production verification, pre-existing): a slow `area=all` request landed *after* an in-page filter change to `area=glyfada` had already resolved, and replaced 76 Glyfada markers with 2000 all-area markers while the URL and the active filter still read Glyfada. A data/UI consistency violation, not merely an analytics inaccuracy.
+
+#### Step 1 — Request-lifecycle inventory (before)
+
+Every map-state write lived in one `useCallback` (`loadMapSalons`), started by `useEffect(() => { loadMapSalons(); }, [loadMapSalons])`, plus a Retry button reusing the same callback. Request inputs: `view, area, city, q, category, minRating` (the callback's own deps). There was **no** `AbortController`, no request token, no `signal`, and the effect had **no cleanup at all**.
+
+| State write | Context | Stale request could reach it? |
+|---|---|---|
+| `setMapLoading(true)`, `setMapError(false)`, `setMapResolved(false)` | synchronous, at start | No |
+| `setMapSalons(d)`, `setMapResolved(true)` | `.then` | **Yes** |
+| `setMapSalons([])`, `setMapError(true)` | `.catch` | **Yes** |
+| `setMapLoading(false)` | `.finally` | **Yes** |
+
+All four asynchronous paths were unguarded — matching the observed behaviour exactly.
+
+#### Steps 2–4 — Request identity, cancellation and ownership
+
+`lib/latestRequest.ts` provides a `LatestRequestTracker` (plain class, no React, no DOM, no timers) held in a per-instance ref:
+
+- `start()` aborts the previous controller, creates a new one, and increments a **monotonic generation**, returning a handle.
+- `owns(handle)` is false if the handle's signal is aborted **or** its generation is no longer current.
+- `invalidate()` aborts and bumps the generation without starting anything — used by the effect cleanup, so nothing can write after unmount or after a dependency change.
+
+No new request key was invented: the existing callback dependencies already define the request completely, and a generation is minted whenever a real request starts (including Retry, which reuses the same callback).
+
+**The generation token is the correctness guarantee; `AbortController` is cleanup and best-effort network cancellation.** Ownership is re-checked after *every* async boundary — response, parse, `catch`, and `finally` — and is assigned at start, never inferred by comparing a response against current state afterwards. That distinction is load-bearing: in the production case both counts fell in the same `51_plus` bucket, so a data-comparison or analytics-only check would have seen nothing wrong.
+
+**The `finally` guard is explicit and deliberate:** a stale request settling last must not clear the loading state of a newer request that is still running.
+
+#### Step 5 — Abort handling
+
+`isAbortError(err, signal)` checks both `name === 'AbortError'` and `signal.aborted`, since runtimes differ. An abort renders no error, triggers no Retry UI, marks nothing resolved, clears nothing, and emits no analytics. Non-abort failures from the *latest* request keep their existing behaviour. Unrelated errors are not broadly swallowed — a bare `'AbortError'` string is explicitly rejected by a test.
+
+#### Steps 6–7 — Loading UX and T-069 integration
+
+The presentation decision is untouched — T-070 changes request ownership only. The T-069 resolved-state contract is preserved exactly: only the latest request may set `mapResolved` true, so a stale response can produce no false `"0"`, no bucket from old results, no second event, and no dedup-key overwrite. Event name, payload, bucket definitions, consent gating, `entryId` ownership and the dedup-store structure are all unchanged.
+
+#### Verification — controlled settlement order
+
+35 tests in `lib/latestRequest.test.ts`. Race tests use **deterministic deferred promises**, never timers, so the settlement order is exact (`resolve B; assert; resolve A; assert still B`): A-slow/B-fast, A-fast/B-slow, stale-failure-after-success, stale-success-after-failure, A→B→C, abort, unmount, retry, and an explicit "identical-looking payloads still respect ownership" case. One pre-existing T-056 tripwire updated — it pinned `loadMapSalons` and the one-line effect as byte-unmodified, both of which T-070 necessarily changes; it now asserts the guarantee it actually exists for (restoration never skips, gates or caches the map refetch).
+
+Three scenarios from the test contract initially had no explicit assertion and were added before merge: the **locale-change race** (structurally the same guarantee as a filter change, but asserted separately because stale data rendering under the new locale's accessible names and analytics tagging is a distinct, worse failure); **a stale response emits no bucket, so it cannot overwrite T-058's per-entry dedup key** (asserted through the model's event log, not by reaching into the store); and **consent gating stays delegated to `trackEvent`** — exactly 3 `trackEvent(` call sites, none inside the fetch path.
+
+Full suite **1201/1201** across 213 suites. Lint clean — including a legitimate warning this ticket surfaced and fixed properly rather than suppressed: reading `mapRequestsRef.current` inside the effect cleanup is the pattern that breaks when a ref stops being stable, so the tracker is captured in a local inside the effect. Build clean; search bundle 9.64 → 9.89kB.
+
+#### Isolated Playwright — real filter UI, same realm throughout
+
+| Scenario | Result |
+|---|---|
+| Slow A (`all`, 16s) vs fast B (`glyfada`) — the production defect | **76 markers stay 76** (was 76 → 2000), URL aligned, no extra event, realm confirmed preserved |
+| Stale A settles while B still pending | B stays loading, 0 events; after B resolves, exactly 1 |
+| A → B → C (`all` → `glyfada` → `piraeus`) | C resolves first; A and B land late; **still 1 event, `piraeus`, 90 markers** |
+| Stale 500 after latest success | no error UI, markers kept, **no console errors** |
+| Stale success after latest failure | latest error preserved, no map event |
+| Unmount mid-request | no page errors, no post-unmount write |
+| T-056 / T-068 / T-069 boundaries | Back → `view=map`, scroll **181 → 181**, 48 cards restored, `search_results_view` **0**, `salon_open` **1**, preview still a `Link` with realm alive |
+| T-063 boundary | 2000 markers, 1 × `tabindex="0"`, 49 × `-1`, 2000 named, container `tabindex: null` |
+
+**Verification traps recorded, because each one produced a misleading result before being corrected:**
+- `page.goto()` between A and B **destroys the race** — a full navigation tears down the realm and the pending request. The filter change must go through the real in-page control.
+- The page has **two** `aria-controls` buttons; the header burger renders first, so a naive selector opens the wrong one. Use `div.relative button[aria-controls]`.
+- Clicking an **already-open** popover trigger closes it — an `ensureOpen` helper must check `aria-expanded` first. This silently turned an intended A→B→C into A→B on the first attempt.
+- **"No extra analytics event" alone is not proof.** Glyfada (76) and all-areas (2000) both bucket to `51_plus`, so the original stale response was completely invisible to an analytics-only check. Marker counts had to be measured directly.
+
+#### Production verification — `https://lookla.gr`, after deploy
+
+The original defect was reproduced live against production with the real filter UI, holding request A at the network layer:
+
+| Check | Result |
+|---|---|
+| Slow A (`area=all`, held 15s) vs B (`area=glyfada`) — **the production defect** | markers **76 → 76** after the stale A landed (was 76 → 2000); URL `?view=map&area=glyfada` aligned; realm probe `alive` |
+| Analytics during the race | 3 events (`area_select`, `page_view`, `search_results_view` @ `area: glyfada`); stale A added **none** |
+| Page errors during the race | none |
+| Locale change mid-flight (`en` → `ru` via the real `router.replace()` switcher) | URL `/ru/search?view=map&area=glyfada`, markers **76 → 76**, events 3 → 3, single `search_results_view` tagged `locale: "ru"`, realm `alive` |
+| T-069 boundary | exactly one `search_results_view`, bucket `51_plus` — **not** the false `"0"` |
+| T-063 boundary | 2000 markers, keyboard set bounded at 50 (1 × `tabindex="0"`, 49 × `-1`), the other 1950 carry no `tabindex` and are **not focusable** (verified by `focus()` + `activeElement`); container `tabindex: null`, `role="group"` + label intact; 20 focusable elements page-wide |
+
+**Two further verification traps, recorded because each produced a misleading reading first:**
+- `gtag` pushes an **`arguments` object, not a real `Array`**. An `Array.isArray(a)` guard in a `dataLayer.push` capture helper silently drops every event of interest and yields a vacuous "0 events, so no extra event" pass. Test the array-like shape (`a.length >= 2 && a[0] === 'event'`) instead.
+- The area filter is a native `<select>` inside the popover panel, not a list of option buttons; a `getByRole('option')` locator resolves to a hidden `<option>` and times out.
+
+One smoke assertion of mine was **wrong, not the code**: it expected all 2000 markers to carry a `tabindex`. The bounded keyboard set is capped at `KEYBOARD_MARKER_LIMIT = 50` by T-063's approved design, so 1 + 49 is correct and the remaining markers are correctly left unfocusable.
+
+#### Safety checklist
+
+Backend changed: **No** · Database changed: **No** · API endpoint changed: **No** · Request parameters changed: **No** · Ranking changed: **No** · Clustering changed: **No** · Marker rendering changed: **No** · Map fetching semantics changed: **Only latest-request ownership** · Previous request aborted: **Yes** · Generation/token guard added: **Yes** · Stale success can update state: **No** · Stale failure can update state: **No** · Stale finally can update state: **No** · Abort shown as application error: **No** · T-069 resolved-state contract preserved: **Yes** · False `0` bucket reintroduced: **No** · Analytics taxonomy changed: **No** · Event payload changed: **No** · Consent changed: **No** · T-056 restoration preserved: **Yes** · T-063 keyboard contract preserved: **Yes** · T-068 client navigation preserved: **Yes** · Production touched before review: **No** · PM2 used: **No** · Other containers restarted: **No** · `crawler/celerybeat-schedule` intentionally changed: **No**
+
+**Acceptance Criteria:**
+- [x] Previous map request aborted when a new one starts
+- [x] Monotonic generation token is the ownership guarantee, re-checked after every async boundary
+- [x] Stale success / failure / finally cannot mutate any map state
+- [x] Abort is never an application error and emits no analytics
+- [x] Unmount aborts and invalidates; no post-unmount writes
+- [x] Retry owns loading/error/resolved state
+- [x] T-069 resolved-state contract, analytics taxonomy and consent gating unchanged
+- [x] T-056, T-063, T-068 contracts verified intact
+- [x] List fetching untouched; List view verified (48 cards, scroll, no duplicate event)
+- [x] Live production verification — the original defect reproduced and **no longer reproduces** (76 stays 76)
+- [x] `Map latest-request correctness boundary` recorded
+- [x] Independent review — **APPROVE**
+- [x] T-070 regressions: **0**
+
+**Boundary recorded:**
+
+```text
+Map latest-request correctness boundary:
+2026-07-31 17:34:10 Europe/Athens (EEST)
+```
+
+From this timestamp a superseded map request can no longer replace current map data, re-assert resolution, emit a bucket, or overwrite the per-entry dedup key. This is a **data/UI consistency** boundary, not an analytics-taxonomy one: no event name, payload or bucket definition changed, so no KPI needs re-anchoring to it.
+
+T-070 does **not** redefine either existing boundary — the Beta Visual Baseline stays `2026-07-30 11:39:31 Europe/Athens (EEST)`, and the Map `search_results_view` correction boundary stays `2026-07-30 18:26:17 Europe/Athens`.
 
 ---
 
