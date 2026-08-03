@@ -1,0 +1,903 @@
+diff --git a/.env.example b/.env.example
+index 076cb99..bc451cf 100644
+--- a/.env.example
++++ b/.env.example
+@@ -44,6 +44,17 @@ RESEND_SENDER_EMAIL=noreply@lookla.gr
+ RESEND_SENDER_NAME=Lookla
+ ADMIN_EMAIL=columb@europe.com
+ 
++# ── Log PII pseudonymisation (T-050) ─────────────────────────
++# Keys an HMAC that replaces recipient email addresses in application logs
++# with a stable, non-reversible reference (recipient_ref=<12 hex chars>).
++# Must be its own secret — do NOT reuse SECRET_KEY or a provider credential,
++# since this is read on a logging path. Generate with:
++#   openssl rand -hex 32
++# If unset, logs read `recipient_ref=unavailable`; there is deliberately no
++# unkeyed-hash fallback, because a plain hash of an email address is
++# dictionary-attackable and would only look like protection.
++LOG_PII_HMAC_KEY=CHANGE_ME_generate_with_openssl_rand_hex_32
++
+ # ── Analytics (GA4) ──────────────────────────────────────────
+ # Required before MVP launch (DEC-017). Get from GA4 Admin → Data streams.
+ # Format: G-XXXXXXXXXX. Leave empty until T-013 provisions a real property —
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 2ec4406..6d08260 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -68,6 +68,13 @@ class Settings(BaseSettings):
+     # Sentry
+     sentry_dsn: str = ""
+ 
++    # T-050 — key for HMAC pseudonyms of PII in application logs. Deliberately
++    # separate from secret_key and from any provider credential: it is read on
++    # a logging path, and reusing an auth or API secret there would widen the
++    # blast radius of a log-handling mistake. Empty means no pseudonym is
++    # emitted at all (`recipient_ref=unavailable`) — never an unkeyed digest.
++    log_pii_hmac_key: str = ""
++
+     # JWT
+     access_token_expire_minutes: int = 15
+     refresh_token_expire_days: int = 30
+diff --git a/backend/app/core/log_redaction.py b/backend/app/core/log_redaction.py
+new file mode 100644
+index 0000000..1212bc8
+--- /dev/null
++++ b/backend/app/core/log_redaction.py
+@@ -0,0 +1,142 @@
++"""
++T-050 — keep recipient email addresses out of application logs.
++
++Docker's json-file driver captures stdout/stderr, so an application log line is
++effectively durable storage that no retention policy covers. Writing a user's
++email address there turns a transient delivery problem into a standing PII
++disclosure, which is why `send_email` must never log an address in any form
++that identifies the person — neither the full address nor the domain, since a
++corporate or niche domain (`@hospital.example`, `@lawfirm.example`) can single
++out an employer or an organisation on its own.
++
++Two mechanisms, addressing two different exposure routes:
++
++ 1. `recipient_ref()` — a **keyed HMAC** pseudonym for the one address we know
++    we hold. A plain hash (salted or not) is not enough: email addresses have a
++    small, highly predictable structure, so an attacker holding the log can
++    simply hash a dictionary of candidate addresses and match. HMAC with a key
++    held only by the backend removes that offline attack. The result is stable,
++    so repeated failures for the same address stay correlatable in support
++    work, which is the diagnostic value that omitting the recipient entirely
++    would have cost.
++
++ 2. `scrub()` / `scrub_and_limit()` — HMAC only protects the field we control.
++    Addresses also arrive inside text we do not author: Resend echoes the
++    offending recipient in validation errors (a 422 `Invalid \\`to\\` field`
++    body), and exception messages can carry a URL with the address in a query
++    string. Anything originating outside this process is scrubbed before it
++    reaches a log call.
++
++Note on GDPR: an HMAC pseudonym is **pseudonymisation, not anonymisation** —
++it remains personal data, because the backend holding the key can still link a
++reference to an address. It is a large reduction in exposure, not an exemption.
++"""
++
++import hashlib
++import hmac
++import re
++
++#: Substitution written in place of any address found in third-party text.
++REDACTED_EMAIL = "[redacted-email]"
++
++#: Emitted instead of a pseudonym when no HMAC key is configured. There is
++#: deliberately no fallback to an unkeyed digest: a dictionary-attackable hash
++#: of an email address would give the false impression of protection.
++RECIPIENT_REF_UNAVAILABLE = "unavailable"
++
++#: Hex characters kept from the HMAC digest. 12 hex chars = 48 bits, ample to
++#: distinguish the handful of addresses appearing in any real log window while
++#: keeping the line readable.
++_REF_LENGTH = 12
++
++#: Upper bound on any third-party string reaching a log line. Provider bodies
++#: and exception messages are unbounded and attacker-influenceable; a single
++#: error should not be able to write megabytes into an unrotated log.
++_DEFAULT_LIMIT = 500
++
++_TRUNCATION_SUFFIX = "…[truncated]"
++
++# Matches an addr-spec with an explicit TLD. Callers only ever hold addresses
++# that already passed Pydantic's `EmailStr`, and provider errors echo those same
++# addresses, so requiring a dotted domain covers the realistic exposure without
++# redacting unrelated `user@host` tokens.
++_EMAIL_RE = re.compile(
++    r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}"
++)
++
++# The same address percent-encoded, as it appears when an address has been
++# placed in a URL path or query string and that URL surfaces in an exception.
++_ENCODED_EMAIL_RE = re.compile(
++    r"[A-Za-z0-9._%+\-]+(?:%40|%2540)[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}",
++    re.IGNORECASE,
++)
++
++# Control characters are stripped from anything interpolated into a log line:
++# a newline in a caller-supplied value would otherwise let that value forge an
++# additional, fully attacker-authored log record.
++_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
++
++
++def recipient_ref(address: object, key: str | None) -> str:
++    """
++    Return a stable, non-reversible reference for `address`.
++
++    Returns `RECIPIENT_REF_UNAVAILABLE` when no key is configured or the
++    address is empty. The raw address is never returned, and never appears in
++    any output of this function, on any path.
++    """
++    if not key:
++        return RECIPIENT_REF_UNAVAILABLE
++    if not isinstance(address, str):
++        return RECIPIENT_REF_UNAVAILABLE
++
++    # Normalised so the same mailbox produces one reference regardless of how
++    # it was typed — otherwise "A@x.gr" and "a@x.gr" would look like two
++    # unrelated recipients and defeat the correlation this exists to provide.
++    normalised = address.strip().lower()
++    if not normalised:
++        return RECIPIENT_REF_UNAVAILABLE
++
++    digest = hmac.new(
++        key.encode("utf-8"), normalised.encode("utf-8"), hashlib.sha256
++    ).hexdigest()
++    return digest[:_REF_LENGTH]
++
++
++def scrub(text: object) -> str:
++    """Replace every email address in `text` with `REDACTED_EMAIL`."""
++    if text is None:
++        return ""
++    if not isinstance(text, str):
++        text = str(text)
++    text = _EMAIL_RE.sub(REDACTED_EMAIL, text)
++    return _ENCODED_EMAIL_RE.sub(REDACTED_EMAIL, text)
++
++
++def scrub_and_limit(text: object, limit: int = _DEFAULT_LIMIT) -> str:
++    """
++    Scrub addresses from `text`, then bound its length.
++
++    Order matters and is the point of this function existing: truncating first
++    can cut an address at its domain (`john@exam`), which no longer matches the
++    pattern and so survives scrubbing while still narrowing who the person is.
++    Scrubbing always runs against the complete string.
++    """
++    scrubbed = _CONTROL_RE.sub(" ", scrub(text))
++    if limit <= 0 or len(scrubbed) <= limit:
++        return scrubbed
++    return scrubbed[:limit] + _TRUNCATION_SUFFIX
++
++
++def safe_field(value: object, limit: int = 64) -> str:
++    """
++    Sanitise a short scalar (a template name, a locale) for a log line.
++
++    `send_email`'s `lang` reaches it from an unvalidated request field, so it
++    is treated as untrusted: control characters are removed to prevent log
++    forging, and the length is capped.
++    """
++    if value is None:
++        return ""
++    text = _CONTROL_RE.sub("", str(value))
++    return text[:limit]
+diff --git a/backend/app/services/email.py b/backend/app/services/email.py
+index 7498321..2526d0a 100644
+--- a/backend/app/services/email.py
++++ b/backend/app/services/email.py
+@@ -1,7 +1,11 @@
++import logging
++
+ import httpx
+ from app.core.config import get_settings
++from app.core.log_redaction import recipient_ref, safe_field, scrub_and_limit
+ 
+ settings = get_settings()
++logger = logging.getLogger(__name__)
+ 
+ TEMPLATES = {
+     "verify": {
+@@ -32,8 +36,17 @@ TEMPLATES = {
+ 
+ 
+ async def send_email(to: str, template: str, lang: str = "el", **kwargs) -> bool:
++    # T-050: `to` must never reach a log line. Everything logged below refers
++    # to the recipient only through this keyed pseudonym.
++    ref = recipient_ref(to, settings.log_pii_hmac_key)
++
+     if not settings.resend_api_key:
+-        print(f"[email] No API key — skipping: {template} to {to}")
++        logger.warning(
++            "[email] no API key — skipped template=%s lang=%s recipient_ref=%s",
++            safe_field(template),
++            safe_field(lang),
++            ref,
++        )
+         return False
+ 
+     tmpl = TEMPLATES.get(template, {}).get(lang, TEMPLATES.get(template, {}).get("en"))
+@@ -59,8 +72,24 @@ async def send_email(to: str, template: str, lang: str = "el", **kwargs) -> bool
+                 timeout=10,
+             )
+             if r.status_code not in (200, 201):
+-                print(f"[email] Resend error {r.status_code}: {r.text}")
++                # Resend echoes the offending address in validation errors, so
++                # the body is third-party text and is scrubbed, not trusted.
++                # Request headers and payload are never logged: they carry the
++                # API key and the message body (reset codes, claim tokens).
++                logger.error(
++                    "[email] Resend rejected request status=%s recipient_ref=%s detail=%s",
++                    r.status_code,
++                    ref,
++                    scrub_and_limit(r.text),
++                )
+             return r.status_code in (200, 201)
+         except Exception as e:
+-            print(f"[email] Error: {e}")
++            # Type is logged separately from the message so a transport fault
++            # stays identifiable even after the message has been scrubbed.
++            logger.error(
++                "[email] request failed type=%s recipient_ref=%s detail=%s",
++                type(e).__name__,
++                ref,
++                scrub_and_limit(str(e)),
++            )
+             return False
+diff --git a/backend/tests/test_email_log_redaction.py b/backend/tests/test_email_log_redaction.py
+new file mode 100644
+index 0000000..199317a
+--- /dev/null
++++ b/backend/tests/test_email_log_redaction.py
+@@ -0,0 +1,355 @@
++"""
++T-050: recipient email addresses must never reach application logs.
++
++The defect: `send_email`'s no-API-key fallback printed the intended
++recipient's full address to stdout, which Docker's json-file driver captures
++into an unrotated file. Two further paths leaked the same data without being
++documented — the Resend error body (which echoes the offending address in a
++422) and the exception message.
++
++These tests are deliberately split between behaviour (what the functions
++return, what actually lands in a log record) and source inspection (that the
++call sites cannot regress back to interpolating `to`). Behaviour alone would
++not catch someone re-adding a `print(f"... {to}")` next to a correct call.
++
++The settings this module needs to import app code come from the rootdir
++`conftest.py` (T-071), which pytest loads before collecting anything.
++"""
++import hashlib
++import hmac
++import inspect
++import logging
++import re
++from pathlib import Path
++
++import pytest
++
++from app.core.log_redaction import (
++    RECIPIENT_REF_UNAVAILABLE,
++    REDACTED_EMAIL,
++    recipient_ref,
++    safe_field,
++    scrub,
++    scrub_and_limit,
++)
++
++KEY = "unit-test-hmac-key"
++ADDRESS = "maria.papadopoulou@example.gr"
++
++
++# ───────────────────────────── recipient_ref ─────────────────────────────────
++
++
++def test_ref_is_stable_for_the_same_address_and_key():
++    # Correlating repeated failures for one recipient is the whole reason this
++    # is a pseudonym rather than an omission.
++    assert recipient_ref(ADDRESS, KEY) == recipient_ref(ADDRESS, KEY)
++
++
++def test_ref_differs_between_addresses():
++    assert recipient_ref(ADDRESS, KEY) != recipient_ref("other@example.gr", KEY)
++
++
++def test_ref_differs_between_keys():
++    # Rotating the key must invalidate old references; if it did not, the key
++    # would not actually be participating in the digest.
++    assert recipient_ref(ADDRESS, KEY) != recipient_ref(ADDRESS, "a-different-key")
++
++
++def test_ref_is_short_lowercase_hex():
++    ref = recipient_ref(ADDRESS, KEY)
++    assert len(ref) == 12
++    assert re.fullmatch(r"[0-9a-f]{12}", ref)
++
++
++def test_ref_is_keyed_hmac_not_a_plain_digest():
++    # The load-bearing property: email addresses are dictionary-attackable, so
++    # an unkeyed (or publicly-salted) hash in a log would be reversible by
++    # anyone holding the log. Assert the value is NOT any plain digest of the
++    # address, and IS the HMAC.
++    ref = recipient_ref(ADDRESS, KEY)
++    assert ref != hashlib.sha256(ADDRESS.encode()).hexdigest()[:12]
++    assert ref != hashlib.md5(ADDRESS.encode()).hexdigest()[:12]  # noqa: S324
++    expected = hmac.new(KEY.encode(), ADDRESS.encode(), hashlib.sha256).hexdigest()
++    assert ref == expected[:12]
++
++
++def test_ref_normalises_case_and_surrounding_whitespace():
++    assert recipient_ref("  MARIA.Papadopoulou@Example.GR ", KEY) == recipient_ref(
++        ADDRESS, KEY
++    )
++
++
++@pytest.mark.parametrize("key", ["", None])
++def test_missing_key_yields_unavailable_and_never_a_fallback_digest(key):
++    # Explicitly required by the ticket: no unkeyed SHA-256 fallback, because
++    # that would look like protection while being trivially reversible.
++    ref = recipient_ref(ADDRESS, key)
++    assert ref == RECIPIENT_REF_UNAVAILABLE
++    assert ref != hashlib.sha256(ADDRESS.encode()).hexdigest()[:12]
++
++
++@pytest.mark.parametrize("address", ["", "   ", None, 12345, ["a@b.gr"]])
++def test_ref_handles_empty_and_non_string_addresses(address):
++    assert recipient_ref(address, KEY) == RECIPIENT_REF_UNAVAILABLE
++
++
++def test_ref_never_contains_any_part_of_the_address():
++    ref = recipient_ref(ADDRESS, KEY)
++    for fragment in ("maria", "papadopoulou", "example", "gr", "@"):
++        assert fragment not in ref
++
++
++# ──────────────────────────────── scrub ──────────────────────────────────────
++
++
++def test_scrub_replaces_a_bare_address():
++    assert scrub(f"could not deliver to {ADDRESS} today") == (
++        f"could not deliver to {REDACTED_EMAIL} today"
++    )
++
++
++def test_scrub_handles_a_realistic_resend_validation_body():
++    # This is the shape that made path #2 a leak: the provider hands the
++    # address straight back in the error body.
++    body = '{"statusCode":422,"message":"Invalid `to` field: maria@example.gr","name":"validation_error"}'
++    out = scrub(body)
++    assert "maria@example.gr" not in out
++    assert REDACTED_EMAIL in out
++    # Diagnostic content around the address must survive.
++    assert "422" in out and "validation_error" in out
++
++
++@pytest.mark.parametrize(
++    "text",
++    [
++        "<maria@example.gr>",
++        '"to":["maria@example.gr"]',
++        "maria+booking@example.gr",
++        "maria.p@mail.sub.example.co.uk",
++        "MARIA@EXAMPLE.GR",
++        "contact maria@example.gr, or maria2@example.gr",
++    ],
++)
++def test_scrub_catches_addresses_in_varied_surroundings(text):
++    assert "@" not in scrub(text).replace(REDACTED_EMAIL, "")
++
++
++def test_scrub_catches_percent_encoded_addresses_from_urls():
++    # An address placed in a query string arrives percent-encoded, so the
++    # plain-text pattern alone would miss it.
++    text = "GET https://api.resend.com/x?to=maria%40example.gr failed"
++    out = scrub(text)
++    assert "maria%40example.gr" not in out
++    assert REDACTED_EMAIL in out
++
++
++@pytest.mark.parametrize(
++    "encoded",
++    [
++        "maria%40example.gr",
++        "MARIA%40EXAMPLE.GR",
++        "Maria%40Example.Gr",
++        # The escape itself has no letters to vary (`@` is always %40), so the
++        # case dimension is the address around it; the double-encoded form is
++        # the one that does vary the escape, and appears when a URL that
++        # already contained an address is escaped a second time.
++        "maria%2540example.gr",
++        "MARIA%2540EXAMPLE.GR",
++    ],
++)
++def test_percent_encoded_at_sign_is_caught_in_any_case(encoded):
++    out = scrub(f"failed posting https://api.resend.com/x?to={encoded}")
++    assert "example.gr" not in out.lower()
++    assert REDACTED_EMAIL in out
++
++
++def test_percent_encoded_local_part_is_caught():
++    # A local part carrying an encoded character (`maria%2Bbooking` for
++    # `maria+booking`) still has to be redacted — the `%` is already inside
++    # the accepted local-part character class, but assert it rather than
++    # assume the class covers this shape.
++    out = scrub("to=maria%2Bbooking%40example.gr rejected")
++    assert "example.gr" not in out
++    assert REDACTED_EMAIL in out
++
++
++def test_repr_of_an_exception_is_scrubbed_like_its_str():
++    # `repr()` of an exception embeds the args, so an address reaches a log
++    # through it just as readily as through `str()`. send_email uses str(), but
++    # the scrubber must not depend on which one a future caller picks.
++    err = ValueError(f"could not deliver to {ADDRESS}")
++    assert ADDRESS not in scrub(repr(err))
++    assert ADDRESS not in scrub(str(err))
++    assert REDACTED_EMAIL in scrub(repr(err))
++
++
++def test_exception_chain_text_is_scrubbed():
++    # A wrapped exception carries the inner message; both levels must be clean.
++    inner = ConnectionError(f"refused for {ADDRESS}")
++    outer = RuntimeError(f"send failed: {inner}")
++    assert ADDRESS not in scrub_and_limit(str(outer))
++    assert ADDRESS not in scrub_and_limit(repr(outer))
++
++
++def test_scrub_leaves_non_addresses_alone():
++    # A scrubber that eats ordinary text would destroy the diagnostic value
++    # this ticket is required to preserve.
++    text = "timeout connecting to api.resend.com after 10s (attempt 2)"
++    assert scrub(text) == text
++
++
++@pytest.mark.parametrize("value", [None, 42, ValueError("boom")])
++def test_scrub_accepts_non_string_input(value):
++    assert isinstance(scrub(value), str)
++
++
++# ───────────────────────────── scrub_and_limit ───────────────────────────────
++
++
++def test_scrub_runs_before_truncation():
++    # The trap this ordering exists to avoid: truncating first can cut an
++    # address mid-domain, leaving "maria.papadopoulou@examp" — which no longer
++    # matches the pattern (no TLD) and so survives scrubbing, while still
++    # exposing the entire local part.
++    #
++    # The cut point matters and is asserted, not assumed: an earlier version of
++    # this test used a limit that fell *before* the "@", leaving only a
++    # harmless "mari" fragment. It passed against a deliberately broken
++    # truncate-then-scrub implementation, i.e. it tested nothing.
++    text = "x" * 40 + " " + ADDRESS
++    limit = 65
++    assert text[:limit].endswith("@examp"), "the cut must land inside the domain"
++
++    out = scrub_and_limit(text, limit=limit)
++    assert "maria.papadopoulou" not in out
++    assert "@examp" not in out
++    assert REDACTED_EMAIL in out
++
++
++def test_limit_bounds_provider_text():
++    out = scrub_and_limit("y" * 5000, limit=100)
++    assert len(out) < 200
++    assert out.startswith("y" * 100)
++
++
++def test_short_text_is_not_truncated():
++    assert scrub_and_limit("short detail", limit=100) == "short detail"
++
++
++def test_control_characters_are_removed():
++    # A newline inside third-party text would otherwise let it forge an extra
++    # log record of its own.
++    out = scrub_and_limit("line one\nline two\r\tend")
++    assert "\n" not in out and "\r" not in out and "\t" not in out
++
++
++def test_safe_field_strips_control_characters_and_caps_length():
++    # `lang` reaches send_email from an unvalidated request field.
++    assert "\n" not in safe_field("el\n[email] forged line")
++    assert len(safe_field("z" * 500)) <= 64
++
++
++# ────────────────────── source inspection of the call sites ──────────────────
++
++_EMAIL_SRC = inspect.getsource(
++    __import__("app.services.email", fromlist=["send_email"])
++)
++
++
++def test_email_module_no_longer_uses_print():
++    # print() bypasses logging configuration entirely and was how all three
++    # leaks were written.
++    assert "print(" not in _EMAIL_SRC
++
++
++def test_recipient_is_never_interpolated_into_a_log_line():
++    for forbidden in ("{to}", "%s\", to", "to=%s", ", to,", "{to!r}"):
++        assert forbidden not in _EMAIL_SRC, forbidden
++
++
++def test_send_email_computes_a_recipient_ref():
++    assert "recipient_ref(to, settings.log_pii_hmac_key)" in _EMAIL_SRC
++
++
++def test_provider_text_is_only_logged_through_the_scrubber():
++    # Every occurrence of the response body in the module must be wrapped.
++    for raw in re.finditer(r"r\.text", _EMAIL_SRC):
++        window = _EMAIL_SRC[max(0, raw.start() - 60) : raw.end()]
++        assert "scrub_and_limit(" in window
++
++
++def test_exception_text_is_only_logged_through_the_scrubber():
++    assert "scrub_and_limit(str(e))" in _EMAIL_SRC
++    assert 'detail=%s"' in _EMAIL_SRC or "detail=%s" in _EMAIL_SRC
++
++
++def test_credentials_and_message_body_are_never_logged():
++    log_calls = re.findall(r"logger\.\w+\((.*?)\n\s*\)", _EMAIL_SRC, re.DOTALL)
++    assert log_calls, "expected to find logger calls to inspect"
++    joined = " ".join(log_calls)
++    for forbidden in ("payload", "headers", "resend_api_key", "body", "kwargs"):
++        assert forbidden not in joined, forbidden
++
++
++def test_config_exposes_a_dedicated_hmac_key():
++    config_src = Path(__file__).resolve().parents[1] / "app" / "core" / "config.py"
++    text = config_src.read_text(encoding="utf-8")
++    assert "log_pii_hmac_key" in text
++    # Must not be defaulted to another secret — reusing an auth or provider
++    # credential on a logging path widens the blast radius of a log mistake.
++    assert 'log_pii_hmac_key: str = ""' in text
++
++
++# ─────────────────────────── end-to-end log capture ──────────────────────────
++
++
++def _fallback_records(caplog, address, key):
++    """Run the no-API-key path and return what it logged."""
++    import asyncio
++
++    from app.services import email as email_module
++
++    class _Stub:
++        resend_api_key = ""
++        log_pii_hmac_key = key
++
++    original = email_module.settings
++    email_module.settings = _Stub()
++    try:
++        with caplog.at_level(logging.WARNING, logger=email_module.__name__):
++            sent = asyncio.run(
++                email_module.send_email(address, "reset", lang="ru", code="123456")
++            )
++        return sent, caplog.text
++    finally:
++        email_module.settings = original
++
++
++def test_fallback_path_logs_no_address_and_keeps_returning_false(caplog):
++    sent, text = _fallback_records(caplog, ADDRESS, KEY)
++    # Delivery behaviour is unchanged: this path still reports "not sent".
++    assert sent is False
++    # The actual regression guard.
++    assert ADDRESS not in text
++    assert "maria.papadopoulou" not in text
++    assert "example.gr" not in text, "the domain alone can identify an organisation"
++    # Diagnostic value retained.
++    assert "template=reset" in text
++    assert "lang=ru" in text
++    assert f"recipient_ref={recipient_ref(ADDRESS, KEY)}" in text
++
++
++def test_fallback_path_without_a_key_reports_unavailable(caplog):
++    sent, text = _fallback_records(caplog, ADDRESS, "")
++    assert sent is False
++    assert ADDRESS not in text
++    assert f"recipient_ref={RECIPIENT_REF_UNAVAILABLE}" in text
++
++
++def test_capture_helper_actually_sees_output(caplog):
++    # Negative control. Every assertion above is of the form "X is absent from
++    # the log"; those all pass vacuously if the helper captures nothing, which
++    # is exactly how a redaction test silently stops testing anything.
++    _, text = _fallback_records(caplog, ADDRESS, KEY)
++    assert "[email]" in text and len(text.strip()) > 0
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 7d4e6c3..12a831e 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -79,6 +79,15 @@ services:
+     container_name: beauty_api
+     restart: unless-stopped
+     env_file: .env
++    # T-050: the json-file driver defaults to unbounded growth, so a noisy
++    # error loop could fill the disk — which on this host also holds the live
++    # database. Bounded here rather than daemon-wide so the limit travels with
++    # the compose file instead of depending on host configuration.
++    logging:
++      driver: json-file
++      options:
++        max-size: "10m"
++        max-file: "3"
+     environment:
+       DB_HOST: db
+       REDIS_URL: redis://redis:6379/0
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 08285a4..70b4459 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2058,7 +2058,7 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
+ ### T-071 — Backend test gate does not run (blocking)
+ **Priority:** P0 | **Owner:** OPS/BE | **Epic:** EPIC-09
+ **Dependencies:** None
+-**Status:** Implemented, PR #71. Both halves of the gate demonstrated on real CI. Awaiting review. **Blocks T-050 (PR #70).**
++**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #71 (`25b3bc2` on `main`). Both halves of the gate were demonstrated on real CI before merge. No production deploy — the change touches only the workflow, test configuration, the gate checker, tests and documentation; neither `beauty_api` nor `beauty_web` was rebuilt. Post-merge CI on `main` (run **30803524633**) reports `collected 180 items`, `180 passed`, `backend test gate: tests=180 failures=0 errors=0 skipped=0` — the first time the backend job has reported a real executed count.
+ 
+ **The defect** (found 2026-08-03 while preparing T-050): the backend CI job had never executed a single test.
+ 
+@@ -2125,7 +2125,9 @@ backend test gate: OK
+ 
+ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now`, `test_translate_query`, `test_auth_refresh`) still do not exist. The `continue-on-error` flag was tied to it, but the flag was never what broke the gate — the collection error was. Removing the flag is safe because the existing 180 tests pass; it does not close T-030, and T-030 should no longer be treated as blocking the gate.
+ 
+-**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 must not merge until this ticket is closed; on rebase it must also drop the `os.environ.setdefault` stop-gap from `tests/test_email_log_redaction.py`, which this conftest makes redundant.
++**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 was rebased onto this ticket and its `os.environ.setdefault` stop-gap removed, the rootdir conftest having made it redundant.
++
++**Ordering artefact, now resolved.** Before this ticket, T-050's test module set the three variables via `os.environ.setdefault` at import time so it could be collected on its own. Because pytest collects alphabetically that import landed after `test_areas_endpoint.py` and before `test_owner_claimed.py` and `test_salons_endpoint.py`, so CI on that branch reported `collected 181 items / 1 error` instead of `40 items / 3 errors` — the session was still `Interrupted` and still ran **zero** tests; only the error count moved. It was a filename-ordering-dependent side effect, not a partial fix. The rootdir conftest removes the dependency entirely, and the stop-gap was deleted when T-050 was rebased.
+ 
+ ---
+ 
+@@ -2389,12 +2391,110 @@ Sitemap: https://lookla.gr/sitemap.xml
+ **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+ **Dependencies:** None
+ 
+-**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) currently prints the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). This is captured by Docker's default json-file logging driver, which has no configured size or rotation limit. T-017's Privacy Policy now discloses this behavior honestly rather than silently omitting it; this ticket is to fix the underlying behavior so the disclosure can eventually be removed from the policy.
++**Status:** Implemented and verified. Rebased onto `main` after T-071 restored the backend test gate, so its regression tests now execute in CI. Awaiting independent review; no production deploy yet.
++
++**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) printed the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). Docker's json-file driver captures that with no size or rotation limit, so a transient delivery problem became durable PII storage that no retention policy covers.
++
++#### Leak inventory — the documented path was one of three
++
++| # | Location | What escaped |
++|---|---|---|
++| 1 | `email.py` no-API-key fallback | the recipient's full address (the known defect) |
++| 2 | `email.py` Resend error branch | `r.text` — Resend **echoes the offending address back** in a 422 `Invalid \`to\` field` body |
++| 3 | `email.py` exception branch | `str(e)` unbounded — an address in a URL query string surfaces here percent-encoded |
++
++Paths 2 and 3 were not in the original ticket. Fixing only path 1 would have left the leak reachable through any provider rejection.
++
++#### Design — HMAC pseudonym plus scrubbing
++
++`app/core/log_redaction.py` (pure, no I/O, no framework):
++
++- **`recipient_ref(address, key)`** — `HMAC-SHA256(LOG_PII_HMAC_KEY, normalised_address)`, first 12 hex chars. A plain or publicly-salted hash was rejected as insufficient: email addresses have a small, highly predictable structure, so anyone holding the log could hash a candidate dictionary and match. A key held only by the backend removes that offline attack. Stable output preserves the diagnostic value that omitting the recipient entirely would have cost — repeated failures for one person stay correlatable.
++- **No unkeyed fallback.** With no key configured the log reads `recipient_ref=unavailable`. A fallback digest would look like protection while being trivially reversible.
++- **`scrub()` / `scrub_and_limit()`** — HMAC only protects the field we author. Text we do not author (provider bodies, exception messages) is scrubbed of any address, including percent-encoded forms, then bounded to 500 chars.
++- **Scrub runs before truncation.** Truncating first can cut an address mid-domain (`maria.papadopoulou@examp`), which no longer matches the pattern and so survives scrubbing while still exposing the whole local part.
++- **`safe_field()`** — `lang` reaches `send_email` from an unvalidated request field, so control characters are stripped before it enters a log line; otherwise a newline in it could forge an additional, fully attacker-authored log record.
++- Request headers and payload are never logged — they carry the API key, reset codes and claim tokens.
++
++`LOG_PII_HMAC_KEY` is deliberately its own secret, not `SECRET_KEY` and not a provider credential: it is read on a logging path, and reusing an auth secret there would widen the blast radius of a logging mistake.
++
++#### Verification
++
++230 backend tests (180 on `main` after T-071 + 50 added here), frontend 1202/1202, ruff clean, eslint clean. Under the pre-T-071 CI none of the backend figures would have meant anything — the job exited during collection.
++
++The new tests were checked by **mutation** rather than assumed correct — each leak was deliberately reintroduced to confirm the suite goes red:
++
++| Mutation | Caught by |
++|---|---|
++| original `print(... {to})` restored | 5 tests, incl. the end-to-end capture |
++| `r.text` logged unscrubbed | `test_provider_text_is_only_logged_through_the_scrubber` |
++| unkeyed SHA-256 fallback when key missing | 3 tests |
++| truncate-before-scrub | `test_scrub_runs_before_truncation` — **only after that test was fixed**, see below |
++
++Two of the tests were wrong before the code was:
++
++- `test_scrub_runs_before_truncation` originally chose a truncation limit that fell *before* the `@`, leaving a harmless `mari` fragment. It passed against a deliberately broken truncate-then-scrub implementation — it tested nothing. The cut point is now asserted (`text[:limit].endswith("@examp")`) rather than assumed.
++- The locale-parity check matched the substring "we log the address", which also appears inside the *corrected* sentence "we do **not** write the address", producing a false failure on `ru` and `uk`. It now anchors on the affirmative marker of the old claim ("currently" / "προς το παρόν" / "в настоящее время" / "наразі").
++
++Coverage added on rebase, at review request: `repr(exception)` (which embeds args and leaks an address as readily as `str()`), a wrapped exception chain, a percent-encoded local part, and the double-encoded `%2540` form that appears when a URL already containing an address is escaped a second time — in upper, lower and mixed case. Removing the encoded-address pattern makes 7 tests fail, so the cases discriminate rather than merely pass.
++
++A negative control (`test_capture_helper_actually_sees_output`) guards the whole end-to-end group: every other assertion there is of the form "X is absent from the log", which passes vacuously if the helper captures nothing. It earned its place immediately — under the first mutation it failed, because `print()` bypasses logging and `caplog` saw nothing at all.
++
++Observed output, all three paths, one shared `recipient_ref`:
++
++```text
++WARNING [email] no API key — skipped template=reset lang=ru recipient_ref=65482451984c
++ERROR   [email] Resend rejected request status=422 recipient_ref=65482451984c detail={"statusCode":422,"name":"validation_error","message":"Invalid `to` field. [redacted-email] is not a valid address"}
++ERROR   [email] request failed type=TimeoutError recipient_ref=65482451984c detail=timed out posting https://api.resend.com/emails?to=[redacted-email]
++```
++
++A log-injection attempt through `lang` (`"el\nERROR [email] forged line"`) produces one record, not two.
++
++#### CI evidence — the suites actually ran
++
++Run **30803977520** on the post-T-071 gate:
++
++```text
++backend:  collected 230 items → 230 passed
++          backend test gate: tests=230 failures=0 errors=0 skipped=0
++frontend: 1202/1202
++```
++
++Confirmed from the uploaded JUnit artifact rather than from the total, since a
++larger number alone would not prove *these* tests ran:
++
++| module | testcases in the CI report |
++|---|---|
++| `test_email_log_redaction` (T-050) | **50**, 0 failures / 0 errors / 0 skips |
++| `test_salons_endpoint` | 77 |
++| `test_salons_endpoint`, `test_areas_endpoint`, `test_owner_claimed` combined | 127 |
++| `test_test_gate` (T-071) | 13 |
++
++Those three modules are the ones whose import error used to abort collection: **127 tests that had never executed in CI before** now do.
++
++#### Privacy Policy
++
++T-017's disclosure was **corrected, not deleted**, in all four locales. The behaviour is improved but not eliminated: a keyed-HMAC reference is still written, and because we hold the key it remains personal data. The policy now says the address and its domain are not logged, describes the pseudonymous reference, and states plainly that it is not anonymous data. `lastUpdated` moves `2026-07-21` → `2026-08-03` in all four locales; **if the deploy date slips, this date must be corrected to match it.**
++
++The T-017 tripwire that pinned the old disclosure fired correctly and was updated to assert the new truth, plus a new four-locale parity test.
+ 
+ **Acceptance Criteria:**
+-- [ ] The no-API-key fallback path no longer logs the recipient's full email address (log a redacted/hashed form, or omit the recipient entirely, if a log line is still useful for debugging)
+-- [ ] Docker's `beauty_api` logging driver has a configured `max-size`/`max-file` limit (currently unbounded) — separate, related hardening while touching this area
+-- [ ] Once fixed, update T-017's Privacy Policy (Section 10, Security) to remove the disclosure of this now-resolved behavior
++- [x] No fallback path logs the recipient's address — verified by mutation, not only by a passing test
++- [x] Paths 2 and 3 (provider body, exception message) closed as well
++- [x] Keyed HMAC, dedicated secret, no unkeyed fallback, no domain logged
++- [x] Docker's `beauty_api` logging driver has `max-size: 10m` / `max-file: 3`
++- [x] T-017 Privacy Policy corrected in all four locales
++- [x] Regression tests actually execute in CI — T-071 merged (`25b3bc2`), gate proven red-then-green
++- [ ] Production deploy — requires rebuilding `beauty_api` **and** `beauty_web`, and `LOG_PII_HMAC_KEY` added to `.env` first
++- [ ] Independent review
++
++**Deploy note:** unlike every ticket since T-055, this one is not web-only. The fix lives in the backend and the policy text in the frontend, so both containers must be rebuilt; `db`, `redis`, `crawler` and `crawler_worker` stay untouched. `LOG_PII_HMAC_KEY` must exist in `.env` **before** the api container is recreated, or the first fallback log line will read `recipient_ref=unavailable`.
++
++#### Recorded, not fixed (out of this ticket's boundary)
++
++- **`preferred_language` is unvalidated** — `RegisterIn.preferred_language: str = "el"` accepts any string and flows into `send_email(lang=...)` and into the `User` row (`String(2)`). T-050 defends its own log line via `safe_field()`, but the field should be constrained to `el|en|ru|uk` at the schema.
++- **Every other service still has unbounded logging.** Only `api` was given a limit, per this ticket's scope — and because adding it to `db`/`redis`/`crawler` would require recreating those containers, which is outside any approved deploy.
++- **`print()` remains in `moderation.py` and `payments.py`.** Neither currently interpolates PII, but both bypass logging configuration the same way this defect did.
+ 
+ ---
+ 
+diff --git a/frontend/app/[locale]/privacy/content.ts b/frontend/app/[locale]/privacy/content.ts
+index 005f269..df98a6f 100644
+--- a/frontend/app/[locale]/privacy/content.ts
++++ b/frontend/app/[locale]/privacy/content.ts
+@@ -13,7 +13,7 @@ export interface PrivacyContent {
+ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent> = {
+   en: {
+     title: 'Privacy Policy',
+-    lastUpdated: '2026-07-21',
++    lastUpdated: '2026-08-03',
+     intro: [
+       'This page describes what personal data Lookla ("we", "us") actually collects, stores, and shares today, based on a direct review of the running application — not a generic template.',
+       'Lookla is a marketplace for beauty salons and independent professionals in Greece.',
+@@ -133,7 +133,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+         paragraphs: [
+           'Passwords are stored as bcrypt hashes, never in plain text. Sign-in cookies are HttpOnly, Secure, and SameSite=Lax. All traffic to the site is encrypted (HTTPS). Our database is not directly reachable from the internet.',
+           'We do not currently hold a formal security certification or a published penetration-test report.',
+-          'If our email delivery provider is temporarily not configured, we currently log the intended recipient\'s email address to our server\'s application logs instead of sending the email. We are working to remove this fallback behaviour.',
++          'If our email delivery provider is temporarily not configured, or rejects a message, we do not write the intended recipient\'s email address to our server\'s application logs. We record only the message type and a pseudonymous reference to the recipient — a keyed hash that lets us recognise repeated problems affecting the same person without revealing who they are. Neither the address nor its domain is logged. Because we hold the key, that reference is still personal data rather than anonymous data.',
+         ],
+       },
+       {
+@@ -181,7 +181,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   el: {
+     title: 'Πολιτική Απορρήτου',
+-    lastUpdated: '2026-07-21',
++    lastUpdated: '2026-08-03',
+     intro: [
+       'Αυτή η σελίδα περιγράφει ποια προσωπικά δεδομένα συλλέγει, αποθηκεύει και μοιράζεται σήμερα το Lookla («εμείς»), με βάση απευθείας έλεγχο της εφαρμογής που λειτουργεί — όχι ένα γενικό πρότυπο.',
+       'Το Lookla είναι μια αγορά (marketplace) για κομμωτήρια, σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα.',
+@@ -301,7 +301,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+         paragraphs: [
+           'Οι κωδικοί πρόσβασης αποθηκεύονται ως bcrypt hashes, ποτέ σε απλό κείμενο. Τα cookies σύνδεσης είναι HttpOnly, Secure και SameSite=Lax. Όλη η κίνηση προς την ιστοσελίδα είναι κρυπτογραφημένη (HTTPS). Η βάση δεδομένων μας δεν είναι απευθείας προσβάσιμη από το διαδίκτυο.',
+           'Δεν διαθέτουμε προς το παρόν επίσημη πιστοποίηση ασφαλείας ή δημοσιευμένη αναφορά δοκιμής διείσδυσης.',
+-          'Αν ο πάροχος αποστολής email μας δεν είναι προσωρινά διαμορφωμένος, καταγράφουμε προς το παρόν τη διεύθυνση email του προβλεπόμενου παραλήπτη στα αρχεία καταγραφής εφαρμογής του διακομιστή μας αντί να στείλουμε το email. Εργαζόμαστε για την κατάργηση αυτής της εφεδρικής συμπεριφοράς.',
++          'Αν ο πάροχος αποστολής email μας δεν είναι προσωρινά διαμορφωμένος, ή απορρίψει ένα μήνυμα, δεν καταγράφουμε τη διεύθυνση email του προβλεπόμενου παραλήπτη στα αρχεία καταγραφής εφαρμογής του διακομιστή μας. Καταγράφουμε μόνο τον τύπο του μηνύματος και μια ψευδωνυμοποιημένη αναφορά στον παραλήπτη — έναν hash με κλειδί, που μας επιτρέπει να αναγνωρίζουμε επαναλαμβανόμενα προβλήματα που αφορούν το ίδιο άτομο, χωρίς να αποκαλύπτεται ποιο είναι. Δεν καταγράφεται ούτε η διεύθυνση ούτε ο τομέας της. Επειδή κατέχουμε το κλειδί, η αναφορά αυτή εξακολουθεί να αποτελεί προσωπικό δεδομένο και όχι ανώνυμο δεδομένο.',
+         ],
+       },
+       {
+@@ -349,7 +349,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   ru: {
+     title: 'Политика конфиденциальности',
+-    lastUpdated: '2026-07-21',
++    lastUpdated: '2026-08-03',
+     intro: [
+       'Эта страница описывает, какие персональные данные Lookla («мы») действительно собирает, хранит и передаёт сегодня — на основе прямой проверки работающего приложения, а не общего шаблона.',
+       'Lookla — это маркетплейс салонов красоты и независимых специалистов в Греции.',
+@@ -469,7 +469,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+         paragraphs: [
+           'Пароли хранятся в виде bcrypt-хэшей, никогда в открытом виде. Cookie для входа — HttpOnly, Secure и SameSite=Lax. Весь трафик к сайту зашифрован (HTTPS). Наша база данных недоступна напрямую из интернета.',
+           'У нас пока нет формальной сертификации безопасности или опубликованного отчёта о тестировании на проникновение.',
+-          'Если наш провайдер доставки email временно не настроен, мы в настоящее время записываем адрес email предполагаемого получателя в журналы приложения нашего сервера вместо отправки письма. Мы работаем над устранением этого резервного поведения.',
++          'Если наш провайдер доставки email временно не настроен или отклонил письмо, мы не записываем адрес email предполагаемого получателя в журналы приложения нашего сервера. Мы фиксируем только тип сообщения и псевдонимную ссылку на получателя — хэш с секретным ключом, который позволяет нам распознавать повторяющиеся проблемы у одного и того же человека, не раскрывая, кто это. Ни сам адрес, ни его домен в журналы не попадают. Поскольку ключ хранится у нас, такая ссылка остаётся персональными данными, а не анонимными.',
+         ],
+       },
+       {
+@@ -517,7 +517,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+ 
+   uk: {
+     title: 'Політика конфіденційності',
+-    lastUpdated: '2026-07-21',
++    lastUpdated: '2026-08-03',
+     intro: [
+       'Ця сторінка описує, які персональні дані Lookla («ми») справді збирає, зберігає та передає сьогодні — на основі прямої перевірки застосунку, що працює, а не загального шаблону.',
+       'Lookla — це маркетплейс салонів краси та незалежних фахівців у Греції.',
+@@ -637,7 +637,7 @@ export const PRIVACY_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', PrivacyContent>
+         paragraphs: [
+           'Паролі зберігаються у вигляді bcrypt-хешів, ніколи у відкритому вигляді. Cookie для входу — HttpOnly, Secure і SameSite=Lax. Весь трафік до сайту зашифрований (HTTPS). Наша база даних недоступна безпосередньо з інтернету.',
+           'У нас поки немає формальної сертифікації безпеки чи опублікованого звіту про тестування на проникнення.',
+-          'Якщо наш провайдер доставки email тимчасово не налаштований, ми наразі записуємо адресу email передбачуваного отримувача в журнали застосунку нашого сервера замість надсилання листа. Ми працюємо над усуненням цієї резервної поведінки.',
++          'Якщо наш провайдер доставки email тимчасово не налаштований або відхилив лист, ми не записуємо адресу email передбачуваного отримувача в журнали застосунку нашого сервера. Ми фіксуємо лише тип повідомлення та псевдонімне посилання на отримувача — хеш із секретним ключем, який дозволяє нам розпізнавати повторювані проблеми в однієї й тієї самої людини, не розкриваючи, хто це. Ані сама адреса, ані її домен до журналів не потрапляють. Оскільки ключ зберігається в нас, таке посилання залишається персональними даними, а не анонімними.',
+         ],
+       },
+       {
+diff --git a/frontend/lib/privacyContent.test.ts b/frontend/lib/privacyContent.test.ts
+index 35c9466..8d2d7a4 100644
+--- a/frontend/lib/privacyContent.test.ts
++++ b/frontend/lib/privacyContent.test.ts
+@@ -285,9 +285,50 @@ describe('T-017: remaining factual corrections applied', () => {
+     assert.ok(!/formal security certification.*TODO/i.test(text));
+   });
+ 
+-  test('discloses the Resend-fallback recipient-email logging behaviour', () => {
++  test('no longer claims that recipient email addresses are written to logs (T-050)', () => {
++    // T-017 added this disclosure because the behaviour was real: the
++    // no-API-key fallback printed the recipient's address to stdout. T-050
++    // fixed the behaviour, so the honest disclosure changed rather than
++    // disappeared — the address is gone from the logs, but a keyed-HMAC
++    // reference to the recipient is still written, and that remains personal
++    // data. This test therefore pins the *new* truth, in every locale, rather
++    // than being deleted along with the old claim.
+     const text = JSON.stringify(PRIVACY_CONTENT.en.sections);
+-    assert.ok(/log the intended recipient.s email address/i.test(text));
++    assert.ok(
++      !/we currently log the intended recipient.s email address/i.test(text),
++      'the resolved behaviour must not still be disclosed as current',
++    );
++    assert.ok(
++      /do not write the intended recipient's email address/i.test(text),
++      'the policy must state that the address is not logged',
++    );
++    assert.ok(
++      /pseudonymous reference/i.test(text) && /keyed hash/i.test(text),
++      'the policy must describe what is logged instead',
++    );
++    assert.ok(
++      /still personal data/i.test(text),
++      'pseudonymisation must not be presented as anonymisation',
++    );
++  });
++
++  test('the recipient-logging disclosure is corrected in every locale, not just English', () => {
++    // Four consecutive earlier tickets shipped a change in one locale only;
++    // this asserts parity directly rather than trusting review to catch it.
++    // Each alternative anchors on the *affirmative* marker of the old claim
++    // ("currently" / "προς το παρόν" / "в настоящее время" / "наразі").
++    // Matching only "we log the address" would also match the corrected
++    // sentence, which says "we do NOT write the address" — an earlier version
++    // of this pattern did exactly that and reported a false failure.
++    const stale = /(currently log the intended recipient|καταγράφουμε προς το παρόν τη διεύθυνση email|в настоящее время записываем адрес email|наразі записуємо адресу email)/i;
++    for (const locale of ['en', 'el', 'ru', 'uk'] as const) {
++      const text = JSON.stringify(PRIVACY_CONTENT[locale].sections);
++      assert.ok(!stale.test(text), `${locale} still carries the pre-T-050 disclosure`);
++      assert.ok(
++        /(pseudonymous reference|ψευδωνυμοποιημένη αναφορά|псевдонимную ссылку|псевдонімне посилання)/i.test(text),
++        `${locale} must describe the pseudonymous reference that replaced it`,
++      );
++    }
+   });
+ 
+   test('inactive-SDK codebase discussion (Sentry/moderation) is trimmed from the public-facing text', () => {

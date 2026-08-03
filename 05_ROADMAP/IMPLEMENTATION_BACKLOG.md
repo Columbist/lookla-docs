@@ -2055,6 +2055,82 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
 
 ---
 
+### T-071 — Backend test gate does not run (blocking)
+**Priority:** P0 | **Owner:** OPS/BE | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #71 (`25b3bc2` on `main`). Both halves of the gate were demonstrated on real CI before merge. No production deploy — the change touches only the workflow, test configuration, the gate checker, tests and documentation; neither `beauty_api` nor `beauty_web` was rebuilt. Post-merge CI on `main` (run **30803524633**) reports `collected 180 items`, `180 passed`, `backend test gate: tests=180 failures=0 errors=0 skipped=0` — the first time the backend job has reported a real executed count.
+
+**The defect** (found 2026-08-03 while preparing T-050): the backend CI job had never executed a single test.
+
+`pytest` failed during **collection**, not during any test:
+
+```text
+collected 40 items / 3 errors
+ERROR collecting tests/test_areas_endpoint.py
+ERROR collecting tests/test_owner_claimed.py
+ERROR collecting tests/test_salons_endpoint.py
+E   pydantic_core._pydantic_core.ValidationError: 3 validation errors for Settings
+!!!!!!!!!!!!!!!!!!! Interrupted: 3 errors during collection !!!!!!!!!!!!!!!!!!!!
+```
+
+Those modules import `app.main` → `Settings` → requires `SECRET_KEY`, `DB_USER`, `DB_PASSWORD`. CI set none. A collection error interrupts the whole session, so **zero tests ran**, and `continue-on-error: true` reported success regardless.
+
+The two faults compound, which is why this survived so long: the collection error means nothing runs, and the flag means nothing is reported. Every backend ✅ from T-001 to T-070 is consistent with this state — the green tick reflected a job that exited early, not a suite that passed. The flag was added deliberately ("until T-030 (tests) is complete") and was reasonable when written; the interaction with a silent collection failure was not foreseen.
+
+#### Fix
+
+- **`backend/conftest.py`** — pytest imports the rootdir conftest before collecting any test module, so the required settings exist whichever module is imported first. Deliberately *not* an `os.environ.setdefault` inside a test file: that only helps modules sorting after it alphabetically, which is exactly why the T-050 branch saw the error count move `3 → 1` while still running zero tests. Values are set unconditionally rather than with `setdefault`, because `Settings` also reads the repo-root `.env` — on a deployment host that holds real credentials, and a test run must be identical everywhere.
+- **`continue-on-error: true` removed** from the Tests step.
+- **`backend/scripts/check_test_gate.py`** — a second, independent check that reads pytest's JUnit report and fails on zero tests, on failures, on errors (collection errors count here) or on a missing report. pytest's exit code remains the primary gate; this guards the one failure mode an exit code can no longer express once something swallows it. Runs with `if: always()`.
+- **The checker has its own tests** (13), each asserting the *rejecting* path. A gate-checker that always returns 0 is indistinguishable from a working one while everything is healthy — the same blind spot being fixed.
+- JUnit report uploaded as a build artifact.
+
+#### Contract evidence
+
+| # | Requirement | Evidence |
+|---|---|---|
+| 1 | Required settings present before collection | `backend/conftest.py`; suite runs with **no** env setup at all |
+| 2 | Independent of test-file name/order | rootdir conftest, imported before all collection |
+| 3 | No `continue-on-error` / `\|\| true` / `set +e` | removed; none remain in the workflow |
+| 4 | Collection error → red | `errors` counter checked by the gate script |
+| 5 | Test failure → red | run **30799128415**, below |
+| 6 | Zero collected tests → red | `--min-tests 1`; unit-tested in `test_test_gate.py` |
+| 7 | Job shows the real executed count | `backend test gate: tests=180 failures=0 errors=0 skipped=0` |
+| 8 | Deliberate failure demonstrably reds CI | run **30799128415** |
+| 9 | Green again once reverted | run **30799322609** |
+| 10 | Both runs kept as evidence | recorded here |
+
+**Run 30799128415 — deliberately red** (commit `f145d69` added `tests/test_t071_gate_proof.py` asserting `1 == 2`):
+
+```text
+collected 181 items
+1 failed, 180 passed
+##[error]Process completed with exit code 1.
+FAIL: 1 test failure(s)
+backend test gate: tests=181 failures=1 errors=0 skipped=0
+```
+
+Both mechanisms fired independently — pytest's exit code *and* the report check. Note `collected 181 items` with **no** collection errors: the conftest fixed collection completely.
+
+**Run 30799322609 — green after removing the proof test:**
+
+```text
+collected 180 items
+180 passed
+backend test gate: tests=180 failures=0 errors=0 skipped=0
+backend test gate: OK
+```
+
+#### Consequence for T-030
+
+T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now`, `test_translate_query`, `test_auth_refresh`) still do not exist. The `continue-on-error` flag was tied to it, but the flag was never what broke the gate — the collection error was. Removing the flag is safe because the existing 180 tests pass; it does not close T-030, and T-030 should no longer be treated as blocking the gate.
+
+**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 was rebased onto this ticket and its `os.environ.setdefault` stop-gap removed, the rootdir conftest having made it redundant.
+
+**Ordering artefact, now resolved.** Before this ticket, T-050's test module set the three variables via `os.environ.setdefault` at import time so it could be collected on its own. Because pytest collects alphabetically that import landed after `test_areas_endpoint.py` and before `test_owner_claimed.py` and `test_salons_endpoint.py`, so CI on that branch reported `collected 181 items / 1 error` instead of `40 items / 3 errors` — the session was still `Interrupted` and still ran **zero** tests; only the error count moved. It was a filename-ordering-dependent side effect, not a partial fix. The rootdir conftest removes the dependency entirely, and the stop-gap was deleted when T-050 was rebased.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
@@ -2315,12 +2391,139 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
 
-**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) currently prints the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). This is captured by Docker's default json-file logging driver, which has no configured size or rotation limit. T-017's Privacy Policy now discloses this behavior honestly rather than silently omitting it; this ticket is to fix the underlying behavior so the disclosure can eventually be removed from the policy.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #70 (`a07b2e6` on `main`), `beauty_api` **and** `beauty_web` rebuilt and recreated together — `db`, `redis`, `crawler` and `crawler_worker` untouched (`Up 2 weeks` / `Up 12 days` across the deploy). Production smoke passed on `https://lookla.gr`.
+
+**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) printed the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). Docker's json-file driver captures that with no size or rotation limit, so a transient delivery problem became durable PII storage that no retention policy covers.
+
+#### Leak inventory — the documented path was one of three
+
+| # | Location | What escaped |
+|---|---|---|
+| 1 | `email.py` no-API-key fallback | the recipient's full address (the known defect) |
+| 2 | `email.py` Resend error branch | `r.text` — Resend **echoes the offending address back** in a 422 `Invalid \`to\` field` body |
+| 3 | `email.py` exception branch | `str(e)` unbounded — an address in a URL query string surfaces here percent-encoded |
+
+Paths 2 and 3 were not in the original ticket. Fixing only path 1 would have left the leak reachable through any provider rejection.
+
+#### Design — HMAC pseudonym plus scrubbing
+
+`app/core/log_redaction.py` (pure, no I/O, no framework):
+
+- **`recipient_ref(address, key)`** — `HMAC-SHA256(LOG_PII_HMAC_KEY, normalised_address)`, first 12 hex chars. A plain or publicly-salted hash was rejected as insufficient: email addresses have a small, highly predictable structure, so anyone holding the log could hash a candidate dictionary and match. A key held only by the backend removes that offline attack. Stable output preserves the diagnostic value that omitting the recipient entirely would have cost — repeated failures for one person stay correlatable.
+- **No unkeyed fallback.** With no key configured the log reads `recipient_ref=unavailable`. A fallback digest would look like protection while being trivially reversible.
+- **`scrub()` / `scrub_and_limit()`** — HMAC only protects the field we author. Text we do not author (provider bodies, exception messages) is scrubbed of any address, including percent-encoded forms, then bounded to 500 chars.
+- **Scrub runs before truncation.** Truncating first can cut an address mid-domain (`maria.papadopoulou@examp`), which no longer matches the pattern and so survives scrubbing while still exposing the whole local part.
+- **`safe_field()`** — `lang` reaches `send_email` from an unvalidated request field, so control characters are stripped before it enters a log line; otherwise a newline in it could forge an additional, fully attacker-authored log record.
+- Request headers and payload are never logged — they carry the API key, reset codes and claim tokens.
+
+`LOG_PII_HMAC_KEY` is deliberately its own secret, not `SECRET_KEY` and not a provider credential: it is read on a logging path, and reusing an auth secret there would widen the blast radius of a logging mistake.
+
+#### Verification
+
+230 backend tests (180 on `main` after T-071 + 50 added here), frontend 1202/1202, ruff clean, eslint clean. Under the pre-T-071 CI none of the backend figures would have meant anything — the job exited during collection.
+
+The new tests were checked by **mutation** rather than assumed correct — each leak was deliberately reintroduced to confirm the suite goes red:
+
+| Mutation | Caught by |
+|---|---|
+| original `print(... {to})` restored | 5 tests, incl. the end-to-end capture |
+| `r.text` logged unscrubbed | `test_provider_text_is_only_logged_through_the_scrubber` |
+| unkeyed SHA-256 fallback when key missing | 3 tests |
+| truncate-before-scrub | `test_scrub_runs_before_truncation` — **only after that test was fixed**, see below |
+
+Two of the tests were wrong before the code was:
+
+- `test_scrub_runs_before_truncation` originally chose a truncation limit that fell *before* the `@`, leaving a harmless `mari` fragment. It passed against a deliberately broken truncate-then-scrub implementation — it tested nothing. The cut point is now asserted (`text[:limit].endswith("@examp")`) rather than assumed.
+- The locale-parity check matched the substring "we log the address", which also appears inside the *corrected* sentence "we do **not** write the address", producing a false failure on `ru` and `uk`. It now anchors on the affirmative marker of the old claim ("currently" / "προς το παρόν" / "в настоящее время" / "наразі").
+
+Coverage added on rebase, at review request: `repr(exception)` (which embeds args and leaks an address as readily as `str()`), a wrapped exception chain, a percent-encoded local part, and the double-encoded `%2540` form that appears when a URL already containing an address is escaped a second time — in upper, lower and mixed case. Removing the encoded-address pattern makes 7 tests fail, so the cases discriminate rather than merely pass.
+
+A negative control (`test_capture_helper_actually_sees_output`) guards the whole end-to-end group: every other assertion there is of the form "X is absent from the log", which passes vacuously if the helper captures nothing. It earned its place immediately — under the first mutation it failed, because `print()` bypasses logging and `caplog` saw nothing at all.
+
+Observed output, all three paths, one shared `recipient_ref`:
+
+```text
+WARNING [email] no API key — skipped template=reset lang=ru recipient_ref=65482451984c
+ERROR   [email] Resend rejected request status=422 recipient_ref=65482451984c detail={"statusCode":422,"name":"validation_error","message":"Invalid `to` field. [redacted-email] is not a valid address"}
+ERROR   [email] request failed type=TimeoutError recipient_ref=65482451984c detail=timed out posting https://api.resend.com/emails?to=[redacted-email]
+```
+
+A log-injection attempt through `lang` (`"el\nERROR [email] forged line"`) produces one record, not two.
+
+#### CI evidence — the suites actually ran
+
+Run **30803977520** on the post-T-071 gate:
+
+```text
+backend:  collected 230 items → 230 passed
+          backend test gate: tests=230 failures=0 errors=0 skipped=0
+frontend: 1202/1202
+```
+
+Confirmed from the uploaded JUnit artifact rather than from the total, since a
+larger number alone would not prove *these* tests ran:
+
+| module | testcases in the CI report |
+|---|---|
+| `test_email_log_redaction` (T-050) | **50**, 0 failures / 0 errors / 0 skips |
+| `test_salons_endpoint` | 77 |
+| `test_salons_endpoint`, `test_areas_endpoint`, `test_owner_claimed` combined | 127 |
+| `test_test_gate` (T-071) | 13 |
+
+Those three modules are the ones whose import error used to abort collection: **127 tests that had never executed in CI before** now do.
+
+#### Privacy Policy
+
+T-017's disclosure was **corrected, not deleted**, in all four locales. The behaviour is improved but not eliminated: a keyed-HMAC reference is still written, and because we hold the key it remains personal data. The policy now says the address and its domain are not logged, describes the pseudonymous reference, and states plainly that it is not anonymous data. `lastUpdated` moves `2026-07-21` → `2026-08-03` in all four locales; **if the deploy date slips, this date must be corrected to match it.**
+
+The T-017 tripwire that pinned the old disclosure fired correctly and was updated to assert the new truth, plus a new four-locale parity test.
 
 **Acceptance Criteria:**
-- [ ] The no-API-key fallback path no longer logs the recipient's full email address (log a redacted/hashed form, or omit the recipient entirely, if a log line is still useful for debugging)
-- [ ] Docker's `beauty_api` logging driver has a configured `max-size`/`max-file` limit (currently unbounded) — separate, related hardening while touching this area
-- [ ] Once fixed, update T-017's Privacy Policy (Section 10, Security) to remove the disclosure of this now-resolved behavior
+- [x] No fallback path logs the recipient's address — verified by mutation, not only by a passing test
+- [x] Paths 2 and 3 (provider body, exception message) closed as well
+- [x] Keyed HMAC, dedicated secret, no unkeyed fallback, no domain logged
+- [x] Docker's `beauty_api` logging driver has `max-size: 10m` / `max-file: 3`
+- [x] T-017 Privacy Policy corrected in all four locales
+- [x] Regression tests actually execute in CI — T-071 merged (`25b3bc2`), gate proven red-then-green
+- [x] Production deploy — `beauty_api` + `beauty_web` only; `LOG_PII_HMAC_KEY` installed in `.env` before the api container was recreated
+- [x] Independent review — **APPROVE**
+- [x] T-050 regressions: **0**
+
+**Deploy note:** unlike every ticket since T-055, this one is not web-only. The fix lives in the backend and the policy text in the frontend, so both containers must be rebuilt; `db`, `redis`, `crawler` and `crawler_worker` stay untouched. `LOG_PII_HMAC_KEY` must exist in `.env` **before** the api container is recreated, or the first fallback log line will read `recipient_ref=unavailable`.
+
+#### Production smoke — `https://lookla.gr`, after deploy
+
+**Boundary recorded:**
+
+```text
+Email log-redaction boundary:
+2026-08-03 13:54:58 Europe/Athens (EEST)   — beauty_api  (the security boundary)
+2026-08-03 13:55:00 Europe/Athens (EEST)   — beauty_web  (Privacy Policy wording)
+```
+
+Deploy verified: `LOG_PII_HMAC_KEY` present in the api container (64 chars, distinct from `SECRET_KEY` and from the Resend key, single `.env` line), and the json-file driver now reports `max-file:3 max-size:10m` on `beauty_api`.
+
+| Check | Result |
+|---|---|
+| Probe identifiers anywhere in `beauty_api` / `beauty_web` / nginx logs | **0 occurrences** of the address, the bare domain, `%40` or `%2540` forms, in any case |
+| All three branches under the **live container's real settings** | one stable `recipient_ref` across all three; a second address produced a different ref; `[redacted-email]` substituted 3× |
+| Secrets in log records | no Resend key, no `Authorization`, no `Bearer`, no reset code |
+| Log forging | no embedded newlines; record count equals emission count |
+| Privacy Policy, 4 locales | new wording present, pre-T-050 wording absent, `lastUpdated 2026-08-03`, no console or hydration errors |
+| Pages | `/privacy` and `/cookies` 200 in all 4 locales; `/`, `/en/search`, `?view=map`, `/api/salons`, `/api/areas` all 200 |
+| Backend errors since deploy | no tracebacks, nothing from `log_redaction` |
+
+**What could not be proven live, stated plainly.** A *synchronous* provider rejection is not reachable from production without changing configuration, which the review explicitly prohibited. A real send to the synthetic recipient, and three concurrent password-reset sends, were all **accepted** by Resend, so no error branch fired. That run's only live assertion is a negative one — no address appears in the logs — and a negative assertion over an empty set proves nothing on its own. The branch behaviour was therefore exercised inside the running container against the real settings object, which proves the production key yields a valid 12-hex reference and that scrubbing works under production configuration, but does not re-prove the journey to `docker logs`; that path is covered by the CI end-to-end capture test, which asserts against a real `caplog` and fails when `print()` bypasses logging.
+
+**Synthetic data removed.** `t050-probe@t050-probe.lookla.gr` — a subdomain of our own domain with no MX, chosen because the review's `example.invalid` is a reserved special-use name that Pydantic's `EmailStr` rejects before `send_email` is ever called. Cleanup deleted 3 `password_resets`, 1 `email_verifications` and 1 `users` row; 0 remain.
+
+**No boundary redefined:** the Beta Visual Baseline stays `2026-07-30 11:39:31`, the Map `search_results_view` correction boundary stays `2026-07-30 18:26:17`, and the Map latest-request correctness boundary stays `2026-07-31 17:34:10` — all Europe/Athens.
+
+#### Recorded, not fixed (out of this ticket's boundary)
+
+- **`preferred_language` is unvalidated** — `RegisterIn.preferred_language: str = "el"` accepts any string and flows into `send_email(lang=...)` and into the `User` row (`String(2)`). T-050 defends its own log line via `safe_field()`, but the field should be constrained to `el|en|ru|uk` at the schema.
+- **Every other service still has unbounded logging.** Only `api` was given a limit, per this ticket's scope — and because adding it to `db`/`redis`/`crawler` would require recreating those containers, which is outside any approved deploy.
+- **`print()` remains in `moderation.py` and `payments.py`.** Neither currently interpolates PII, but both bypass logging configuration the same way this defect did.
 
 ---
 

@@ -1,0 +1,383 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 2dd4fb2..8c3a82a 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -26,10 +26,27 @@ jobs:
+         with:
+           version: "0.12.3"
+           src: "backend"
++      # T-071: this step used to carry `continue-on-error: true`, added while
++      # T-030 was outstanding. Combined with a collection error that aborted
++      # the session before any test ran, it meant the backend job was green
++      # for seventy tickets without ever executing a test. The flag is gone;
++      # a failing or non-running suite must now block the merge.
+       - name: Tests
+-        # continue-on-error until T-030 (tests) is complete — remove flag after T-030
+-        continue-on-error: true
+-        run: pytest --tb=short
++        run: pytest --tb=short --junitxml=backend-test-results.xml
++      # Independent of pytest's exit code, which a future `continue-on-error`,
++      # `|| true`, or lost `set -e` could swallow. `if: always()` so a suite
++      # that dies mid-run is still judged on what it managed to report — and
++      # a missing report is itself a failure.
++      - name: Verify the test gate actually ran
++        if: always()
++        run: python scripts/check_test_gate.py backend-test-results.xml --min-tests 1
++      - name: Upload test report
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: backend-test-results
++          path: backend/backend-test-results.xml
++          if-no-files-found: warn
+ 
+   frontend:
+     runs-on: ubuntu-latest
+diff --git a/backend/conftest.py b/backend/conftest.py
+new file mode 100644
+index 0000000..fad7f2c
+--- /dev/null
++++ b/backend/conftest.py
+@@ -0,0 +1,40 @@
++"""
++T-071 — make the backend test suite collectable without real secrets.
++
++Three test modules import `app.main`, which constructs `Settings`, which
++requires `SECRET_KEY`, `DB_USER` and `DB_PASSWORD`. CI supplied none of them,
++so those modules raised during **collection** — and a collection error
++interrupts the whole pytest session, meaning zero tests ran. Combined with
++`continue-on-error: true` on the CI step, the job reported success anyway.
++Every backend "pass" from T-001 to T-070 reflected a session that exited
++before running anything.
++
++This file is the fix's location for a reason. pytest imports the rootdir
++`conftest.py` before it collects any test module, so the values below are in
++place no matter which module is imported first. The previous stop-gap — a
++`os.environ.setdefault` at the top of one test file — worked only for modules
++that happened to sort after it alphabetically, which made the number of
++collection errors depend on filenames.
++
++The values are deliberately obvious placeholders. Nothing in the suite opens a
++network or database connection: the endpoint tests build their own SQLite
++in-memory engine and override `get_db`, and the migration tests read files.
++These exist purely so `Settings` can be constructed.
++"""
++
++import os
++
++# Set unconditionally rather than with `setdefault`. `Settings` also reads the
++# repo-root `.env`, which on a deployment host holds real credentials; pinning
++# the values here keeps a test run identical everywhere and stops a developer
++# machine from quietly exercising production settings.
++_TEST_ENV = {
++    "SECRET_KEY": "test-secret-key-not-used-for-anything-real",
++    "DB_USER": "test_user",
++    "DB_PASSWORD": "test_password",
++    "DB_NAME": "test_db",
++    "DB_HOST": "localhost",
++}
++
++for _key, _value in _TEST_ENV.items():
++    os.environ[_key] = _value
+diff --git a/backend/scripts/check_test_gate.py b/backend/scripts/check_test_gate.py
+new file mode 100644
+index 0000000..f2ac6b0
+--- /dev/null
++++ b/backend/scripts/check_test_gate.py
+@@ -0,0 +1,106 @@
++#!/usr/bin/env python3
++"""
++T-071 — assert that the backend test run actually ran something.
++
++pytest's exit code is the primary gate; this is a second, independent check
++against the failure mode that hid the broken gate for seventy tickets: a job
++that is green because nothing executed. Exit codes can be swallowed by a
++`continue-on-error`, a `|| true`, or a shell that loses `set -e`; a report
++claiming zero tests cannot be swallowed, because this script reads the report
++and fails on it.
++
++Fails when:
++  * the report file is missing or unparseable — the run did not get far enough
++    to produce one;
++  * `tests` is zero — the session collected or executed nothing;
++  * `failures` or `errors` is non-zero — including *collection* errors, which
++    are what interrupted the session before any test ran.
++
++Usage:  python scripts/check_test_gate.py <junit-xml> [--min-tests N]
++"""
++
++import argparse
++import sys
++import xml.etree.ElementTree as ET
++from pathlib import Path
++
++
++def _int_attr(element: ET.Element, name: str) -> int:
++    try:
++        return int(element.get(name, 0) or 0)
++    except (TypeError, ValueError):
++        return 0
++
++
++def summarise(path: Path) -> dict[str, int]:
++    """Total the counters across every <testsuite> in a JUnit report."""
++    root = ET.parse(path).getroot()
++    suites = (
++        [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
++    )
++    if not suites:
++        raise ValueError(f"no <testsuite> element found in {path}")
++
++    totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
++    for suite in suites:
++        for key in totals:
++            totals[key] += _int_attr(suite, key)
++    return totals
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("report", type=Path)
++    parser.add_argument(
++        "--min-tests",
++        type=int,
++        default=1,
++        help="fail if fewer than this many tests ran (default: 1)",
++    )
++    args = parser.parse_args(argv)
++
++    if not args.report.is_file():
++        print(
++            f"FAIL: {args.report} does not exist — pytest produced no report, "
++            "so the suite did not run to completion.",
++            file=sys.stderr,
++        )
++        return 1
++
++    try:
++        totals = summarise(args.report)
++    except (ET.ParseError, ValueError) as exc:
++        print(f"FAIL: could not read {args.report}: {exc}", file=sys.stderr)
++        return 1
++
++    print(
++        "backend test gate: "
++        f"tests={totals['tests']} failures={totals['failures']} "
++        f"errors={totals['errors']} skipped={totals['skipped']}"
++    )
++
++    problems = []
++    if totals["tests"] < args.min_tests:
++        problems.append(
++            f"expected at least {args.min_tests} test(s), the report says "
++            f"{totals['tests']} — a green job here would mean nothing ran"
++        )
++    if totals["failures"]:
++        problems.append(f"{totals['failures']} test failure(s)")
++    if totals["errors"]:
++        problems.append(
++            f"{totals['errors']} error(s) — collection errors count here, and "
++            "they abort the session before tests execute"
++        )
++
++    if problems:
++        for problem in problems:
++            print(f"FAIL: {problem}", file=sys.stderr)
++        return 1
++
++    print("backend test gate: OK")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/backend/tests/test_test_gate.py b/backend/tests/test_test_gate.py
+new file mode 100644
+index 0000000..1781222
+--- /dev/null
++++ b/backend/tests/test_test_gate.py
+@@ -0,0 +1,99 @@
++"""
++T-071: the gate-checker must itself be shown to fail.
++
++A checker that always returns 0 is indistinguishable from a working one while
++everything is healthy — which is precisely how the broken backend gate stayed
++invisible. Each case below asserts the *rejecting* behaviour, not just the
++accepting one.
++"""
++import importlib.util
++from pathlib import Path
++
++import pytest
++
++_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_test_gate.py"
++_spec = importlib.util.spec_from_file_location("check_test_gate", _SCRIPT)
++check_test_gate = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(check_test_gate)
++
++
++def _write(tmp_path: Path, xml: str) -> Path:
++    report = tmp_path / "results.xml"
++    report.write_text(xml, encoding="utf-8")
++    return report
++
++
++HEALTHY = '<testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="209"/></testsuites>'
++
++
++def test_accepts_a_healthy_report(tmp_path):
++    assert check_test_gate.main([str(_write(tmp_path, HEALTHY))]) == 0
++
++
++def test_rejects_a_report_with_zero_tests(tmp_path):
++    # The exact shape of the defect this ticket exists to prevent.
++    xml = '<testsuites><testsuite name="pytest" errors="0" failures="0" tests="0"/></testsuites>'
++    assert check_test_gate.main([str(_write(tmp_path, xml))]) == 1
++
++
++def test_rejects_collection_errors(tmp_path):
++    # A collection error aborts the session before any test runs, so this is
++    # the counter that was non-zero while CI stayed green.
++    xml = '<testsuites><testsuite name="pytest" errors="3" failures="0" tests="0"/></testsuites>'
++    assert check_test_gate.main([str(_write(tmp_path, xml))]) == 1
++
++
++def test_rejects_failures_even_when_many_tests_ran(tmp_path):
++    xml = '<testsuites><testsuite name="pytest" errors="0" failures="1" tests="209"/></testsuites>'
++    assert check_test_gate.main([str(_write(tmp_path, xml))]) == 1
++
++
++def test_rejects_a_missing_report(tmp_path):
++    # If pytest dies before writing a report, absence must not read as success.
++    assert check_test_gate.main([str(tmp_path / "nope.xml")]) == 1
++
++
++def test_rejects_an_unparseable_report(tmp_path):
++    assert check_test_gate.main([str(_write(tmp_path, "<testsuites"))]) == 1
++
++
++def test_rejects_a_report_with_no_testsuite_element(tmp_path):
++    assert check_test_gate.main([str(_write(tmp_path, "<other/>"))]) == 1
++
++
++def test_enforces_a_minimum_test_count(tmp_path):
++    xml = '<testsuites><testsuite name="pytest" errors="0" failures="0" tests="5"/></testsuites>'
++    report = str(_write(tmp_path, xml))
++    assert check_test_gate.main([report, "--min-tests", "5"]) == 0
++    assert check_test_gate.main([report, "--min-tests", "6"]) == 1
++
++
++def test_totals_are_summed_across_multiple_suites(tmp_path):
++    xml = (
++        "<testsuites>"
++        '<testsuite name="a" errors="0" failures="0" tests="3"/>'
++        '<testsuite name="b" errors="1" failures="0" tests="4"/>'
++        "</testsuites>"
++    )
++    totals = check_test_gate.summarise(_write(tmp_path, xml))
++    assert totals["tests"] == 7
++    assert totals["errors"] == 1
++
++
++def test_handles_a_bare_testsuite_root(tmp_path):
++    # Some pytest versions emit <testsuite> as the document root.
++    xml = '<testsuite name="pytest" errors="0" failures="0" tests="12"/>'
++    assert check_test_gate.main([str(_write(tmp_path, xml))]) == 0
++
++
++@pytest.mark.parametrize("attr", ["tests", "failures", "errors"])
++def test_missing_counters_are_treated_as_zero_not_as_a_crash(tmp_path, attr):
++    attrs = {"tests": "5", "failures": "0", "errors": "0"}
++    attrs.pop(attr)
++    xml = "<testsuites><testsuite name='pytest' " + " ".join(
++        f'{k}="{v}"' for k, v in attrs.items()
++    ) + "/></testsuites>"
++    # Absent `tests` means zero, which must fail; absent failures/errors are
++    # benign and the healthy count still passes.
++    expected = 1 if attr == "tests" else 0
++    assert check_test_gate.main([str(_write(tmp_path, xml))]) == expected
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 759c255..08285a4 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2055,6 +2055,80 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
+ 
+ ---
+ 
++### T-071 — Backend test gate does not run (blocking)
++**Priority:** P0 | **Owner:** OPS/BE | **Epic:** EPIC-09
++**Dependencies:** None
++**Status:** Implemented, PR #71. Both halves of the gate demonstrated on real CI. Awaiting review. **Blocks T-050 (PR #70).**
++
++**The defect** (found 2026-08-03 while preparing T-050): the backend CI job had never executed a single test.
++
++`pytest` failed during **collection**, not during any test:
++
++```text
++collected 40 items / 3 errors
++ERROR collecting tests/test_areas_endpoint.py
++ERROR collecting tests/test_owner_claimed.py
++ERROR collecting tests/test_salons_endpoint.py
++E   pydantic_core._pydantic_core.ValidationError: 3 validation errors for Settings
++!!!!!!!!!!!!!!!!!!! Interrupted: 3 errors during collection !!!!!!!!!!!!!!!!!!!!
++```
++
++Those modules import `app.main` → `Settings` → requires `SECRET_KEY`, `DB_USER`, `DB_PASSWORD`. CI set none. A collection error interrupts the whole session, so **zero tests ran**, and `continue-on-error: true` reported success regardless.
++
++The two faults compound, which is why this survived so long: the collection error means nothing runs, and the flag means nothing is reported. Every backend ✅ from T-001 to T-070 is consistent with this state — the green tick reflected a job that exited early, not a suite that passed. The flag was added deliberately ("until T-030 (tests) is complete") and was reasonable when written; the interaction with a silent collection failure was not foreseen.
++
++#### Fix
++
++- **`backend/conftest.py`** — pytest imports the rootdir conftest before collecting any test module, so the required settings exist whichever module is imported first. Deliberately *not* an `os.environ.setdefault` inside a test file: that only helps modules sorting after it alphabetically, which is exactly why the T-050 branch saw the error count move `3 → 1` while still running zero tests. Values are set unconditionally rather than with `setdefault`, because `Settings` also reads the repo-root `.env` — on a deployment host that holds real credentials, and a test run must be identical everywhere.
++- **`continue-on-error: true` removed** from the Tests step.
++- **`backend/scripts/check_test_gate.py`** — a second, independent check that reads pytest's JUnit report and fails on zero tests, on failures, on errors (collection errors count here) or on a missing report. pytest's exit code remains the primary gate; this guards the one failure mode an exit code can no longer express once something swallows it. Runs with `if: always()`.
++- **The checker has its own tests** (13), each asserting the *rejecting* path. A gate-checker that always returns 0 is indistinguishable from a working one while everything is healthy — the same blind spot being fixed.
++- JUnit report uploaded as a build artifact.
++
++#### Contract evidence
++
++| # | Requirement | Evidence |
++|---|---|---|
++| 1 | Required settings present before collection | `backend/conftest.py`; suite runs with **no** env setup at all |
++| 2 | Independent of test-file name/order | rootdir conftest, imported before all collection |
++| 3 | No `continue-on-error` / `\|\| true` / `set +e` | removed; none remain in the workflow |
++| 4 | Collection error → red | `errors` counter checked by the gate script |
++| 5 | Test failure → red | run **30799128415**, below |
++| 6 | Zero collected tests → red | `--min-tests 1`; unit-tested in `test_test_gate.py` |
++| 7 | Job shows the real executed count | `backend test gate: tests=180 failures=0 errors=0 skipped=0` |
++| 8 | Deliberate failure demonstrably reds CI | run **30799128415** |
++| 9 | Green again once reverted | run **30799322609** |
++| 10 | Both runs kept as evidence | recorded here |
++
++**Run 30799128415 — deliberately red** (commit `f145d69` added `tests/test_t071_gate_proof.py` asserting `1 == 2`):
++
++```text
++collected 181 items
++1 failed, 180 passed
++##[error]Process completed with exit code 1.
++FAIL: 1 test failure(s)
++backend test gate: tests=181 failures=1 errors=0 skipped=0
++```
++
++Both mechanisms fired independently — pytest's exit code *and* the report check. Note `collected 181 items` with **no** collection errors: the conftest fixed collection completely.
++
++**Run 30799322609 — green after removing the proof test:**
++
++```text
++collected 180 items
++180 passed
++backend test gate: tests=180 failures=0 errors=0 skipped=0
++backend test gate: OK
++```
++
++#### Consequence for T-030
++
++T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now`, `test_translate_query`, `test_auth_refresh`) still do not exist. The `continue-on-error` flag was tied to it, but the flag was never what broke the gate — the collection error was. Removing the flag is safe because the existing 180 tests pass; it does not close T-030, and T-030 should no longer be treated as blocking the gate.
++
++**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 must not merge until this ticket is closed; on rebase it must also drop the `os.environ.setdefault` stop-gap from `tests/test_email_log_redaction.py`, which this conftest makes redundant.
++
++---
++
+ ## EPIC-10 — Translation QA
+ 
+ ### T-032 — Manual Russian translation quality review
