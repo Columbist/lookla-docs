@@ -2058,7 +2058,7 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
 ### T-071 — Backend test gate does not run (blocking)
 **Priority:** P0 | **Owner:** OPS/BE | **Epic:** EPIC-09
 **Dependencies:** None
-**Status:** Implemented, PR #71. Both halves of the gate demonstrated on real CI. Awaiting review. **Blocks T-050 (PR #70).**
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #71 (`25b3bc2` on `main`). Both halves of the gate were demonstrated on real CI before merge. No production deploy — the change touches only the workflow, test configuration, the gate checker, tests and documentation; neither `beauty_api` nor `beauty_web` was rebuilt. Post-merge CI on `main` (run **30803524633**) reports `collected 180 items`, `180 passed`, `backend test gate: tests=180 failures=0 errors=0 skipped=0` — the first time the backend job has reported a real executed count.
 
 **The defect** (found 2026-08-03 while preparing T-050): the backend CI job had never executed a single test.
 
@@ -2389,12 +2389,86 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
 
-**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) currently prints the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). This is captured by Docker's default json-file logging driver, which has no configured size or rotation limit. T-017's Privacy Policy now discloses this behavior honestly rather than silently omitting it; this ticket is to fix the underlying behavior so the disclosure can eventually be removed from the policy.
+**Status:** Implemented and verified locally. **Blocked from merge by T-071** — its regression tests cannot execute in CI until the backend test gate runs.
+
+**Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) printed the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). Docker's json-file driver captures that with no size or rotation limit, so a transient delivery problem became durable PII storage that no retention policy covers.
+
+#### Leak inventory — the documented path was one of three
+
+| # | Location | What escaped |
+|---|---|---|
+| 1 | `email.py` no-API-key fallback | the recipient's full address (the known defect) |
+| 2 | `email.py` Resend error branch | `r.text` — Resend **echoes the offending address back** in a 422 `Invalid \`to\` field` body |
+| 3 | `email.py` exception branch | `str(e)` unbounded — an address in a URL query string surfaces here percent-encoded |
+
+Paths 2 and 3 were not in the original ticket. Fixing only path 1 would have left the leak reachable through any provider rejection.
+
+#### Design — HMAC pseudonym plus scrubbing
+
+`app/core/log_redaction.py` (pure, no I/O, no framework):
+
+- **`recipient_ref(address, key)`** — `HMAC-SHA256(LOG_PII_HMAC_KEY, normalised_address)`, first 12 hex chars. A plain or publicly-salted hash was rejected as insufficient: email addresses have a small, highly predictable structure, so anyone holding the log could hash a candidate dictionary and match. A key held only by the backend removes that offline attack. Stable output preserves the diagnostic value that omitting the recipient entirely would have cost — repeated failures for one person stay correlatable.
+- **No unkeyed fallback.** With no key configured the log reads `recipient_ref=unavailable`. A fallback digest would look like protection while being trivially reversible.
+- **`scrub()` / `scrub_and_limit()`** — HMAC only protects the field we author. Text we do not author (provider bodies, exception messages) is scrubbed of any address, including percent-encoded forms, then bounded to 500 chars.
+- **Scrub runs before truncation.** Truncating first can cut an address mid-domain (`maria.papadopoulou@examp`), which no longer matches the pattern and so survives scrubbing while still exposing the whole local part.
+- **`safe_field()`** — `lang` reaches `send_email` from an unvalidated request field, so control characters are stripped before it enters a log line; otherwise a newline in it could forge an additional, fully attacker-authored log record.
+- Request headers and payload are never logged — they carry the API key, reset codes and claim tokens.
+
+`LOG_PII_HMAC_KEY` is deliberately its own secret, not `SECRET_KEY` and not a provider credential: it is read on a logging path, and reusing an auth secret there would widen the blast radius of a logging mistake.
+
+#### Verification
+
+209 backend tests (167 pre-existing + 42 new), frontend 1202/1202, ruff clean, eslint clean.
+
+The new tests were checked by **mutation** rather than assumed correct — each leak was deliberately reintroduced to confirm the suite goes red:
+
+| Mutation | Caught by |
+|---|---|
+| original `print(... {to})` restored | 5 tests, incl. the end-to-end capture |
+| `r.text` logged unscrubbed | `test_provider_text_is_only_logged_through_the_scrubber` |
+| unkeyed SHA-256 fallback when key missing | 3 tests |
+| truncate-before-scrub | `test_scrub_runs_before_truncation` — **only after that test was fixed**, see below |
+
+Two of the tests were wrong before the code was:
+
+- `test_scrub_runs_before_truncation` originally chose a truncation limit that fell *before* the `@`, leaving a harmless `mari` fragment. It passed against a deliberately broken truncate-then-scrub implementation — it tested nothing. The cut point is now asserted (`text[:limit].endswith("@examp")`) rather than assumed.
+- The locale-parity check matched the substring "we log the address", which also appears inside the *corrected* sentence "we do **not** write the address", producing a false failure on `ru` and `uk`. It now anchors on the affirmative marker of the old claim ("currently" / "προς το παρόν" / "в настоящее время" / "наразі").
+
+A negative control (`test_capture_helper_actually_sees_output`) guards the whole end-to-end group: every other assertion there is of the form "X is absent from the log", which passes vacuously if the helper captures nothing. It earned its place immediately — under the first mutation it failed, because `print()` bypasses logging and `caplog` saw nothing at all.
+
+Observed output, all three paths, one shared `recipient_ref`:
+
+```text
+WARNING [email] no API key — skipped template=reset lang=ru recipient_ref=65482451984c
+ERROR   [email] Resend rejected request status=422 recipient_ref=65482451984c detail={"statusCode":422,"name":"validation_error","message":"Invalid `to` field. [redacted-email] is not a valid address"}
+ERROR   [email] request failed type=TimeoutError recipient_ref=65482451984c detail=timed out posting https://api.resend.com/emails?to=[redacted-email]
+```
+
+A log-injection attempt through `lang` (`"el\nERROR [email] forged line"`) produces one record, not two.
+
+#### Privacy Policy
+
+T-017's disclosure was **corrected, not deleted**, in all four locales. The behaviour is improved but not eliminated: a keyed-HMAC reference is still written, and because we hold the key it remains personal data. The policy now says the address and its domain are not logged, describes the pseudonymous reference, and states plainly that it is not anonymous data. `lastUpdated` moves `2026-07-21` → `2026-08-03` in all four locales; **if the deploy date slips, this date must be corrected to match it.**
+
+The T-017 tripwire that pinned the old disclosure fired correctly and was updated to assert the new truth, plus a new four-locale parity test.
 
 **Acceptance Criteria:**
-- [ ] The no-API-key fallback path no longer logs the recipient's full email address (log a redacted/hashed form, or omit the recipient entirely, if a log line is still useful for debugging)
-- [ ] Docker's `beauty_api` logging driver has a configured `max-size`/`max-file` limit (currently unbounded) — separate, related hardening while touching this area
-- [ ] Once fixed, update T-017's Privacy Policy (Section 10, Security) to remove the disclosure of this now-resolved behavior
+- [x] No fallback path logs the recipient's address — verified by mutation, not only by a passing test
+- [x] Paths 2 and 3 (provider body, exception message) closed as well
+- [x] Keyed HMAC, dedicated secret, no unkeyed fallback, no domain logged
+- [x] Docker's `beauty_api` logging driver has `max-size: 10m` / `max-file: 3`
+- [x] T-017 Privacy Policy corrected in all four locales
+- [ ] **Merge blocked pending T-071** — the regression tests cannot run in CI
+- [ ] Production deploy — requires rebuilding `beauty_api` **and** `beauty_web`, and `LOG_PII_HMAC_KEY` added to `.env` first
+- [ ] Independent review
+
+**Deploy note:** unlike every ticket since T-055, this one is not web-only. The fix lives in the backend and the policy text in the frontend, so both containers must be rebuilt; `db`, `redis`, `crawler` and `crawler_worker` stay untouched. `LOG_PII_HMAC_KEY` must exist in `.env` **before** the api container is recreated, or the first fallback log line will read `recipient_ref=unavailable`.
+
+#### Recorded, not fixed (out of this ticket's boundary)
+
+- **`preferred_language` is unvalidated** — `RegisterIn.preferred_language: str = "el"` accepts any string and flows into `send_email(lang=...)` and into the `User` row (`String(2)`). T-050 defends its own log line via `safe_field()`, but the field should be constrained to `el|en|ru|uk` at the schema.
+- **Every other service still has unbounded logging.** Only `api` was given a limit, per this ticket's scope — and because adding it to `db`/`redis`/`crawler` would require recreating those containers, which is outside any approved deploy.
+- **`print()` remains in `moderation.py` and `payments.py`.** Neither currently interpolates PII, but both bypass logging configuration the same way this defect did.
 
 ---
 
