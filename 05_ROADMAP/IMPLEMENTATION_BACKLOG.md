@@ -2055,6 +2055,80 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
 
 ---
 
+### T-071 — Backend test gate does not run (blocking)
+**Priority:** P0 | **Owner:** OPS/BE | **Epic:** EPIC-09
+**Dependencies:** None
+**Status:** Implemented, PR #71. Both halves of the gate demonstrated on real CI. Awaiting review. **Blocks T-050 (PR #70).**
+
+**The defect** (found 2026-08-03 while preparing T-050): the backend CI job had never executed a single test.
+
+`pytest` failed during **collection**, not during any test:
+
+```text
+collected 40 items / 3 errors
+ERROR collecting tests/test_areas_endpoint.py
+ERROR collecting tests/test_owner_claimed.py
+ERROR collecting tests/test_salons_endpoint.py
+E   pydantic_core._pydantic_core.ValidationError: 3 validation errors for Settings
+!!!!!!!!!!!!!!!!!!! Interrupted: 3 errors during collection !!!!!!!!!!!!!!!!!!!!
+```
+
+Those modules import `app.main` → `Settings` → requires `SECRET_KEY`, `DB_USER`, `DB_PASSWORD`. CI set none. A collection error interrupts the whole session, so **zero tests ran**, and `continue-on-error: true` reported success regardless.
+
+The two faults compound, which is why this survived so long: the collection error means nothing runs, and the flag means nothing is reported. Every backend ✅ from T-001 to T-070 is consistent with this state — the green tick reflected a job that exited early, not a suite that passed. The flag was added deliberately ("until T-030 (tests) is complete") and was reasonable when written; the interaction with a silent collection failure was not foreseen.
+
+#### Fix
+
+- **`backend/conftest.py`** — pytest imports the rootdir conftest before collecting any test module, so the required settings exist whichever module is imported first. Deliberately *not* an `os.environ.setdefault` inside a test file: that only helps modules sorting after it alphabetically, which is exactly why the T-050 branch saw the error count move `3 → 1` while still running zero tests. Values are set unconditionally rather than with `setdefault`, because `Settings` also reads the repo-root `.env` — on a deployment host that holds real credentials, and a test run must be identical everywhere.
+- **`continue-on-error: true` removed** from the Tests step.
+- **`backend/scripts/check_test_gate.py`** — a second, independent check that reads pytest's JUnit report and fails on zero tests, on failures, on errors (collection errors count here) or on a missing report. pytest's exit code remains the primary gate; this guards the one failure mode an exit code can no longer express once something swallows it. Runs with `if: always()`.
+- **The checker has its own tests** (13), each asserting the *rejecting* path. A gate-checker that always returns 0 is indistinguishable from a working one while everything is healthy — the same blind spot being fixed.
+- JUnit report uploaded as a build artifact.
+
+#### Contract evidence
+
+| # | Requirement | Evidence |
+|---|---|---|
+| 1 | Required settings present before collection | `backend/conftest.py`; suite runs with **no** env setup at all |
+| 2 | Independent of test-file name/order | rootdir conftest, imported before all collection |
+| 3 | No `continue-on-error` / `\|\| true` / `set +e` | removed; none remain in the workflow |
+| 4 | Collection error → red | `errors` counter checked by the gate script |
+| 5 | Test failure → red | run **30799128415**, below |
+| 6 | Zero collected tests → red | `--min-tests 1`; unit-tested in `test_test_gate.py` |
+| 7 | Job shows the real executed count | `backend test gate: tests=180 failures=0 errors=0 skipped=0` |
+| 8 | Deliberate failure demonstrably reds CI | run **30799128415** |
+| 9 | Green again once reverted | run **30799322609** |
+| 10 | Both runs kept as evidence | recorded here |
+
+**Run 30799128415 — deliberately red** (commit `f145d69` added `tests/test_t071_gate_proof.py` asserting `1 == 2`):
+
+```text
+collected 181 items
+1 failed, 180 passed
+##[error]Process completed with exit code 1.
+FAIL: 1 test failure(s)
+backend test gate: tests=181 failures=1 errors=0 skipped=0
+```
+
+Both mechanisms fired independently — pytest's exit code *and* the report check. Note `collected 181 items` with **no** collection errors: the conftest fixed collection completely.
+
+**Run 30799322609 — green after removing the proof test:**
+
+```text
+collected 180 items
+180 passed
+backend test gate: tests=180 failures=0 errors=0 skipped=0
+backend test gate: OK
+```
+
+#### Consequence for T-030
+
+T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now`, `test_translate_query`, `test_auth_refresh`) still do not exist. The `continue-on-error` flag was tied to it, but the flag was never what broke the gate — the collection error was. Removing the flag is safe because the existing 180 tests pass; it does not close T-030, and T-030 should no longer be treated as blocking the gate.
+
+**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 must not merge until this ticket is closed; on rebase it must also drop the `os.environ.setdefault` stop-gap from `tests/test_email_log_redaction.py`, which this conftest makes redundant.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
