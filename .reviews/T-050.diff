@@ -587,10 +587,10 @@ index 7d4e6c3..12a831e 100644
        DB_HOST: db
        REDIS_URL: redis://redis:6379/0
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 759c255..ec1c6e3 100644
+index 759c255..0fe02bf 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -2055,6 +2055,41 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
+@@ -2055,6 +2055,43 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
  
  ---
  
@@ -627,12 +627,14 @@ index 759c255..ec1c6e3 100644
 +
 +**Relationship to T-050:** T-050 ships a regression test whose entire purpose is to prevent a PII leak from returning. Merged into today's CI, that test would never execute. **T-050 must not merge until this ticket is closed.**
 +
++**Ordering artefact to be aware of when fixing this.** T-050's own test module sets the three variables via `os.environ.setdefault` at import time so that it is collectable on its own. Because pytest collects alphabetically, that import happens *before* `test_owner_claimed.py` and `test_salons_endpoint.py` and *after* `test_areas_endpoint.py` — so on the T-050 branch CI reports `collected 181 items / 1 error` instead of `40 items / 3 errors`. The session is still `Interrupted` and still runs **zero** tests; only the error count moved. This is a fragile, filename-ordering-dependent side effect, not a partial fix: renaming a file would change it. The correct fix belongs in a `tests/conftest.py`, which pytest imports before collecting anything regardless of order — at which point the `setdefault` calls in T-050's module become redundant and should be removed.
++
 +---
 +
  ## EPIC-10 — Translation QA
  
  ### T-032 — Manual Russian translation quality review
-@@ -2315,12 +2350,86 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -2315,12 +2352,86 @@ Sitemap: https://lookla.gr/sitemap.xml
  **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
  **Dependencies:** None
  
