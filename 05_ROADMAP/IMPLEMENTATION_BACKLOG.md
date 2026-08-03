@@ -2131,6 +2131,36 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
 
 ---
 
+### T-072 — Audit and restrict unexpected public listeners
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
+**Dependencies:** T-049 ✅
+**Status:** Open.
+
+**Found during the T-049 inventory**, and deliberately not touched by it: services unrelated to Lookla are listening on public interfaces on this host.
+
+| Listener | Bound to | Owner |
+|---|---|---|
+| `tinyproxy` | `0.0.0.0:8888` and `[::]:8888` | HTTP proxy, systemd |
+| `next-server` ×3 | `*:3997`, `*:3998`, `*:3999` | unrelated Node projects |
+| empty-SNI branch of the `:443` stream router | → `127.0.0.1:8888` | routes SNI-less TLS to tinyproxy |
+
+T-049 preserved the empty-SNI → `:8888` route **only as an unchanged pre-existing contract**. That is not an endorsement: it was left alone because changing it was outside the reviewed scope, not because it was assessed as safe.
+
+`tinyproxy` reachable from the whole internet is the sharpest item. An open HTTP proxy can be used to relay arbitrary traffic through this host, which is an abuse and attribution problem regardless of what else it protects. The `:443` no-SNI branch means it is reachable on **two** public ports.
+
+**This ticket must inventory before it restricts** — these listeners may have consumers this project does not know about, and silently closing them is the same class of mistake T-049 avoided with the VPN.
+
+For each listener establish: the owning process and unit; whether it is reachable externally (verified, not assumed); whether it requires authentication; whether access is logged; who actually consumes it; whether a source allowlist or a `127.0.0.1` bind would suffice; and whether it can simply be switched off.
+
+**Acceptance Criteria:**
+- [ ] Every public listener has a named owner and a documented consumer, or is switched off
+- [ ] `tinyproxy` is authenticated, source-restricted, bound to loopback, or removed — with evidence it is not an open relay
+- [ ] The `:443` empty-SNI route is re-decided explicitly rather than inherited
+- [ ] The three `next-server` processes are bound to loopback or firewalled
+- [ ] No restriction is applied before its consumers are identified
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
