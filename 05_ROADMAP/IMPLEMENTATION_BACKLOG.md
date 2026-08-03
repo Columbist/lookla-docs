@@ -2127,6 +2127,8 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
 
 **Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 must not merge until this ticket is closed; on rebase it must also drop the `os.environ.setdefault` stop-gap from `tests/test_email_log_redaction.py`, which this conftest makes redundant.
 
+**Ordering artefact to be aware of when fixing this.** T-050's own test module sets the three variables via `os.environ.setdefault` at import time so that it is collectable on its own. Because pytest collects alphabetically, that import happens *before* `test_owner_claimed.py` and `test_salons_endpoint.py` and *after* `test_areas_endpoint.py` — so on the T-050 branch CI reports `collected 181 items / 1 error` instead of `40 items / 3 errors`. The session is still `Interrupted` and still runs **zero** tests; only the error count moved. This is a fragile, filename-ordering-dependent side effect, not a partial fix: renaming a file would change it. The correct fix belongs in a `tests/conftest.py`, which pytest imports before collecting anything regardless of order — at which point the `setdefault` calls in T-050's module become redundant and should be removed.
+
 ---
 
 ## EPIC-10 — Translation QA
