@@ -2377,7 +2377,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-049 — Restrict origin server to Cloudflare IP ranges
 **Priority:** P2 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
 **Dependencies:** T-050 ✅, T-071 ✅
-**Status:** Implemented against the revised contract (option **2 + 1**): port 80 gated at host `INPUT`, port 443 gated by SNI + source inside the existing nginx `stream` router. Routing matrix verified against a real nginx in isolation. **Nothing applied to production** — awaiting renewed independent APPROVE.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #72 (`63cbab4`) and follow-up fix PR #73 (`5ded205`). Applied to production on the second attempt — the first failed safely at `nginx -t` before the firewall was touched, and the prepared rollback restored the tree exactly. No container was rebuilt or restarted; nginx was reloaded, never restarted.
 
 **Risk being addressed:** the origin's ports 80/443 are reachable directly from the public internet, so anyone who learns the origin IP can bypass Cloudflare's WAF, rate limiting and bot controls entirely. Confirmed live: no packet filtering of any kind is active on this host.
 
@@ -2556,6 +2556,48 @@ The origin IP cannot be protected on 443 without deciding what happens to the VP
 4. **Cloudflare Tunnel for Lookla** — removes the public origin web ports entirely and makes the whole question moot. Largest change; the ticket lists it as an explicit follow-up, not as T-049.
 
 Recommended: **2 combined with 1** — port 80 restricted at the packet filter, and 443 filtered by SNI + source in the stream layer — with 4 recorded as the durable fix.
+
+#### Production rollout — two attempts, the first rolled back
+
+**Attempt 1 (12:52) failed at `nginx -t`, before the firewall was touched.** `nginx.conf` carries `stream { include /etc/nginx/stream.d/*.conf; }`, so rendering the generated allowlist into `stream.d` made nginx parse `103.21.244.0/22 1;` as a stream-level directive:
+
+```text
+[emerg] unknown directive "103.21.244.0/22" in /etc/nginx/stream.d/cloudflare-v4.conf:4
+[t049] FAIL: nginx -t failed — firewall untouched
+```
+
+The running nginx kept its configuration in memory, so production was never affected. The prepared `rollback.sh` was run immediately rather than waiting for the timer, and restored `port443.conf` byte for byte (md5 `af1c0d93…`), removed the rendered includes, and reloaded — with no chain created, no container touched and no VPN traffic lost.
+
+**The test suite did not catch it.** The include-path test asserted the path against the same constant the config was written from — it proved the string matched itself and nothing about the environment. PR #73 replaced it with an assertion of the relationship that matters (the render directory is not one nginx globs into the stream block, which fails when the path is reverted) and made a failed `nginx -t` restore the previous file, so a broken config can no longer sit on disk waiting for the next reload, logrotate hook or reboot to turn it into an outage.
+
+**Attempt 2 (16:14:29 Europe/Athens) succeeded.**
+
+```text
+Lookla origin restriction boundary:
+2026-08-03 16:14:29 Europe/Athens (EEST)
+```
+
+#### Production smoke — results
+
+| Check | Before | After |
+|---|---|---|
+| Direct TCP/80 from external non-Cloudflare nodes | **open** (bg1, hk1, se2) | **blocked, connection timed out** (ir6, it2, nl1, se1) |
+| Direct :443 + SNI `lookla.gr` from a non-Cloudflare source | served the **Cloudflare Origin Certificate** | **`no peer certificate available`**; `curl --resolve` exits 35 |
+| Direct :443 + SNI `www.lookla.gr` | — | **`no peer certificate available`** |
+| Web access log for those rejected requests | — | **zero entries** (the successful Cloudflare-path requests did log, so the log itself was working) |
+| :443 TCP reachability from outside | open | **still open** (ca1, nl1, tr1) — the VPN needs it |
+| Non-Lookla SNI (`amazon.com`) | Xray | **Xray** — returns `CN = *.peg.a2z.com`, i.e. REALITY behaviour intact |
+| Empty SNI | tinyproxy | **tinyproxy**, unchanged |
+| Cloudflare path | 200 | **200** — `/`, `/en`, `/ru`, `/uk`, search, map, `/privacy`, `/cookies`, `/api/salons` |
+| VPN access log | 22890 | **advancing** (22891) |
+| Containers | — | **untouched**: api/web `Up 2 hours`, crawler `Up 13 days`, db/redis `Up 3 weeks` |
+| `DOCKER-USER` and Docker chains | empty / 23 rules | **unchanged** |
+
+**Firewall scope, verified against the live rules:** exactly one INPUT jump, `-i eth0 -p tcp --dport 80`; T-049's own chain contains 15 ACCEPT + 1 RETURN + 1 DROP and **no port match at all**; ports 443, 22, 8888 and 3997–3999 are absent. Rules that do mention 3000, 5432, 6379 and 8001 are pre-existing Docker DNAT entries in the `DOCKER` chain, not T-049's. A first pass at this check reported "2 rules on port 80" — a grep artefact, since `dport 80` also matches `dport 8001`; the precise count is one.
+
+**Idempotence and persistence:** re-running the apply left the rule count unchanged at 46 with a single INPUT jump. The systemd unit is installed, enabled and active (`exit status 0`), and applies the stored snapshot without fetching, so a boot with no connectivity still restores the policy.
+
+**Rollback:** armed before the first mutation both times, cancelled only after every check above passed. The artifact is retained at `/var/backups/t049/20260803T131429Z/` and needs neither network nor repository.
 
 #### Follow-ups (deliberately not folded into T-049)
 
