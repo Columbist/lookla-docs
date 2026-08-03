@@ -2450,6 +2450,28 @@ ERROR   [email] request failed type=TimeoutError recipient_ref=65482451984c deta
 
 A log-injection attempt through `lang` (`"el\nERROR [email] forged line"`) produces one record, not two.
 
+#### CI evidence — the suites actually ran
+
+Run **30803977520** on the post-T-071 gate:
+
+```text
+backend:  collected 230 items → 230 passed
+          backend test gate: tests=230 failures=0 errors=0 skipped=0
+frontend: 1202/1202
+```
+
+Confirmed from the uploaded JUnit artifact rather than from the total, since a
+larger number alone would not prove *these* tests ran:
+
+| module | testcases in the CI report |
+|---|---|
+| `test_email_log_redaction` (T-050) | **50**, 0 failures / 0 errors / 0 skips |
+| `test_salons_endpoint` | 77 |
+| `test_salons_endpoint`, `test_areas_endpoint`, `test_owner_claimed` combined | 127 |
+| `test_test_gate` (T-071) | 13 |
+
+Those three modules are the ones whose import error used to abort collection: **127 tests that had never executed in CI before** now do.
+
 #### Privacy Policy
 
 T-017's disclosure was **corrected, not deleted**, in all four locales. The behaviour is improved but not eliminated: a keyed-HMAC reference is still written, and because we hold the key it remains personal data. The policy now says the address and its domain are not logged, describes the pseudonymous reference, and states plainly that it is not anonymous data. `lastUpdated` moves `2026-07-21` → `2026-08-03` in all four locales; **if the deploy date slips, this date must be corrected to match it.**
