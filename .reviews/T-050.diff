@@ -630,7 +630,7 @@ index 7d4e6c3..12a831e 100644
        DB_HOST: db
        REDIS_URL: redis://redis:6379/0
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 08285a4..a19030a 100644
+index 08285a4..70b4459 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 @@ -2058,7 +2058,7 @@ T-070 does **not** redefine either existing boundary — the Beta Visual Baselin
@@ -653,7 +653,7 @@ index 08285a4..a19030a 100644
  
  ---
  
-@@ -2389,12 +2391,88 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -2389,12 +2391,110 @@ Sitemap: https://lookla.gr/sitemap.xml
  **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
  **Dependencies:** None
  
@@ -716,6 +716,28 @@ index 08285a4..a19030a 100644
 +```
 +
 +A log-injection attempt through `lang` (`"el\nERROR [email] forged line"`) produces one record, not two.
++
++#### CI evidence — the suites actually ran
++
++Run **30803977520** on the post-T-071 gate:
++
++```text
++backend:  collected 230 items → 230 passed
++          backend test gate: tests=230 failures=0 errors=0 skipped=0
++frontend: 1202/1202
++```
++
++Confirmed from the uploaded JUnit artifact rather than from the total, since a
++larger number alone would not prove *these* tests ran:
++
++| module | testcases in the CI report |
++|---|---|
++| `test_email_log_redaction` (T-050) | **50**, 0 failures / 0 errors / 0 skips |
++| `test_salons_endpoint` | 77 |
++| `test_salons_endpoint`, `test_areas_endpoint`, `test_owner_claimed` combined | 127 |
++| `test_test_gate` (T-071) | 13 |
++
++Those three modules are the ones whose import error used to abort collection: **127 tests that had never executed in CI before** now do.
 +
 +#### Privacy Policy
 +
