@@ -2375,15 +2375,135 @@ Sitemap: https://lookla.gr/sitemap.xml
 ---
 
 ### T-049 — Restrict origin server to Cloudflare IP ranges
-**Priority:** P2 | **Owner:** OPS | **Estimate:** 1h | **Epic:** EPIC-09
-**Dependencies:** None
+**Priority:** P2 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
+**Dependencies:** T-050 ✅, T-071 ✅
+**Status:** ⛔ **Implementation halted at Step 3/4 — the deny rule must not be applied as specified.** Range fetching, validation and tests are complete and merged-ready; the firewall rule itself is blocked on a product decision. See "Blocking conflict" below.
 
-**Description:** T-017's Privacy Policy review found that the origin server's ports 80/443 are reachable directly from the public internet, not only via Cloudflare (confirmed: `ufw status` inactive, no `iptables`/`nft` source-IP restriction, and live nginx access logs show scanner/bot traffic hitting the origin IP directly). This is a real security gap independent of the Privacy Policy wording fix (which now correctly states the origin "may also be technically reachable directly" rather than falsely claiming all traffic passes through Cloudflare).
+**Risk being addressed:** the origin's ports 80/443 are reachable directly from the public internet, so anyone who learns the origin IP can bypass Cloudflare's WAF, rate limiting and bot controls entirely. Confirmed live: no packet filtering of any kind is active on this host.
 
-**Acceptance Criteria:**
-- [ ] Firewall rule (ufw or iptables) restricts inbound 80/443 to Cloudflare's published IP ranges (`https://www.cloudflare.com/ips/`)
-- [ ] A documented process exists for updating the allowlist when Cloudflare rotates its IP ranges
-- [ ] Deployed with a safe rollback plan (e.g. verify via a maintenance window, not a blind cutover) — a misconfigured rule here takes the entire site offline
+#### Step 2 — Production network path inventory
+
+| Layer | Current implementation | Relevant rule/path | T-049 implication |
+|---|---|---|---|
+| OS | Ubuntu 24.04.4 LTS, kernel 6.8 | — | — |
+| Docker | Engine 29.4.2, **Firewall Backend: iptables** | `DOCKER-USER` exists and is **empty** | available if ever needed |
+| iptables | v1.8.10 (**nf_tables** shim), `ip6tables` likewise | policies `INPUT/FORWARD/OUTPUT ACCEPT` | no backend migration required or permitted |
+| Host firewall | **none active** — UFW `inactive`, firewalld `inactive`, nftables unit `inactive`, zero custom `INPUT` rules | — | the control would be new, not a modification |
+| Public interface | `eth0`, single public IPv4 | default route via `eth0` | rule scope = `eth0` |
+| IPv6 | **no global IPv6 address exists** (link-local only) | nginx binds `[::]:80/443` but nothing routes | see Step 10 |
+| Ports 80/443 | **host nginx**, not a container | `0.0.0.0:80`, `0.0.0.0:443` | **`DOCKER-USER` is the wrong layer here** |
+| Docker published ports | `127.0.0.1` only — web 3000, api 8001, redis 6379, db 5432 | loopback-bound | not publicly reachable at all; out of scope |
+
+**The Docker premise in the ticket does not hold on this host.** The ticket assumed public ports are Docker-published and therefore bypass `INPUT`. They are not: nginx runs on the host and owns 80/443 directly, so ordinary `INPUT` filtering *is* the correct and sufficient layer, and `DOCKER-USER` must be left alone. Every Docker-published port is already bound to loopback and unreachable from outside.
+
+#### Step 3/4 — Blocking conflict: port 443 is shared with a live VPN
+
+`/etc/nginx/stream.d/port443.conf` makes port 443 an **SNI router**, not a web port:
+
+```nginx
+map $ssl_preread_server_name $upstream {
+    lookla.gr       127.0.0.1:8443;   # web  → nginx HTTPS vhost
+    www.lookla.gr   127.0.0.1:8443;
+    ""              127.0.0.1:8888;   # no SNI → tinyproxy
+    default         127.0.0.1:4443;   # everything else → Xray VLESS/REALITY
+}
+```
+
+Lookla's HTTPS vhost does **not** listen on `0.0.0.0:443` at all — it listens on `127.0.0.1:8443` behind that router. The `default` branch carries a **Xray VLESS/REALITY VPN** (10 provisioned clients, REALITY `serverNames: amazon.com`), whose users connect to the origin IP on port 443 from ordinary residential addresses worldwide.
+
+Evidence that this is live production traffic, not a dormant service:
+
+```text
+/var/log/xray/access.log, 7 days
+  22 868 lines total
+   6 052 local stats-API polls (the /opt/xray-traffic-collector.py cron)
+  16 816 real proxied client requests
+  active on every one of the last 7 days, including today
+  most recent real request: 2026-08-03 05:01:44, identity user05@xray
+```
+
+**Consequence: a source-IP allowlist on TCP/443 would terminate the VPN.** The firewall sees only address and port; it cannot distinguish the `lookla.gr` SNI from the VPN's. This is the Step 3 stop condition in a form the ticket did not anticipate — not a DNS-only hostname, but a different service sharing the port. The rule would be technically correct and would break legitimate production traffic, so it has not been applied.
+
+**Port 80 is not affected by this conflict.** It serves only the `lookla.gr` → HTTPS redirect and a default `localhost` vhost; nothing else on the host uses it.
+
+#### Step 3 — DNS and proxy-status audit
+
+| Hostname | A / AAAA target | Proxied | Served on this origin | Needs public 80/443 |
+|---|---|---|---|---|
+| `lookla.gr` | Cloudflare (`172.67.x`, `104.21.x`; AAAA `2606:4700:…`) | **proxied** | yes | via Cloudflare only |
+| `www.lookla.gr` | same | **proxied** | yes | via Cloudflare only |
+| `cdn.lookla.gr` | same | **proxied** | R2-backed, not this origin | no |
+| `api.lookla.gr` | **does not resolve** | — | no | no |
+
+No DNS-only A/AAAA record pointing at this origin was found for any web hostname. The VPN reaches the origin by **IP literal**, not by a DNS name, which is precisely why a DNS audit alone would have missed the conflict.
+
+#### Step 4 — Direct origin consumers
+
+| Consumer | Path | Needs direct origin access |
+|---|---|---|
+| Browsers / crawlers | proxied hostname | no |
+| Xray VPN clients | **origin IP:443 directly** | **yes — the blocking conflict** |
+| Tinyproxy (`:8888`, and the no-SNI 443 branch) | direct | separate service, outside T-049 scope |
+| Certificate renewal | none — see Step 5 | no |
+| Monitoring / webhooks / payments | none configured against the origin IP | no |
+
+#### Step 5 — TLS renewal compatibility: **no conflict**
+
+```text
+issuer   CloudFlare Origin SSL Certificate Authority
+notAfter Jun 20 15:07:00 2041 GMT
+```
+
+A **Cloudflare Origin Certificate**, valid for another ~15 years. No `certbot`, no `acme.sh`, no `/etc/letsencrypt`, no renewal timers. There is no HTTP-01 validation path to break, so the ticket's second mandatory precondition is satisfied outright.
+
+#### Steps 6–7 — Official range source, validated fail-closed
+
+`ops/cloudflare/cf_ranges.py` fetches only `https://www.cloudflare.com/ips-v4` and `/ips-v6`.
+
+```text
+retrieved_at_utc  2026-08-03T11:24:03Z
+ipv4  count=15  sha256=f02c6d83bc01ab0ae8577160e036d700c7455359bce054df884e5d7d9e4e9e7b
+ipv6  count=7   sha256=9e9d39e3e83bad00c4decafd53c63fa62029f3d95db68de937d2be28234ca0a9
+```
+
+Validation is a pure function, separated from I/O so it is testable without a network. It rejects: empty or whitespace-only bodies, HTML/JSON/XML error pages, wrong address family, invalid CIDRs, bare addresses without a prefix, networks with host bits set, truncated final lines, and counts outside plausible bounds. Duplicates are normalised deterministically so a snapshot diff reflects a real change rather than ordering noise. Any fetch or validation failure leaves the stored snapshot authoritative — the active list is never replaced by a partial one.
+
+41 tests, and the guards were confirmed discriminating by mutation rather than assumed: disabling the minimum-count guard fails 1 test, the family check 2, the empty check 2.
+
+`--check` mode is proven non-mutating (file hash unchanged across a run that detected a change) and exits `2` on change, so a third party editing their published list can never become an automatic firewall change.
+
+#### Step 10 — IPv6
+
+IPv6 is **not active** on this host, with proof rather than inference:
+
+- `ip -6 addr show scope global` returns **zero** addresses (link-local `fe80::` only);
+- there is no IPv6 default route;
+- nginx binds `[::]:80` and `[::]:443`, but nothing routes to them from outside;
+- Docker publishes no IPv6;
+- `lookla.gr` AAAA records point at **Cloudflare**, not at this origin.
+
+Direct IPv6 origin access is therefore not currently possible. The IPv6 allowlist is nonetheless fetched, validated and stored, so enabling IPv6 later does not silently ship an unprotected path.
+
+#### What is NOT done, and why
+
+Steps 8–15 and 19–23 — the `LOOKLA-CLOUDFLARE` chain, ipset/nft set design, atomic swap, rollback timer, persistence unit, namespace verification and production rollout — are **not implemented**, because their shape depends entirely on how the port-443 conflict is resolved. Building them against the wrong resolution would be waste, and applying them as specified would take the VPN down.
+
+**Safety checklist:** Backend changed **No** · Frontend changed **No** · Database changed **No** · API contract changed **No** · Cloudflare DNS changed **No** · Proxy status changed **No** · TLS renewal verified **Yes — Origin Certificate to 2041, no ACME** · DNS-only consumers audited **Yes — none** · Direct integrations audited **Yes — VPN found** · Firewall backend preserved **Yes — nothing applied** · Docker firewall path handled **Yes — determined inapplicable, `DOCKER-USER` untouched** · UFW treated as sufficient **N/A — ports are host-owned, not Docker-published** · Docker chains modified **No** · Docker firewall management disabled **No** · IPv4 protected **No — blocked** · IPv6 proven inactive **Yes** · SSH rules changed **No** · Official endpoints used **Yes** · Lists validated **Yes** · Empty-list replacement possible **No** · Production firewall touched **No** · Full firewall dump published **No** · Origin IP published **No** · Containers restarted **No** · PM2 used **No**
+
+#### Decision required
+
+The origin IP cannot be protected on 443 without deciding what happens to the VPN. Options, with the trade-off stated honestly:
+
+1. **Port 80 now, 443 deferred.** Immediate, zero risk to the VPN — but 443 is where the real bypass risk lives, so this alone buys little security.
+2. **SNI-aware rejection in the nginx stream layer.** Combine `$ssl_preread_server_name` with a `geo` set of Cloudflare ranges: a `lookla.gr` SNI from a non-Cloudflare source is dropped, everything else routes as today. Keeps the VPN working and closes the WAF bypass. Enforcement is in nginx rather than the packet filter — it is still pre-HTTP and trusts no header, but the origin still accepts the TCP connection. Requires an nginx reload (no container restart).
+3. **Move the VPN to another port**, then apply a clean firewall allowlist on 443. Strongest result; requires reconfiguring 10 VPN clients, and an uncommon port is more fingerprintable than 443.
+4. **Cloudflare Tunnel for Lookla** — removes the public origin web ports entirely and makes the whole question moot. Largest change; the ticket lists it as an explicit follow-up, not as T-049.
+
+Recommended: **2 combined with 1** — port 80 restricted at the packet filter, and 443 filtered by SNI + source in the stream layer — with 4 recorded as the durable fix.
+
+#### Follow-ups (deliberately not folded into T-049)
+
+Authenticated Origin Pulls · Cloudflare Tunnel · origin IP rotation · automatic range-change monitoring · `tinyproxy` on `0.0.0.0:8888` and three `next-server` processes bound to `*:3997-3999` are publicly reachable and unrelated to Lookla — they deserve their own review.
 
 ---
 
