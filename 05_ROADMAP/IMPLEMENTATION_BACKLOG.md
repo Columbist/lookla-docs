@@ -2125,9 +2125,9 @@ backend test gate: OK
 
 T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now`, `test_translate_query`, `test_auth_refresh`) still do not exist. The `continue-on-error` flag was tied to it, but the flag was never what broke the gate — the collection error was. Removing the flag is safe because the existing 180 tests pass; it does not close T-030, and T-030 should no longer be treated as blocking the gate.
 
-**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 must not merge until this ticket is closed; on rebase it must also drop the `os.environ.setdefault` stop-gap from `tests/test_email_log_redaction.py`, which this conftest makes redundant.
+**Relationship to T-050:** T-050 ships regression tests whose whole purpose is to stop a PII leak returning. Merged into the old CI they would never have executed. T-050 was rebased onto this ticket and its `os.environ.setdefault` stop-gap removed, the rootdir conftest having made it redundant.
 
-**Ordering artefact to be aware of when fixing this.** T-050's own test module sets the three variables via `os.environ.setdefault` at import time so that it is collectable on its own. Because pytest collects alphabetically, that import happens *before* `test_owner_claimed.py` and `test_salons_endpoint.py` and *after* `test_areas_endpoint.py` — so on the T-050 branch CI reports `collected 181 items / 1 error` instead of `40 items / 3 errors`. The session is still `Interrupted` and still runs **zero** tests; only the error count moved. This is a fragile, filename-ordering-dependent side effect, not a partial fix: renaming a file would change it. The correct fix belongs in a `tests/conftest.py`, which pytest imports before collecting anything regardless of order — at which point the `setdefault` calls in T-050's module become redundant and should be removed.
+**Ordering artefact, now resolved.** Before this ticket, T-050's test module set the three variables via `os.environ.setdefault` at import time so it could be collected on its own. Because pytest collects alphabetically that import landed after `test_areas_endpoint.py` and before `test_owner_claimed.py` and `test_salons_endpoint.py`, so CI on that branch reported `collected 181 items / 1 error` instead of `40 items / 3 errors` — the session was still `Interrupted` and still ran **zero** tests; only the error count moved. It was a filename-ordering-dependent side effect, not a partial fix. The rootdir conftest removes the dependency entirely, and the stop-gap was deleted when T-050 was rebased.
 
 ---
 
@@ -2391,7 +2391,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
 
-**Status:** Implemented and verified locally. **Blocked from merge by T-071** — its regression tests cannot execute in CI until the backend test gate runs.
+**Status:** Implemented and verified. Rebased onto `main` after T-071 restored the backend test gate, so its regression tests now execute in CI. Awaiting independent review; no production deploy yet.
 
 **Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) printed the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). Docker's json-file driver captures that with no size or rotation limit, so a transient delivery problem became durable PII storage that no retention policy covers.
 
@@ -2420,7 +2420,7 @@ Paths 2 and 3 were not in the original ticket. Fixing only path 1 would have lef
 
 #### Verification
 
-209 backend tests (167 pre-existing + 42 new), frontend 1202/1202, ruff clean, eslint clean.
+230 backend tests (180 on `main` after T-071 + 50 added here), frontend 1202/1202, ruff clean, eslint clean. Under the pre-T-071 CI none of the backend figures would have meant anything — the job exited during collection.
 
 The new tests were checked by **mutation** rather than assumed correct — each leak was deliberately reintroduced to confirm the suite goes red:
 
@@ -2435,6 +2435,8 @@ Two of the tests were wrong before the code was:
 
 - `test_scrub_runs_before_truncation` originally chose a truncation limit that fell *before* the `@`, leaving a harmless `mari` fragment. It passed against a deliberately broken truncate-then-scrub implementation — it tested nothing. The cut point is now asserted (`text[:limit].endswith("@examp")`) rather than assumed.
 - The locale-parity check matched the substring "we log the address", which also appears inside the *corrected* sentence "we do **not** write the address", producing a false failure on `ru` and `uk`. It now anchors on the affirmative marker of the old claim ("currently" / "προς το παρόν" / "в настоящее время" / "наразі").
+
+Coverage added on rebase, at review request: `repr(exception)` (which embeds args and leaks an address as readily as `str()`), a wrapped exception chain, a percent-encoded local part, and the double-encoded `%2540` form that appears when a URL already containing an address is escaped a second time — in upper, lower and mixed case. Removing the encoded-address pattern makes 7 tests fail, so the cases discriminate rather than merely pass.
 
 A negative control (`test_capture_helper_actually_sees_output`) guards the whole end-to-end group: every other assertion there is of the form "X is absent from the log", which passes vacuously if the helper captures nothing. It earned its place immediately — under the first mutation it failed, because `print()` bypasses logging and `caplog` saw nothing at all.
 
@@ -2460,7 +2462,7 @@ The T-017 tripwire that pinned the old disclosure fired correctly and was update
 - [x] Keyed HMAC, dedicated secret, no unkeyed fallback, no domain logged
 - [x] Docker's `beauty_api` logging driver has `max-size: 10m` / `max-file: 3`
 - [x] T-017 Privacy Policy corrected in all four locales
-- [ ] **Merge blocked pending T-071** — the regression tests cannot run in CI
+- [x] Regression tests actually execute in CI — T-071 merged (`25b3bc2`), gate proven red-then-green
 - [ ] Production deploy — requires rebuilding `beauty_api` **and** `beauty_web`, and `LOG_PII_HMAC_KEY` added to `.env` first
 - [ ] Independent review
 
