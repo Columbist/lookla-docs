@@ -1,0 +1,1933 @@
+diff --git a/backend/tests/test_cf_ranges.py b/backend/tests/test_cf_ranges.py
+new file mode 100644
+index 0000000..f9ad593
+--- /dev/null
++++ b/backend/tests/test_cf_ranges.py
+@@ -0,0 +1,279 @@
++"""
++T-049: the Cloudflare range list must fail closed.
++
++Placed under `backend/tests/` deliberately. The module under test lives in
++`ops/cloudflare/`, but T-071 established that the only test gate proven to
++execute is the backend pytest job — and a validation guard that never runs is
++the same as no guard. It is loaded by path, the same way `test_test_gate.py`
++loads `scripts/check_test_gate.py`.
++
++Every case asserts the *rejecting* behaviour where rejection is correct. An
++allowlist validator that accepts everything looks identical to a working one
++right up until the day a truncated download takes the site offline.
++"""
++import importlib.util
++import json
++from pathlib import Path
++
++import pytest
++
++_MODULE = (
++    Path(__file__).resolve().parents[2] / "ops" / "cloudflare" / "cf_ranges.py"
++)
++_spec = importlib.util.spec_from_file_location("cf_ranges", _MODULE)
++cf = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(cf)
++
++# The real published lists at the time of writing, used as positive controls.
++OFFICIAL_V4 = """173.245.48.0/20
++103.21.244.0/22
++103.22.200.0/22
++103.31.4.0/22
++141.101.64.0/18
++108.162.192.0/18
++190.93.240.0/20
++188.114.96.0/20
++197.234.240.0/22
++198.41.128.0/17
++162.158.0.0/15
++104.16.0.0/13
++104.24.0.0/14
++172.64.0.0/13
++131.0.72.0/22
++"""
++
++OFFICIAL_V6 = """2400:cb00::/32
++2606:4700::/32
++2803:f800::/32
++2405:b500::/32
++2405:8100::/32
++2a06:98c0::/29
++2c0f:f248::/32
++"""
++
++
++# ─────────────────────────── positive controls ───────────────────────────────
++
++
++def test_official_ipv4_list_validates():
++    out = cf.validate_ranges(OFFICIAL_V4, 4)
++    assert len(out) == 15
++    assert "104.16.0.0/13" in out
++
++
++def test_official_ipv6_list_validates():
++    out = cf.validate_ranges(OFFICIAL_V6, 6)
++    assert len(out) == 7
++    assert "2606:4700::/32" in out
++
++
++def test_output_is_deterministically_sorted():
++    # A snapshot diff must reflect a real change, not line-order noise.
++    shuffled = "\n".join(reversed(OFFICIAL_V4.strip().splitlines()))
++    assert cf.validate_ranges(shuffled, 4) == cf.validate_ranges(OFFICIAL_V4, 4)
++
++
++def test_surrounding_whitespace_is_normalised():
++    padded = "\n".join(f"  {line}  " for line in OFFICIAL_V4.strip().splitlines())
++    assert cf.validate_ranges(padded, 4) == cf.validate_ranges(OFFICIAL_V4, 4)
++
++
++def test_duplicates_are_removed_deterministically():
++    doubled = OFFICIAL_V4 + OFFICIAL_V4
++    assert cf.validate_ranges(doubled, 4) == cf.validate_ranges(OFFICIAL_V4, 4)
++
++
++# ───────────────────────────── fail-closed cases ─────────────────────────────
++
++
++@pytest.mark.parametrize("family", [4, 6])
++@pytest.mark.parametrize("raw", ["", "   ", "\n\n\n", None])
++def test_empty_response_is_rejected(raw, family):
++    # The case that matters most: an empty allowlist would either lock the edge
++    # out entirely or, applied naively, remove the control.
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(raw, family)
++
++
++@pytest.mark.parametrize(
++    "body",
++    [
++        "<!DOCTYPE html><html><body>503 Service Unavailable</body></html>",
++        "<html><head><title>Attention Required</title></head></html>",
++        '{"error": "not found"}',
++        "[]",
++        "<?xml version='1.0'?><error/>",
++    ],
++)
++def test_markup_and_json_bodies_are_rejected(body):
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(body, 4)
++
++
++def test_ipv6_content_in_the_ipv4_list_is_rejected():
++    # Silently accepting this would drop every legitimate IPv4 edge request.
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V4 + "2606:4700::/32\n", 4)
++
++
++def test_ipv4_content_in_the_ipv6_list_is_rejected():
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V6 + "104.16.0.0/13\n", 6)
++
++
++@pytest.mark.parametrize(
++    "bad",
++    [
++        "104.16.0.0/33",
++        "999.1.1.1/24",
++        "104.16.0.0/",
++        "/13",
++        "104.16.0.0-104.16.255.255",
++        "not-a-network",
++    ],
++)
++def test_invalid_cidr_is_rejected(bad):
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V4 + bad + "\n", 4)
++
++
++def test_a_bare_address_without_a_prefix_is_rejected():
++    # The official endpoints return CIDRs; a bare address means the format
++    # changed, which is a reason to stop rather than guess an implied /32.
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V4 + "104.16.0.1\n", 4)
++
++
++def test_a_network_with_host_bits_set_is_rejected():
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V4 + "104.16.0.5/13\n", 4)
++
++
++def test_a_truncated_final_line_is_rejected():
++    # A partially delivered response is the realistic failure: the body simply
++    # stops mid-line, and the remaining text is not a valid CIDR.
++    truncated = OFFICIAL_V4.strip().rsplit("\n", 1)[0] + "\n131.0.7"
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(truncated, 4)
++
++
++def test_a_short_list_is_rejected_by_the_minimum_guard():
++    with pytest.raises(cf.RangeValidationError, match="at least"):
++        cf.validate_ranges("104.16.0.0/13\n172.64.0.0/13\n", 4)
++
++
++def test_an_implausibly_long_list_is_rejected_by_the_maximum_guard():
++    many = "\n".join(f"10.{i}.0.0/16" for i in range(cf.MAX_V4 + 5))
++    with pytest.raises(cf.RangeValidationError, match="maximum"):
++        cf.validate_ranges(many, 4)
++
++
++def test_an_unsupported_family_is_rejected():
++    with pytest.raises(cf.RangeValidationError):
++        cf.validate_ranges(OFFICIAL_V4, 5)
++
++
++# ──────────────────────── snapshot / fetch behaviour ─────────────────────────
++
++
++def _fetcher(mapping):
++    def fetch(url, timeout=15):
++        value = mapping[url]
++        if isinstance(value, Exception):
++            raise value
++        return value
++
++    return fetch
++
++
++def test_build_snapshot_records_counts_and_hashes():
++    snap = cf.build_snapshot(
++        _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    assert snap["counts"] == {"ipv4": 15, "ipv6": 7}
++    assert snap["sha256"]["ipv4"] == cf.sha256_of(OFFICIAL_V4)
++    assert snap["sha256"]["ipv6"] == cf.sha256_of(OFFICIAL_V6)
++    assert snap["retrieved_at_utc"].endswith("Z")
++
++
++def test_a_fetch_failure_aborts_before_any_snapshot_is_produced():
++    with pytest.raises(OSError):
++        cf.build_snapshot(
++            _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OSError("connection reset")})
++        )
++
++
++def test_a_validation_failure_aborts_before_any_snapshot_is_produced():
++    with pytest.raises(cf.RangeValidationError):
++        cf.build_snapshot(_fetcher({cf.IPS_V4_URL: "", cf.IPS_V6_URL: OFFICIAL_V6}))
++
++
++def test_check_mode_never_writes_the_snapshot(tmp_path, monkeypatch):
++    # An operator running --check must not have production state changed under
++    # them, and a third party editing their published list must not become an
++    # automatic firewall change.
++    path = tmp_path / "snap.json"
++    good = cf.build_snapshot(
++        _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    path.write_text(json.dumps(good), encoding="utf-8")
++    before = path.read_bytes()
++
++    changed_v4 = OFFICIAL_V4 + "203.0.113.0/24\n"
++    monkeypatch.setattr(
++        cf, "fetch", _fetcher({cf.IPS_V4_URL: changed_v4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    rc = cf.main(["--snapshot", str(path), "--check"])
++    assert rc == 2, "a detected change must be reported with a distinct exit code"
++    assert path.read_bytes() == before, "check mode must not mutate the snapshot"
++
++
++def test_check_mode_reports_no_change_with_exit_zero(tmp_path, monkeypatch):
++    path = tmp_path / "snap.json"
++    good = cf.build_snapshot(
++        _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    path.write_text(json.dumps(good), encoding="utf-8")
++    monkeypatch.setattr(
++        cf, "fetch", _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    assert cf.main(["--snapshot", str(path), "--check"]) == 0
++
++
++def test_a_failed_fetch_leaves_the_stored_snapshot_untouched(tmp_path, monkeypatch):
++    path = tmp_path / "snap.json"
++    good = cf.build_snapshot(
++        _fetcher({cf.IPS_V4_URL: OFFICIAL_V4, cf.IPS_V6_URL: OFFICIAL_V6})
++    )
++    path.write_text(json.dumps(good), encoding="utf-8")
++    before = path.read_bytes()
++
++    def boom(*a, **k):
++        raise OSError("network unreachable")
++
++    monkeypatch.setattr(cf, "fetch", boom)
++    assert cf.main(["--snapshot", str(path), "--write"]) == 1
++    assert path.read_bytes() == before
++
++
++def test_load_snapshot_rejects_a_corrupted_file(tmp_path):
++    path = tmp_path / "snap.json"
++    path.write_text(json.dumps({"ipv4": [], "ipv6": []}), encoding="utf-8")
++    with pytest.raises(cf.RangeValidationError):
++        cf.load_snapshot(path)
++
++
++def test_diff_reports_additions_and_removals():
++    old = {"ipv4": ["104.16.0.0/13"], "ipv6": ["2606:4700::/32"]}
++    new = {"ipv4": ["172.64.0.0/13"], "ipv6": ["2606:4700::/32"]}
++    d = cf.diff_snapshots(old, new)
++    assert d["ipv4_added"] == ["172.64.0.0/13"]
++    assert d["ipv4_removed"] == ["104.16.0.0/13"]
++    assert d["ipv6_added"] == [] and d["ipv6_removed"] == []
++
++
++def test_diff_against_no_previous_snapshot_is_all_additions():
++    new = {"ipv4": ["104.16.0.0/13"], "ipv6": ["2606:4700::/32"]}
++    d = cf.diff_snapshots(None, new)
++    assert d["ipv4_added"] == ["104.16.0.0/13"]
++    assert d["ipv4_removed"] == []
+diff --git a/backend/tests/test_t049_enforcement.py b/backend/tests/test_t049_enforcement.py
+new file mode 100644
+index 0000000..7440621
+--- /dev/null
++++ b/backend/tests/test_t049_enforcement.py
+@@ -0,0 +1,345 @@
++"""
++T-049: the enforcement layer must be provably scoped.
++
++Two things are being guarded here, and both have a specific failure in mind.
++
++The firewall rules must never widen beyond public TCP/80. Port 443 on this
++host carries a live VPN behind an SNI router, so a rule that reached it would
++disconnect real users; SSH is the operator's only way back in; and the
++unrelated public listeners found during inventory belong to a different
++ticket. "We meant port 80 only" is not evidence — these tests read the bytes
++that would reach the kernel.
++
++The nginx stream routing must send a Lookla SNI from a non-Cloudflare source
++to the reject path and nowhere else, while every non-Lookla path keeps the
++destination it had before, byte for byte.
++"""
++import importlib.util
++import json
++import re
++from pathlib import Path
++
++import pytest
++
++_ROOT = Path(__file__).resolve().parents[2]
++
++
++def _load(name: str, relpath: str):
++    spec = importlib.util.spec_from_file_location(name, _ROOT / relpath)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++cf = _load("cf_ranges_t049", "ops/cloudflare/cf_ranges.py")
++fw = _load("firewall_t049", "ops/cloudflare/firewall.py")
++
++STREAM_CONF = (_ROOT / "ops" / "nginx" / "stream.d" / "port443.conf").read_text(
++    encoding="utf-8"
++)
++SNAPSHOT = json.loads(
++    (_ROOT / "ops" / "cloudflare" / "cloudflare-ranges.json").read_text(encoding="utf-8")
++)
++
++IFACE = "eth0"
++
++
++# ───────────────────────── generated geo includes ────────────────────────────
++
++
++def test_geo_include_contains_every_validated_ipv4_range():
++    rendered = cf.render_geo_include(SNAPSHOT, 4)
++    for cidr in SNAPSHOT["ipv4"]:
++        assert f"{cidr} 1;" in rendered
++    assert rendered.count(" 1;") == len(SNAPSHOT["ipv4"])
++
++
++def test_geo_include_contains_every_validated_ipv6_range():
++    rendered = cf.render_geo_include(SNAPSHOT, 6)
++    for cidr in SNAPSHOT["ipv6"]:
++        assert f"{cidr} 1;" in rendered
++    assert rendered.count(" 1;") == len(SNAPSHOT["ipv6"])
++
++
++def test_geo_include_never_contains_a_default_line():
++    # `default 0;` belongs in the reviewed stream config, not in a generated
++    # file: if generation ever emitted `default 1;` every source on the
++    # internet would be treated as Cloudflare.
++    for family in (4, 6):
++        rendered = cf.render_geo_include(SNAPSHOT, family)
++        assert "default" not in rendered
++        assert " 0;" not in rendered
++
++
++def test_geo_include_is_byte_stable_across_renders():
++    assert cf.render_geo_include(SNAPSHOT, 4) == cf.render_geo_include(SNAPSHOT, 4)
++
++
++def test_geo_rendering_revalidates_and_rejects_a_tampered_snapshot():
++    tampered = dict(SNAPSHOT, ipv4=["not-a-cidr"])
++    with pytest.raises(cf.RangeValidationError):
++        cf.render_geo_include(tampered, 4)
++
++
++def test_geo_rendering_rejects_an_emptied_snapshot():
++    with pytest.raises(cf.RangeValidationError):
++        cf.render_geo_include(dict(SNAPSHOT, ipv4=[]), 4)
++
++
++def test_atomic_write_reports_no_change_and_leaves_the_file_alone(tmp_path):
++    target = tmp_path / "cloudflare-v4.conf"
++    content = cf.render_geo_include(SNAPSHOT, 4)
++    assert cf.write_atomically(target, content) is True
++    stat_before = target.stat().st_mtime_ns
++    assert cf.write_atomically(target, content) is False, "unchanged content must not rewrite"
++    assert target.stat().st_mtime_ns == stat_before, "an unchanged file must not be touched"
++
++
++def test_atomic_write_leaves_no_temp_file_behind(tmp_path):
++    target = tmp_path / "cloudflare-v4.conf"
++    cf.write_atomically(target, cf.render_geo_include(SNAPSHOT, 4))
++    assert list(tmp_path.iterdir()) == [target]
++
++
++def test_a_failed_render_preserves_the_previous_include(tmp_path):
++    target = tmp_path / "cloudflare-v4.conf"
++    good = cf.render_geo_include(SNAPSHOT, 4)
++    cf.write_atomically(target, good)
++    with pytest.raises(cf.RangeValidationError):
++        cf.write_atomically(target, cf.render_geo_include(dict(SNAPSHOT, ipv4=[]), 4))
++    assert target.read_text(encoding="utf-8") == good
++
++
++def test_render_geo_cli_never_reaches_the_network(tmp_path, monkeypatch):
++    # The boot path must work from the stored snapshot with no connectivity;
++    # depending on a live download would leave the policy undefined offline.
++    def explode(*a, **k):
++        raise AssertionError("rendering must not fetch")
++
++    monkeypatch.setattr(cf, "fetch", explode)
++    monkeypatch.setattr(cf, "build_snapshot", explode)
++    snap = tmp_path / "snap.json"
++    snap.write_text(json.dumps(SNAPSHOT), encoding="utf-8")
++    out = tmp_path / "render"
++    assert cf.main(["--snapshot", str(snap), "--render-geo", str(out)]) == 0
++    assert (out / "cloudflare-v4.conf").is_file()
++    assert (out / "cloudflare-v6.conf").is_file()
++
++
++def test_render_geo_cli_fails_and_writes_nothing_when_the_snapshot_is_bad(tmp_path):
++    snap = tmp_path / "snap.json"
++    snap.write_text(json.dumps({"ipv4": [], "ipv6": []}), encoding="utf-8")
++    out = tmp_path / "render"
++    assert cf.main(["--snapshot", str(snap), "--render-geo", str(out)]) == 1
++    assert not (out / "cloudflare-v4.conf").exists()
++
++
++# ──────────────────────── firewall scope (port 80 only) ──────────────────────
++
++
++def _document():
++    return fw.build_restore_document(SNAPSHOT["ipv4"], IFACE)
++
++
++@pytest.mark.parametrize("port", [443, 22, 8888, 3997, 3998, 3999, 3000, 5432, 6379, 8001])
++def test_generated_rules_never_reference_a_forbidden_port(port):
++    doc = _document()
++    assert f"--dport {port}" not in doc
++    assert f"--sport {port}" not in doc
++
++
++def test_the_jump_is_the_only_place_a_port_appears_and_it_is_80():
++    jump = " ".join(fw.build_jump_rule(IFACE))
++    assert "--dport 80" in jump
++    ports = re.findall(r"--dport (\d+)", jump + " " + _document())
++    assert set(ports) == {"80"}
++
++
++@pytest.mark.parametrize("port", [443, 22, 8888, 3999])
++def test_building_a_jump_for_a_forbidden_port_is_refused(port):
++    # The guarantee is enforced in code, not only in review: 443 in particular
++    # would take the VPN down.
++    with pytest.raises(fw.FirewallScopeError):
++        fw.build_jump_rule(IFACE, port)
++
++
++def test_rules_are_scoped_to_the_external_interface():
++    assert f"-i {IFACE}" in " ".join(fw.build_jump_rule(IFACE))
++
++
++def test_docker_chains_are_never_referenced():
++    doc = _document()
++    assert "DOCKER" not in doc
++    with pytest.raises(fw.FirewallScopeError):
++        fw.assert_scope(doc.replace("-j DROP", "-j DOCKER-USER"))
++
++
++def test_only_the_owned_chain_is_populated():
++    doc = _document()
++    assert "-A INPUT" not in doc and "-A FORWARD" not in doc and "-A OUTPUT" not in doc
++    assert doc.count(f"-A {fw.CHAIN}") == len(SNAPSHOT["ipv4"]) + 2
++
++
++def test_established_traffic_returns_before_any_deny():
++    lines = fw.build_chain_rules(SNAPSHOT["ipv4"], IFACE)
++    assert "ESTABLISHED,RELATED" in lines[0] and "-j RETURN" in lines[0]
++    assert "-j DROP" in lines[-1], "the deny must be last, after every accept"
++
++
++def test_every_cloudflare_range_is_accepted():
++    doc = _document()
++    for cidr in SNAPSHOT["ipv4"]:
++        assert f"-s {cidr} " in doc
++
++
++def test_an_empty_allowlist_cannot_produce_a_chain():
++    # A truncated range list must not become "deny all public HTTP".
++    with pytest.raises(fw.FirewallScopeError):
++        fw.build_chain_rules([], IFACE)
++
++
++def test_ipv6_ranges_in_the_ipv4_rule_set_are_refused():
++    with pytest.raises(fw.FirewallScopeError):
++        fw.build_chain_rules(["2606:4700::/32"], IFACE)
++
++
++def test_scope_check_rejects_a_document_with_no_accept_or_no_deny():
++    doc = _document()
++    with pytest.raises(fw.FirewallScopeError, match="deny all"):
++        fw.assert_scope(doc.replace("-j ACCEPT", "-j RETURN"))
++    with pytest.raises(fw.FirewallScopeError, match="control would be absent"):
++        fw.assert_scope(doc.replace("-j DROP", "-j RETURN"))
++
++
++def test_the_transaction_is_a_single_atomic_restore_document():
++    doc = _document()
++    assert doc.startswith("*filter\n")
++    assert doc.rstrip().endswith("COMMIT")
++    # ":CHAIN - [0:0]" both creates and flushes inside the transaction, so the
++    # chain is replaced with no window in which it is empty.
++    assert f":{fw.CHAIN} - [0:0]" in doc
++    assert doc.count("COMMIT") == 1
++
++
++def test_reapplying_produces_an_identical_document():
++    assert _document() == _document()
++
++
++def test_the_jump_is_checked_before_being_inserted(monkeypatch):
++    # Idempotence: a second apply must not stack a duplicate INPUT jump.
++    calls = []
++
++    class R:
++        returncode = 0
++        stdout = ""
++        stderr = ""
++
++    def runner(argv, **kw):
++        calls.append(argv)
++        return R()
++
++    assert fw.jump_exists(IFACE, 80, runner=runner) is True
++    assert calls[0][:3] == ["iptables", "-C", "INPUT"]
++
++
++def test_dry_run_applies_nothing(monkeypatch, tmp_path, capsys):
++    snap = tmp_path / "snap.json"
++    snap.write_text(json.dumps(SNAPSHOT), encoding="utf-8")
++
++    def explode(*a, **k):
++        raise AssertionError("dry run must not execute firewall commands")
++
++    monkeypatch.setattr(fw, "_run", explode)
++    assert fw.main(["--interface", IFACE, "--snapshot", str(snap)]) == 0
++    assert "dry run — nothing applied" in capsys.readouterr().out
++
++
++# ─────────────────── nginx stream routing contract (static) ──────────────────
++
++
++def test_geo_block_defaults_to_not_cloudflare():
++    block = STREAM_CONF[STREAM_CONF.index("geo $lookla_cf_source") :]
++    block = block[: block.index("}")]
++    assert "default 0;" in block, "an unmatched source must never count as Cloudflare"
++    assert "default 1;" not in block
++
++
++def test_geo_block_includes_both_generated_files():
++    assert "include /etc/nginx/stream.d/cloudflare-v4.conf;" in STREAM_CONF
++    assert "include /etc/nginx/stream.d/cloudflare-v6.conf;" in STREAM_CONF
++
++
++def test_the_lookla_sni_list_is_exactly_the_pre_existing_one():
++    # Derived from the production stream map, not invented. Adding a hostname
++    # here would move it off the route it has today.
++    sni_map = STREAM_CONF[STREAM_CONF.index("map $ssl_preread_server_name") :]
++    sni_map = sni_map[: sni_map.index("}")]
++    web_hosts = re.findall(r"^\s*(\S+)\s+web;", sni_map, re.MULTILINE)
++    assert sorted(web_hosts) == ["lookla.gr", "www.lookla.gr"]
++
++
++def test_no_wildcard_or_regex_sni_matching_was_introduced():
++    sni_map = STREAM_CONF[STREAM_CONF.index("map $ssl_preread_server_name") :]
++    sni_map = sni_map[: sni_map.index("}")]
++    for token in ("*.", "~", "~*"):
++        assert token not in sni_map, f"unexpected wildcard/regex matching: {token}"
++
++
++def test_cdn_hostname_is_not_silently_rerouted():
++    # cdn.lookla.gr was not in the previous map; adding it would change its
++    # current destination as a side effect of this ticket.
++    sni_map = STREAM_CONF[STREAM_CONF.index("map $ssl_preread_server_name") :]
++    sni_map = sni_map[: sni_map.index("}")]
++    assert "cdn.lookla.gr" not in sni_map
++
++
++def _decision_map():
++    block = STREAM_CONF[STREAM_CONF.index('map "$lookla_sni_class:$lookla_cf_source"') :]
++    block = block[: block.index("}")]
++    return dict(re.findall(r'"?([\w:]+)"?\s+(127\.0\.0\.1:\d+);', block))
++
++
++@pytest.mark.parametrize(
++    "key,expected",
++    [
++        ("web:1", "127.0.0.1:8443"),   # Lookla SNI from Cloudflare → web
++        ("web:0", "127.0.0.1:9443"),   # Lookla SNI from elsewhere → reject
++        ("nosni:1", "127.0.0.1:8888"), # unchanged
++        ("nosni:0", "127.0.0.1:8888"), # unchanged
++        ("vpn:1", "127.0.0.1:4443"),   # unchanged
++        ("vpn:0", "127.0.0.1:4443"),   # unchanged
++        ("default", "127.0.0.1:4443"), # unchanged
++    ],
++)
++def test_the_routing_decision_matrix_is_exact(key, expected):
++    assert _decision_map().get(key) == expected
++
++
++def test_a_rejected_lookla_connection_can_reach_neither_backend():
++    decisions = _decision_map()
++    assert decisions["web:0"] != decisions["web:1"], "reject must not be the web upstream"
++    assert decisions["web:0"] != decisions["vpn:0"], "reject must not fall through to the VPN"
++    assert decisions["web:0"] != decisions["nosni:0"], "reject must not fall through to tinyproxy"
++
++
++def test_cloudflare_membership_alone_does_not_force_traffic_to_the_web_backend():
++    # A Cloudflare source with an unrelated SNI must still reach the VPN, or
++    # the allowlist would become a hostname-independent redirect.
++    assert _decision_map()["vpn:1"] == "127.0.0.1:4443"
++
++
++def test_the_reject_listener_exists_and_returns_nothing():
++    assert "listen 127.0.0.1:9443;" in STREAM_CONF
++    assert 'return "";' in STREAM_CONF
++
++
++def test_the_public_listener_keeps_ssl_preread_and_both_families():
++    server = STREAM_CONF[STREAM_CONF.index("    listen 443;") :]
++    assert "listen [::]:443;" in server
++    assert "ssl_preread           on;" in server
++    assert "proxy_pass            $lookla_upstream;" in server
++
++
++def test_the_vpn_upstream_port_is_never_changed():
++    assert "127.0.0.1:4443" in STREAM_CONF
++    assert STREAM_CONF.count("127.0.0.1:4443") >= 3, "all three VPN paths must remain"
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 172f747..9ed97c6 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2375,15 +2375,191 @@ Sitemap: https://lookla.gr/sitemap.xml
+ ---
+ 
+ ### T-049 — Restrict origin server to Cloudflare IP ranges
+-**Priority:** P2 | **Owner:** OPS | **Estimate:** 1h | **Epic:** EPIC-09
+-**Dependencies:** None
++**Priority:** P2 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
++**Dependencies:** T-050 ✅, T-071 ✅
++**Status:** Implemented against the revised contract (option **2 + 1**): port 80 gated at host `INPUT`, port 443 gated by SNI + source inside the existing nginx `stream` router. Routing matrix verified against a real nginx in isolation. **Nothing applied to production** — awaiting renewed independent APPROVE.
+ 
+-**Description:** T-017's Privacy Policy review found that the origin server's ports 80/443 are reachable directly from the public internet, not only via Cloudflare (confirmed: `ufw status` inactive, no `iptables`/`nft` source-IP restriction, and live nginx access logs show scanner/bot traffic hitting the origin IP directly). This is a real security gap independent of the Privacy Policy wording fix (which now correctly states the origin "may also be technically reachable directly" rather than falsely claiming all traffic passes through Cloudflare).
++**Risk being addressed:** the origin's ports 80/443 are reachable directly from the public internet, so anyone who learns the origin IP can bypass Cloudflare's WAF, rate limiting and bot controls entirely. Confirmed live: no packet filtering of any kind is active on this host.
+ 
+-**Acceptance Criteria:**
+-- [ ] Firewall rule (ufw or iptables) restricts inbound 80/443 to Cloudflare's published IP ranges (`https://www.cloudflare.com/ips/`)
+-- [ ] A documented process exists for updating the allowlist when Cloudflare rotates its IP ranges
+-- [ ] Deployed with a safe rollback plan (e.g. verify via a maintenance window, not a blind cutover) — a misconfigured rule here takes the entire site offline
++#### Step 2 — Production network path inventory
++
++| Layer | Current implementation | Relevant rule/path | T-049 implication |
++|---|---|---|---|
++| OS | Ubuntu 24.04.4 LTS, kernel 6.8 | — | — |
++| Docker | Engine 29.4.2, **Firewall Backend: iptables** | `DOCKER-USER` exists and is **empty** | available if ever needed |
++| iptables | v1.8.10 (**nf_tables** shim), `ip6tables` likewise | policies `INPUT/FORWARD/OUTPUT ACCEPT` | no backend migration required or permitted |
++| Host firewall | **none active** — UFW `inactive`, firewalld `inactive`, nftables unit `inactive`, zero custom `INPUT` rules | — | the control would be new, not a modification |
++| Public interface | `eth0`, single public IPv4 | default route via `eth0` | rule scope = `eth0` |
++| IPv6 | **no global IPv6 address exists** (link-local only) | nginx binds `[::]:80/443` but nothing routes | see Step 10 |
++| Ports 80/443 | **host nginx**, not a container | `0.0.0.0:80`, `0.0.0.0:443` | **`DOCKER-USER` is the wrong layer here** |
++| Docker published ports | `127.0.0.1` only — web 3000, api 8001, redis 6379, db 5432 | loopback-bound | not publicly reachable at all; out of scope |
++
++**The Docker premise in the ticket does not hold on this host.** The ticket assumed public ports are Docker-published and therefore bypass `INPUT`. They are not: nginx runs on the host and owns 80/443 directly, so ordinary `INPUT` filtering *is* the correct and sufficient layer, and `DOCKER-USER` must be left alone. Every Docker-published port is already bound to loopback and unreachable from outside.
++
++#### Step 3/4 — Blocking conflict: port 443 is shared with a live VPN
++
++`/etc/nginx/stream.d/port443.conf` makes port 443 an **SNI router**, not a web port:
++
++```nginx
++map $ssl_preread_server_name $upstream {
++    lookla.gr       127.0.0.1:8443;   # web  → nginx HTTPS vhost
++    www.lookla.gr   127.0.0.1:8443;
++    ""              127.0.0.1:8888;   # no SNI → tinyproxy
++    default         127.0.0.1:4443;   # everything else → Xray VLESS/REALITY
++}
++```
++
++Lookla's HTTPS vhost does **not** listen on `0.0.0.0:443` at all — it listens on `127.0.0.1:8443` behind that router. The `default` branch carries a **Xray VLESS/REALITY VPN** (10 provisioned clients, REALITY `serverNames: amazon.com`), whose users connect to the origin IP on port 443 from ordinary residential addresses worldwide.
++
++Evidence that this is live production traffic, not a dormant service:
++
++```text
++/var/log/xray/access.log, 7 days
++  22 868 lines total
++   6 052 local stats-API polls (the /opt/xray-traffic-collector.py cron)
++  16 816 real proxied client requests
++  active on every one of the last 7 days, including today
++  most recent real request: 2026-08-03 05:01:44, identity user05@xray
++```
++
++**Consequence: a source-IP allowlist on TCP/443 would terminate the VPN.** The firewall sees only address and port; it cannot distinguish the `lookla.gr` SNI from the VPN's. This is the Step 3 stop condition in a form the ticket did not anticipate — not a DNS-only hostname, but a different service sharing the port. The rule would be technically correct and would break legitimate production traffic, so it has not been applied.
++
++**Port 80 is not affected by this conflict.** It serves only the `lookla.gr` → HTTPS redirect and a default `localhost` vhost; nothing else on the host uses it.
++
++#### Step 3 — DNS and proxy-status audit
++
++| Hostname | A / AAAA target | Proxied | Served on this origin | Needs public 80/443 |
++|---|---|---|---|---|
++| `lookla.gr` | Cloudflare (`172.67.x`, `104.21.x`; AAAA `2606:4700:…`) | **proxied** | yes | via Cloudflare only |
++| `www.lookla.gr` | same | **proxied** | yes | via Cloudflare only |
++| `cdn.lookla.gr` | same | **proxied** | R2-backed, not this origin | no |
++| `api.lookla.gr` | **does not resolve** | — | no | no |
++
++No DNS-only A/AAAA record pointing at this origin was found for any web hostname. The VPN reaches the origin by **IP literal**, not by a DNS name, which is precisely why a DNS audit alone would have missed the conflict.
++
++#### Step 4 — Direct origin consumers
++
++| Consumer | Path | Needs direct origin access |
++|---|---|---|
++| Browsers / crawlers | proxied hostname | no |
++| Xray VPN clients | **origin IP:443 directly** | **yes — the blocking conflict** |
++| Tinyproxy (`:8888`, and the no-SNI 443 branch) | direct | separate service, outside T-049 scope |
++| Certificate renewal | none — see Step 5 | no |
++| Monitoring / webhooks / payments | none configured against the origin IP | no |
++
++#### Step 5 — TLS renewal compatibility: **no conflict**
++
++```text
++issuer   CloudFlare Origin SSL Certificate Authority
++notAfter Jun 20 15:07:00 2041 GMT
++```
++
++A **Cloudflare Origin Certificate**, valid for another ~15 years. No `certbot`, no `acme.sh`, no `/etc/letsencrypt`, no renewal timers. There is no HTTP-01 validation path to break, so the ticket's second mandatory precondition is satisfied outright.
++
++#### Steps 6–7 — Official range source, validated fail-closed
++
++`ops/cloudflare/cf_ranges.py` fetches only `https://www.cloudflare.com/ips-v4` and `/ips-v6`.
++
++```text
++retrieved_at_utc  2026-08-03T11:24:03Z
++ipv4  count=15  sha256=f02c6d83bc01ab0ae8577160e036d700c7455359bce054df884e5d7d9e4e9e7b
++ipv6  count=7   sha256=9e9d39e3e83bad00c4decafd53c63fa62029f3d95db68de937d2be28234ca0a9
++```
++
++Validation is a pure function, separated from I/O so it is testable without a network. It rejects: empty or whitespace-only bodies, HTML/JSON/XML error pages, wrong address family, invalid CIDRs, bare addresses without a prefix, networks with host bits set, truncated final lines, and counts outside plausible bounds. Duplicates are normalised deterministically so a snapshot diff reflects a real change rather than ordering noise. Any fetch or validation failure leaves the stored snapshot authoritative — the active list is never replaced by a partial one.
++
++41 tests, and the guards were confirmed discriminating by mutation rather than assumed: disabling the minimum-count guard fails 1 test, the family check 2, the empty check 2.
++
++`--check` mode is proven non-mutating (file hash unchanged across a run that detected a change) and exits `2` on change, so a third party editing their published list can never become an automatic firewall change.
++
++#### Step 10 — IPv6
++
++IPv6 is **not active** on this host, with proof rather than inference:
++
++- `ip -6 addr show scope global` returns **zero** addresses (link-local `fe80::` only);
++- there is no IPv6 default route;
++- nginx binds `[::]:80` and `[::]:443`, but nothing routes to them from outside;
++- Docker publishes no IPv6;
++- `lookla.gr` AAAA records point at **Cloudflare**, not at this origin.
++
++Direct IPv6 origin access is therefore not currently possible. The IPv6 allowlist is nonetheless fetched, validated and stored, so enabling IPv6 later does not silently ship an unprotected path.
++
++#### Approved design — why the two layers differ
++
++Port 80 is Lookla's alone, so it is filtered where filtering belongs: a dedicated `LOOKLA-CLOUDFLARE` chain entered only by `-i eth0 -p tcp --dport 80`. Port 443 is a shared SNI-multiplexed listener, and a packet filter cannot see SNI, so the gate for it has to live where SNI is visible — the nginx `stream` router that already routes it.
++
++**A phase detail that decides the implementation:** nginx's stream *access* phase runs **before** the *preread* phase, so `allow`/`deny` cannot see `$ssl_preread_server_name`. The gate therefore cannot be an access rule; it is a routing decision in the content phase, built from a `geo` lookup on `$remote_addr` combined with the SNI class.
++
++```nginx
++geo $lookla_cf_source {          # default 0 lives HERE, in the reviewed file
++    default 0;                   # a truncated generated include must mean
++    include .../cloudflare-v4.conf;   # "nobody is Cloudflare", never everybody
++    include .../cloudflare-v6.conf;
++}
++map $ssl_preread_server_name $lookla_sni_class { lookla.gr web; www.lookla.gr web; "" nosni; default vpn; }
++map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream { ... }
++```
++
++| SNI class | Source | Destination | Change |
++|---|---|---|---|
++| `lookla.gr`, `www.lookla.gr` | official Cloudflare range | `127.0.0.1:8443` web vhost | unchanged |
++| `lookla.gr`, `www.lookla.gr` | anything else | `127.0.0.1:9443` **reject** | **new** |
++| empty SNI | any | `127.0.0.1:8888` tinyproxy | unchanged |
++| any other SNI | any | `127.0.0.1:4443` Xray | unchanged |
++
++The Lookla hostname list is exactly the pre-existing one — no wildcard was introduced, and `cdn.lookla.gr` is deliberately absent because it was not in the previous map either; adding it would silently move it off the route it has today.
++
++**The reject path is a real listener** (`listen 127.0.0.1:9443; return "";`), not a dead address. Pointing `proxy_pass` at an unreachable port makes the behaviour an accident of the kernel and fills the error log; `return ""` sends nothing and closes, so the client completes no handshake, sees no certificate, gets no application response, and reaches neither backend.
++
++#### Isolated verification — a real nginx, full matrix
++
++Static inspection is not evidence: `map` precedence and the phase in which `$ssl_preread_server_name` becomes available are nginx's decisions, not the reader's. `ops/cloudflare/verify_routing.py` starts a throwaway nginx with the production routing logic, points the upstreams at marker listeners, and varies the source address across `127.0.0.0/8` (already routed to loopback — no interface is created, the host firewall is never touched).
++
++| case | expected | observed |
++|---|---|---|
++| Cloudflare source + `lookla.gr` | web | web ✅ |
++| Cloudflare source + `www.lookla.gr` | web | web ✅ |
++| ordinary source + `lookla.gr` | reject | reject ✅ |
++| ordinary source + `www.lookla.gr` | reject | reject ✅ |
++| ordinary source + VPN SNI | Xray | Xray ✅ |
++| Cloudflare source + non-Lookla SNI | Xray | Xray ✅ |
++| ordinary source + unknown SNI | Xray | Xray ✅ |
++| ordinary source + empty SNI | tinyproxy | tinyproxy ✅ |
++
++The harness was itself mutation-tested: routing `web:0` to the web upstream turns exactly the two reject rows red, so a passing run is a result rather than a formality.
++
++#### Atomicity, rollback, persistence
++
++`ipset` is not installed and `netfilter-persistent` is absent, so neither is used — adding a package to a production host is a larger change than this ticket warrants. Instead the chain is replaced by a single `iptables-restore --noflush` transaction (`:LOOKLA-CLOUDFLARE - [0:0]` creates-or-flushes inside the transaction), so there is no window in which the chain is empty, no momentary allow-all, and an interrupted run leaves the previous rules in force. `--noflush` leaves every other chain, Docker's included, untouched. The INPUT jump is inserted only after the chain is populated, and only when absent — so reapplying cannot stack duplicates.
++
++`apply_t049.sh` orders the steps so the working state survives any failure: back up both layers → **arm a timed `systemd-run` rollback before the first mutation** → render includes from the stored snapshot → `nginx -t` *before* touching the firewall → apply the firewall atomically → `nginx -t` again → **reload, never restart** (a restart drops the established VPN connections a reload preserves) → verify → only then cancel the rollback. The generated `rollback.sh` needs no network and no repository: it removes only T-049's chain and jump, restores the saved stream directory, and reloads.
++
++Persistence is a systemd oneshot that applies the **stored snapshot** and never fetches — a boot without connectivity restores the policy rather than leaving the origin open while a download times out.
++
++#### IPv6
++
++Public IPv6 remains proven inactive (zero global addresses, no v6 default route, AAAA records pointing at Cloudflare), so no IPv6 packet-filter policy is invented. The validated IPv6 snapshot and its generated `geo` include are still produced and wired into the stream config, so enabling IPv6 later cannot silently ship an ungated path.
++
++#### Tests
++
++**326 backend tests** (271 before + 55 for this layer), ruff clean, frontend unchanged. The scope guarantees are asserted against the bytes that would reach the kernel, not against intent: no rule references 443, 22, 8888, 3997–3999, 3000, 5432, 6379 or 8001; `build_jump_rule` refuses a forbidden port outright; no Docker chain is named; only T-049's own chain is populated; an empty allowlist cannot produce a chain; the deny is last and every Cloudflare range precedes it.
++
++**Safety checklist:** Backend changed **No** · Frontend changed **No** · Database changed **No** · API contract changed **No** · Cloudflare DNS changed **No** · Proxy status changed **No** · TLS renewal verified **Yes — Origin Certificate to 2041, no ACME** · DNS-only consumers audited **Yes — none** · Direct integrations audited **Yes — VPN found** · Firewall backend preserved **Yes — nothing applied** · Docker firewall path handled **Yes — determined inapplicable, `DOCKER-USER` untouched** · UFW treated as sufficient **N/A — ports are host-owned, not Docker-published** · Docker chains modified **No** · Docker firewall management disabled **No** · IPv4 port 80 protected **Yes (implemented, not applied)** · IPv6 proven inactive **Yes** · VPN preserved **Yes — verified in isolation** · SSH rules changed **No** · Official endpoints used **Yes** · Lists validated **Yes** · Empty-list replacement possible **No** · Production firewall touched **No** · Full firewall dump published **No** · Origin IP published **No** · Containers restarted **No** · PM2 used **No**
++
++#### Decision required
++
++The origin IP cannot be protected on 443 without deciding what happens to the VPN. Options, with the trade-off stated honestly:
++
++1. **Port 80 now, 443 deferred.** Immediate, zero risk to the VPN — but 443 is where the real bypass risk lives, so this alone buys little security.
++2. **SNI-aware rejection in the nginx stream layer.** Combine `$ssl_preread_server_name` with a `geo` set of Cloudflare ranges: a `lookla.gr` SNI from a non-Cloudflare source is dropped, everything else routes as today. Keeps the VPN working and closes the WAF bypass. Enforcement is in nginx rather than the packet filter — it is still pre-HTTP and trusts no header, but the origin still accepts the TCP connection. Requires an nginx reload (no container restart).
++3. **Move the VPN to another port**, then apply a clean firewall allowlist on 443. Strongest result; requires reconfiguring 10 VPN clients, and an uncommon port is more fingerprintable than 443.
++4. **Cloudflare Tunnel for Lookla** — removes the public origin web ports entirely and makes the whole question moot. Largest change; the ticket lists it as an explicit follow-up, not as T-049.
++
++Recommended: **2 combined with 1** — port 80 restricted at the packet filter, and 443 filtered by SNI + source in the stream layer — with 4 recorded as the durable fix.
++
++#### Follow-ups (deliberately not folded into T-049)
++
++Authenticated Origin Pulls · Cloudflare Tunnel · origin IP rotation · automatic range-change monitoring · `tinyproxy` on `0.0.0.0:8888` and three `next-server` processes bound to `*:3997-3999` are publicly reachable and unrelated to Lookla — they deserve their own review.
+ 
+ ---
+ 
+diff --git a/ops/cloudflare/apply_t049.sh b/ops/cloudflare/apply_t049.sh
+new file mode 100755
+index 0000000..2673658
+--- /dev/null
++++ b/ops/cloudflare/apply_t049.sh
+@@ -0,0 +1,131 @@
++#!/usr/bin/env bash
++# T-049 — apply the Cloudflare origin gate: port-80 packet filter + nginx SNI routing.
++#
++# Nothing here is clever, and that is deliberate: this script can take the site
++# and a live VPN off the internet, so every step is ordered so that the
++# previous, working state survives any failure.
++#
++#   1. back up both layers before touching either
++#   2. arm a timed rollback BEFORE the first mutation, so a lost SSH session,
++#      a hung command or a mistake self-heals without console access
++#   3. render the nginx includes from the stored snapshot (no network)
++#   4. `nginx -t` BEFORE the firewall changes — a bad config must not be
++#      discovered after the packet filter has already been altered
++#   5. apply the firewall in one atomic iptables-restore transaction
++#   6. `nginx -t` again, then reload (never restart: a restart drops the
++#      established VPN connections a reload preserves)
++#   7. verify, and only then cancel the rollback
++#
++# Usage:
++#   ./apply_t049.sh --interface eth0 [--rollback-after 600] [--dry-run]
++
++set -euo pipefail
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++REPO="$(cd "$HERE/../.." && pwd)"
++BACKUP_DIR="/var/backups/t049"
++STREAM_DIR="/etc/nginx/stream.d"
++SNAPSHOT="$HERE/cloudflare-ranges.json"
++ROLLBACK_AFTER=600
++INTERFACE=""
++DRY_RUN=0
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --interface)      INTERFACE="$2"; shift 2 ;;
++    --rollback-after) ROLLBACK_AFTER="$2"; shift 2 ;;
++    --dry-run)        DRY_RUN=1; shift ;;
++    *) echo "unknown argument: $1" >&2; exit 2 ;;
++  esac
++done
++
++[[ -n "$INTERFACE" ]] || { echo "--interface is required" >&2; exit 2; }
++[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 2; }
++
++log() { printf '[t049] %s\n' "$*"; }
++fail() { printf '[t049] FAIL: %s\n' "$*" >&2; exit 1; }
++
++# ── 1. back up both layers ───────────────────────────────────────────────────
++STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
++BACKUP="$BACKUP_DIR/$STAMP"
++mkdir -p "$BACKUP"
++iptables-save > "$BACKUP/iptables.rules"
++cp -a "$STREAM_DIR" "$BACKUP/stream.d"
++[[ -s "$BACKUP/iptables.rules" ]] || fail "iptables backup is empty — refusing to continue"
++[[ -f "$BACKUP/stream.d/port443.conf" ]] || fail "nginx stream backup incomplete"
++ln -sfn "$BACKUP" "$BACKUP_DIR/latest"
++log "backup: $BACKUP"
++
++cat > "$BACKUP/rollback.sh" <<ROLLBACK
++#!/usr/bin/env bash
++# Restores exactly what T-049 changed, and nothing else. Works with no network
++# and no repository access — everything it needs is in this directory.
++set -euo pipefail
++iptables -D INPUT -i ${INTERFACE} -p tcp --dport 80 -m comment --comment "T-049 cloudflare origin allowlist jump" -j LOOKLA-CLOUDFLARE 2>/dev/null || true
++iptables -F LOOKLA-CLOUDFLARE 2>/dev/null || true
++iptables -X LOOKLA-CLOUDFLARE 2>/dev/null || true
++rm -f ${STREAM_DIR}/cloudflare-v4.conf ${STREAM_DIR}/cloudflare-v6.conf
++cp -a $BACKUP/stream.d/. ${STREAM_DIR}/
++nginx -t && nginx -s reload
++echo "[t049] rolled back from $BACKUP"
++ROLLBACK
++chmod +x "$BACKUP/rollback.sh"
++log "rollback script: $BACKUP/rollback.sh"
++
++if [[ $DRY_RUN -eq 1 ]]; then
++  log "dry run — rendering to a temp dir and testing, applying nothing"
++  TMP="$(mktemp -d)"
++  python3 "$HERE/cf_ranges.py" --snapshot "$SNAPSHOT" --render-geo "$TMP" || fail "render failed"
++  python3 "$HERE/firewall.py" --interface "$INTERFACE" --snapshot "$SNAPSHOT"
++  log "rendered: $(ls "$TMP" | tr '\n' ' ')"
++  rm -rf "$TMP"
++  exit 0
++fi
++
++# ── 2. arm the timed rollback BEFORE any mutation ────────────────────────────
++# Not a held-open SSH session: that only helps if the operator is still there
++# and still has a working connection, which is precisely what a bad rule takes
++# away.
++systemd-run --on-active="${ROLLBACK_AFTER}" --unit=t049-rollback \
++  --description="T-049 automatic rollback" "$BACKUP/rollback.sh" >/dev/null
++log "automatic rollback armed: ${ROLLBACK_AFTER}s (systemctl stop t049-rollback.timer to cancel)"
++
++# ── 3. render the geo includes from the stored snapshot ──────────────────────
++python3 "$HERE/cf_ranges.py" --snapshot "$SNAPSHOT" --render-geo "$STREAM_DIR" \
++  || fail "geo render failed — previous includes left in place"
++
++# ── 4. install the stream config and test BEFORE touching the firewall ───────
++install -m 0644 "$REPO/ops/nginx/stream.d/port443.conf" "$STREAM_DIR/port443.conf.new"
++mv -f "$STREAM_DIR/port443.conf.new" "$STREAM_DIR/port443.conf"
++nginx -t || fail "nginx -t failed — firewall untouched, restore with $BACKUP/rollback.sh"
++log "nginx config validated"
++
++# ── 5. firewall, one atomic transaction ──────────────────────────────────────
++python3 "$HERE/firewall.py" --interface "$INTERFACE" --snapshot "$SNAPSHOT" --apply \
++  || fail "firewall apply failed"
++
++# ── 6. reload, never restart ─────────────────────────────────────────────────
++nginx -t || fail "nginx -t failed after firewall apply"
++nginx -s reload || fail "nginx reload failed"
++log "nginx reloaded"
++
++# ── 7. verification the operator must confirm before cancelling rollback ─────
++cat <<'NEXT'
++
++[t049] Applied. The automatic rollback is still armed — verify all of these
++       from an EXTERNAL host before cancelling it:
++
++         1. https://lookla.gr/ through Cloudflare, all four locales
++         2. openssl s_client -connect <origin>:443 -servername lookla.gr
++            → must NOT reach the Lookla backend
++         3. VPN clients still connecting (xray access.log advancing)
++         4. a second, independent SSH session still works
++
++       Cancel only after all four pass:
++
++         systemctl stop t049-rollback.timer
++
++       Roll back immediately at any point:
++
++         $(readlink -f /var/backups/t049/latest)/rollback.sh
++NEXT
+diff --git a/ops/cloudflare/cf_ranges.py b/ops/cloudflare/cf_ranges.py
+new file mode 100644
+index 0000000..9589f75
+--- /dev/null
++++ b/ops/cloudflare/cf_ranges.py
+@@ -0,0 +1,333 @@
++#!/usr/bin/env python3
++"""
++T-049 — fetch and validate Cloudflare's official reverse-proxy IP ranges.
++
++This module is the only sanctioned source of the allowlist that will gate the
++origin's public web ports. Everything here is built to **fail closed**: the
++active allowlist is only ever replaced by a list that has been fully
++downloaded, parsed and sanity-checked. A truncated download, an HTML error
++page, a captive-portal interception or an empty response must leave the
++previous list in place, because the alternative — a firewall that silently
++falls back to an empty allowlist — takes the site off the internet, and one
++that falls back to "allow everything" quietly removes the control.
++
++Validation is deliberately separated from I/O so the rules can be tested
++without a network: `validate_ranges()` is pure.
++
++Official endpoints only (https://www.cloudflare.com/ips-v4, /ips-v6). Blog
++posts, gists, ASN expansion and remembered CIDRs are not acceptable sources —
++they go stale silently and there is no way to notice.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import ipaddress
++import json
++import sys
++import urllib.request
++from datetime import datetime, timezone
++from pathlib import Path
++
++IPS_V4_URL = "https://www.cloudflare.com/ips-v4"
++IPS_V6_URL = "https://www.cloudflare.com/ips-v6"
++
++# Plausibility bounds. Cloudflare has published ~15 IPv4 and ~7 IPv6 ranges for
++# years. The lower bound is the important one: it stops a truncated or partially
++# served response from shrinking the allowlist to something that would lock the
++# edge out. The upper bound catches a wrong endpoint or a merged product list
++# being fetched by mistake.
++MIN_V4, MAX_V4 = 5, 100
++MIN_V6, MAX_V6 = 3, 100
++
++
++class RangeValidationError(ValueError):
++    """Raised whenever a candidate list must not replace the active one."""
++
++
++def validate_ranges(raw: str, family: int) -> list[str]:
++    """
++    Parse and validate a raw Cloudflare range list.
++
++    Returns the normalised, de-duplicated, deterministically sorted CIDRs.
++    Raises `RangeValidationError` on anything that must not be applied.
++
++    `family` is 4 or 6 and is enforced: fetching the IPv6 list into the IPv4
++    set would produce a firewall that drops all legitimate IPv4 edge traffic.
++    """
++    if family not in (4, 6):
++        raise RangeValidationError(f"unsupported address family: {family!r}")
++
++    if raw is None or not raw.strip():
++        raise RangeValidationError("empty response — refusing to replace the active list")
++
++    # An error page, a captive portal or a redirect body parses as "lines" too,
++    # so reject markup before trying to read CIDRs out of it.
++    lowered = raw.lstrip()[:512].lower()
++    for marker in ("<!doctype", "<html", "<head", "<body", "<?xml", "{", "["):
++        if lowered.startswith(marker):
++            raise RangeValidationError(
++                "response looks like markup or JSON, not a plain CIDR list"
++            )
++
++    networks: list[ipaddress._BaseNetwork] = []
++    for lineno, line in enumerate(raw.splitlines(), start=1):
++        entry = line.strip()
++        if not entry:
++            continue
++        if entry.startswith("#"):
++            raise RangeValidationError(
++                f"line {lineno}: unexpected comment in an official list: {entry[:60]!r}"
++            )
++        if "/" not in entry:
++            # The official endpoints return CIDRs. A bare address means the
++            # format changed, which is a reason to stop and look, not to guess.
++            raise RangeValidationError(
++                f"line {lineno}: expected a CIDR, got {entry[:60]!r}"
++            )
++        try:
++            # strict=True: a network with host bits set (e.g. 1.2.3.4/24) means
++            # the list is not what we think it is.
++            net = ipaddress.ip_network(entry, strict=True)
++        except ValueError as exc:
++            raise RangeValidationError(f"line {lineno}: invalid CIDR {entry[:60]!r}: {exc}") from exc
++
++        if net.version != family:
++            raise RangeValidationError(
++                f"line {lineno}: expected IPv{family}, got IPv{net.version} ({entry})"
++            )
++        networks.append(net)
++
++    if not networks:
++        raise RangeValidationError("no ranges parsed — refusing to replace the active list")
++
++    # Deterministic de-duplication: sorting by network object orders by address
++    # then prefix length, so the same input always yields byte-identical output
++    # and a snapshot diff reflects a real change rather than ordering noise.
++    unique = sorted(set(networks))
++    count = len(unique)
++    lo, hi = (MIN_V4, MAX_V4) if family == 4 else (MIN_V6, MAX_V6)
++    if count < lo:
++        raise RangeValidationError(
++            f"only {count} IPv{family} range(s); expected at least {lo} — "
++            "a short list would lock the Cloudflare edge out of the origin"
++        )
++    if count > hi:
++        raise RangeValidationError(
++            f"{count} IPv{family} ranges exceeds the plausible maximum of {hi} — "
++            "wrong endpoint or a merged product list?"
++        )
++
++    return [str(n) for n in unique]
++
++
++def sha256_of(raw: str) -> str:
++    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
++
++
++def fetch(url: str, timeout: int = 15) -> str:
++    """
++    Fetch a range list over HTTPS.
++
++    Any failure propagates: the caller must treat it as "keep the current
++    snapshot", never as "apply an empty list".
++    """
++    request = urllib.request.Request(url, headers={"User-Agent": "lookla-t049/1.0"})
++    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
++        status = getattr(response, "status", None) or response.getcode()
++        if status != 200:
++            raise RangeValidationError(f"{url} returned HTTP {status}")
++        return response.read().decode("utf-8")
++
++
++def build_snapshot(fetcher=None) -> dict:
++    """
++    Fetch both families and return a validated, reviewable snapshot.
++
++    `fetcher` is resolved at call time rather than bound as a default, so tests
++    can substitute the transport without reaching into module internals.
++    """
++    fetcher = fetcher or fetch
++    raw_v4 = fetcher(IPS_V4_URL)
++    raw_v6 = fetcher(IPS_V6_URL)
++    v4 = validate_ranges(raw_v4, 4)
++    v6 = validate_ranges(raw_v6, 6)
++    return {
++        "retrieved_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
++        "source": {"ipv4": IPS_V4_URL, "ipv6": IPS_V6_URL},
++        "sha256": {"ipv4": sha256_of(raw_v4), "ipv6": sha256_of(raw_v6)},
++        "counts": {"ipv4": len(v4), "ipv6": len(v6)},
++        "ipv4": v4,
++        "ipv6": v6,
++    }
++
++
++GEO_HEADER = (
++    "# Generated by ops/cloudflare/cf_ranges.py — do not edit by hand.\n"
++    "# Official Cloudflare {family} reverse-proxy ranges, snapshot {retrieved}.\n"
++    "# sha256({family_key}) = {digest}\n"
++)
++
++
++def render_geo_include(snapshot: dict, family: int) -> str:
++    """
++    Render an `ngx_stream_geo_module` include: one `<cidr> 1;` line per range.
++
++    The surrounding `geo` block supplies `default 0;`, so a source that matches
++    nothing is not Cloudflare. That default lives in the checked-in stream
++    config rather than here: if this generated file were ever truncated to
++    nothing, the result must be "no source is Cloudflare" — which closes the
++    web path — and never "every source is Cloudflare".
++
++    Re-validates the snapshot rather than trusting it, so a hand-edited or
++    corrupted JSON file cannot reach nginx.
++    """
++    key = "ipv4" if family == 4 else "ipv6"
++    ranges = validate_ranges("\n".join(snapshot.get(key, [])), family)
++    header = GEO_HEADER.format(
++        family=f"IPv{family}",
++        family_key=key,
++        retrieved=snapshot.get("retrieved_at_utc", "unknown"),
++        digest=snapshot.get("sha256", {}).get(key, "unknown"),
++    )
++    return header + "".join(f"{cidr} 1;\n" for cidr in ranges)
++
++
++def write_atomically(path: Path, content: str) -> bool:
++    """
++    Replace `path` with `content` via a same-directory temp file and `rename`.
++
++    Returns True when the file changed. An unchanged file is left completely
++    alone so nothing downstream mistakes a rewrite for a real update and
++    reloads nginx for no reason. `rename` within a directory is atomic, so a
++    reader never sees a half-written allowlist.
++    """
++    if path.is_file() and path.read_text(encoding="utf-8") == content:
++        return False
++    tmp = path.with_suffix(path.suffix + ".tmp")
++    tmp.write_text(content, encoding="utf-8")
++    tmp.replace(path)
++    return True
++
++
++def load_snapshot(path: Path) -> dict:
++    """Load and re-validate a stored snapshot; a corrupted file must not apply."""
++    data = json.loads(path.read_text(encoding="utf-8"))
++    validate_ranges("\n".join(data.get("ipv4", [])), 4)
++    validate_ranges("\n".join(data.get("ipv6", [])), 6)
++    return data
++
++
++def diff_snapshots(old: dict | None, new: dict) -> dict[str, list[str]]:
++    """Report what an update would change, for review before anything is applied."""
++    result: dict[str, list[str]] = {}
++    for family in ("ipv4", "ipv6"):
++        before = set((old or {}).get(family, []))
++        after = set(new.get(family, []))
++        result[f"{family}_added"] = sorted(after - before)
++        result[f"{family}_removed"] = sorted(before - after)
++    return result
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument(
++        "--snapshot",
++        type=Path,
++        default=Path(__file__).with_name("cloudflare-ranges.json"),
++        help="path to the known-good snapshot",
++    )
++    parser.add_argument(
++        "--check",
++        action="store_true",
++        help="fetch and compare against the stored snapshot; never writes",
++    )
++    parser.add_argument(
++        "--write",
++        action="store_true",
++        help="fetch, validate and replace the stored snapshot",
++    )
++    parser.add_argument(
++        "--render-geo",
++        type=Path,
++        metavar="DIR",
++        help="render nginx stream geo includes from the stored snapshot into DIR "
++        "(no network access; exits non-zero if the snapshot is unusable)",
++    )
++    args = parser.parse_args(argv)
++
++    if args.render_geo:
++        # Rendering deliberately never fetches: the boot/apply path must work
++        # from the last validated snapshot even when the network is down,
++        # rather than leaving the policy undefined.
++        try:
++            snapshot = load_snapshot(args.snapshot)
++        except (RangeValidationError, ValueError, OSError) as exc:
++            print(f"FAIL: cannot render from {args.snapshot}: {exc}", file=sys.stderr)
++            print("previous includes are left in place", file=sys.stderr)
++            return 1
++        args.render_geo.mkdir(parents=True, exist_ok=True)
++        changed = []
++        for family, name in ((4, "cloudflare-v4.conf"), (6, "cloudflare-v6.conf")):
++            target = args.render_geo / name
++            if write_atomically(target, render_geo_include(snapshot, family)):
++                changed.append(name)
++        print(
++            f"rendered from snapshot {snapshot['retrieved_at_utc']} "
++            f"ipv4={snapshot['counts']['ipv4']} ipv6={snapshot['counts']['ipv6']}"
++        )
++        print("changed: " + (", ".join(changed) if changed else "nothing"))
++        return 0
++
++    current = None
++    if args.snapshot.is_file():
++        try:
++            current = load_snapshot(args.snapshot)
++        except (RangeValidationError, ValueError, OSError) as exc:
++            print(f"WARNING: stored snapshot is unusable: {exc}", file=sys.stderr)
++
++    if not (args.check or args.write):
++        if current is None:
++            print("no valid snapshot stored", file=sys.stderr)
++            return 1
++        print(
++            f"snapshot {args.snapshot}: retrieved {current['retrieved_at_utc']} "
++            f"ipv4={current['counts']['ipv4']} ipv6={current['counts']['ipv6']}"
++        )
++        return 0
++
++    try:
++        snapshot = build_snapshot()
++    except Exception as exc:  # noqa: BLE001 — any failure means "keep what we have"
++        print(f"FAIL: could not obtain a valid range list: {exc}", file=sys.stderr)
++        print("the stored snapshot is unchanged and remains authoritative", file=sys.stderr)
++        return 1
++
++    print(f"retrieved_at_utc : {snapshot['retrieved_at_utc']}")
++    print(f"ipv4  count={snapshot['counts']['ipv4']:<4} sha256={snapshot['sha256']['ipv4']}")
++    print(f"ipv6  count={snapshot['counts']['ipv6']:<4} sha256={snapshot['sha256']['ipv6']}")
++
++    changes = diff_snapshots(current, snapshot)
++    changed = any(changes.values())
++    if changed:
++        print("\nchanges against the stored snapshot:")
++        for key, values in changes.items():
++            for value in values:
++                print(f"  {key}: {value}")
++    else:
++        print("\nno change against the stored snapshot")
++
++    if args.check:
++        # Check mode never mutates. A change is reported, not applied: turning a
++        # third party's list edit into an automatic firewall change is an
++        # operational decision, not this script's to make.
++        return 2 if changed else 0
++
++    args.snapshot.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
++    print(f"\nsnapshot written: {args.snapshot}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/ops/cloudflare/cloudflare-ranges.json b/ops/cloudflare/cloudflare-ranges.json
+new file mode 100644
+index 0000000..d898cd8
+--- /dev/null
++++ b/ops/cloudflare/cloudflare-ranges.json
+@@ -0,0 +1,41 @@
++{
++  "retrieved_at_utc": "2026-08-03T11:24:03Z",
++  "source": {
++    "ipv4": "https://www.cloudflare.com/ips-v4",
++    "ipv6": "https://www.cloudflare.com/ips-v6"
++  },
++  "sha256": {
++    "ipv4": "f02c6d83bc01ab0ae8577160e036d700c7455359bce054df884e5d7d9e4e9e7b",
++    "ipv6": "9e9d39e3e83bad00c4decafd53c63fa62029f3d95db68de937d2be28234ca0a9"
++  },
++  "counts": {
++    "ipv4": 15,
++    "ipv6": 7
++  },
++  "ipv4": [
++    "103.21.244.0/22",
++    "103.22.200.0/22",
++    "103.31.4.0/22",
++    "104.16.0.0/13",
++    "104.24.0.0/14",
++    "108.162.192.0/18",
++    "131.0.72.0/22",
++    "141.101.64.0/18",
++    "162.158.0.0/15",
++    "172.64.0.0/13",
++    "173.245.48.0/20",
++    "188.114.96.0/20",
++    "190.93.240.0/20",
++    "197.234.240.0/22",
++    "198.41.128.0/17"
++  ],
++  "ipv6": [
++    "2400:cb00::/32",
++    "2405:8100::/32",
++    "2405:b500::/32",
++    "2606:4700::/32",
++    "2803:f800::/32",
++    "2a06:98c0::/29",
++    "2c0f:f248::/32"
++  ]
++}
+diff --git a/ops/cloudflare/firewall.py b/ops/cloudflare/firewall.py
+new file mode 100644
+index 0000000..9eb7b3b
+--- /dev/null
++++ b/ops/cloudflare/firewall.py
+@@ -0,0 +1,226 @@
++#!/usr/bin/env python3
++"""
++T-049 — restrict public TCP/80 on the Lookla origin to Cloudflare source ranges.
++
++Scope is deliberately narrow, and the reasons are worth stating because the
++obvious wider rule would break this host:
++
++  * **Port 80 only.** Port 443 on this host is a shared SNI-multiplexed
++    listener — Lookla web and a live Xray VLESS/REALITY VPN arrive on the same
++    socket. A packet filter cannot see SNI, so filtering 443 by source address
++    would terminate the VPN. That layer is handled in the nginx stream config
++    instead (ops/nginx/stream.d/port443.conf).
++  * **`INPUT`, not `DOCKER-USER`.** Ports 80/443 belong to host nginx, not to
++    a published container port. Every Docker-published port on this host is
++    bound to 127.0.0.1 and unreachable from outside, so the Docker forwarding
++    path is not involved and its generated chains are left alone.
++  * **A dedicated chain.** Everything T-049 owns lives in one named chain, so
++    the rules are identifiable, idempotent to reapply, and removable without
++    touching anything else in the filter table.
++
++Rule construction is a pure function so the scope guarantees — nothing on 443,
++nothing on 22, nothing on the unrelated public listeners — are testable
++without a firewall.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++CHAIN = "LOOKLA-CLOUDFLARE"
++COMMENT = "T-049 cloudflare origin allowlist"
++
++#: Ports this ticket is allowed to touch. 443 is excluded on purpose; see the
++#: module docstring. Anything not listed here must never appear in a rule.
++ALLOWED_PORTS = (80,)
++
++#: Ports that must never be matched, asserted rather than assumed: SSH, the
++#: shared 443 listener, and the unrelated public services found during the
++#: T-049 inventory (tinyproxy and three next-server processes), which belong
++#: to a separate ticket and must not be silently firewalled here.
++FORBIDDEN_PORTS = (22, 443, 3997, 3998, 3999, 5432, 6379, 8001, 8888, 3000)
++
++
++class FirewallScopeError(ValueError):
++    """Raised when a generated rule would exceed T-049's approved scope."""
++
++
++def build_chain_rules(ranges_v4: list[str], interface: str) -> list[str]:
++    """
++    Return the `iptables-restore` lines for T-049's chain.
++
++    Order matters: established traffic is preserved first so an in-flight
++    connection is never cut by a reload, then Cloudflare sources are accepted,
++    then everything else reaching port 80 on the public interface is dropped.
++    The chain is only ever entered for TCP/80 on `interface` (see
++    `build_jump_rule`), so the final DROP cannot affect anything else.
++    """
++    if not ranges_v4:
++        # Never emit a chain with no accept rules: it would deny all public
++        # HTTP, and it is exactly what a truncated range list would produce.
++        raise FirewallScopeError("refusing to build a chain with an empty allowlist")
++    if not interface or " " in interface:
++        raise FirewallScopeError(f"implausible interface name: {interface!r}")
++
++    lines = [
++        f"-A {CHAIN} -m conntrack --ctstate ESTABLISHED,RELATED "
++        f'-m comment --comment "{COMMENT} established" -j RETURN',
++    ]
++    for cidr in ranges_v4:
++        if ":" in cidr:
++            raise FirewallScopeError(f"IPv6 range in the IPv4 rule set: {cidr}")
++        lines.append(
++            f"-A {CHAIN} -s {cidr} "
++            f'-m comment --comment "{COMMENT} accept" -j ACCEPT'
++        )
++    lines.append(
++        f'-A {CHAIN} -m comment --comment "{COMMENT} deny" -j DROP'
++    )
++    return lines
++
++
++def build_jump_rule(interface: str, port: int = 80) -> list[str]:
++    """
++    Return the argv that sends new public traffic for `port` into T-049's chain.
++
++    This is the only place a port number enters the rule set, and it is checked
++    against the approved list here so a future edit cannot quietly widen the
++    ticket's blast radius.
++    """
++    if port not in ALLOWED_PORTS:
++        raise FirewallScopeError(
++            f"port {port} is outside T-049's approved scope {ALLOWED_PORTS}"
++        )
++    if port in FORBIDDEN_PORTS:
++        raise FirewallScopeError(f"port {port} must never be filtered by T-049")
++    return [
++        "-i", interface,
++        "-p", "tcp",
++        "--dport", str(port),
++        "-m", "comment", "--comment", f"{COMMENT} jump",
++        "-j", CHAIN,
++    ]
++
++
++def build_restore_document(ranges_v4: list[str], interface: str) -> str:
++    """
++    Build a complete `iptables-restore --noflush` transaction for the chain.
++
++    `:CHAIN - [0:0]` creates the chain if absent and flushes it if present, and
++    `iptables-restore` applies the whole document as one transaction — so the
++    chain is replaced atomically. There is no window in which it is empty and
++    therefore no momentary allow-all, and an interrupted run leaves the
++    previous rules in force. `--noflush` keeps every other chain, including
++    Docker's, untouched.
++    """
++    body = "\n".join(build_chain_rules(ranges_v4, interface))
++    return f"*filter\n:{CHAIN} - [0:0]\n{body}\nCOMMIT\n"
++
++
++def assert_scope(document: str) -> None:
++    """
++    Fail loudly if a generated document strays outside the approved scope.
++
++    Called before anything is applied. The checks are deliberately literal:
++    they are the difference between "we intended port 80 only" and "we know
++    the bytes about to reach the kernel mention no other port".
++    """
++    for port in FORBIDDEN_PORTS:
++        for needle in (f"--dport {port}", f"--sport {port}", f"dpt:{port}"):
++            if needle in document:
++                raise FirewallScopeError(
++                    f"generated rules reference forbidden port {port}: {needle!r}"
++                )
++    if "DOCKER" in document:
++        raise FirewallScopeError("generated rules must not reference Docker chains")
++    if "-A INPUT" in document or "-A FORWARD" in document or "-A OUTPUT" in document:
++        raise FirewallScopeError(
++            "generated rules must only populate T-049's own chain"
++        )
++    if "-j ACCEPT" not in document:
++        raise FirewallScopeError("no accept rule present — this would deny all HTTP")
++    if "-j DROP" not in document:
++        raise FirewallScopeError("no deny rule present — the control would be absent")
++
++
++def _run(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
++    return subprocess.run(  # noqa: S603
++        argv, input=input_text, capture_output=True, text=True, check=False
++    )
++
++
++def jump_exists(interface: str, port: int, runner=_run) -> bool:
++    result = runner(["iptables", "-C", "INPUT", *build_jump_rule(interface, port)])
++    return result.returncode == 0
++
++
++def current_chain(runner=_run) -> str | None:
++    """Return the chain's current rules, or None when the chain does not exist."""
++    result = runner(["iptables", "-S", CHAIN])
++    return result.stdout if result.returncode == 0 else None
++
++
++def load_ranges(snapshot_path: Path) -> list[str]:
++    data = json.loads(snapshot_path.read_text(encoding="utf-8"))
++    ranges = data.get("ipv4") or []
++    if not ranges:
++        raise FirewallScopeError(f"{snapshot_path} contains no IPv4 ranges")
++    return ranges
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--interface", required=True)
++    parser.add_argument(
++        "--snapshot",
++        type=Path,
++        default=Path(__file__).with_name("cloudflare-ranges.json"),
++    )
++    parser.add_argument(
++        "--apply",
++        action="store_true",
++        help="apply the rules; without it the transaction is only printed",
++    )
++    args = parser.parse_args(argv)
++
++    try:
++        ranges = load_ranges(args.snapshot)
++        document = build_restore_document(ranges, args.interface)
++        assert_scope(document)
++    except (FirewallScopeError, ValueError, OSError) as exc:
++        print(f"FAIL: {exc}", file=sys.stderr)
++        return 1
++
++    print(f"# {len(ranges)} Cloudflare IPv4 ranges, interface {args.interface}")
++    if not args.apply:
++        print(document, end="")
++        print(f"# jump: iptables -I INPUT 1 {' '.join(build_jump_rule(args.interface))}")
++        print("# dry run — nothing applied")
++        return 0
++
++    restore = _run(["iptables-restore", "--noflush"], input_text=document)
++    if restore.returncode != 0:
++        print(f"FAIL: iptables-restore: {restore.stderr.strip()}", file=sys.stderr)
++        return 1
++
++    # The jump is inserted only after the chain is populated, so the chain is
++    # never reachable while empty.
++    if not jump_exists(args.interface, 80):
++        insert = _run(["iptables", "-I", "INPUT", "1", *build_jump_rule(args.interface)])
++        if insert.returncode != 0:
++            print(f"FAIL: could not install jump: {insert.stderr.strip()}", file=sys.stderr)
++            return 1
++        print("jump installed in INPUT")
++    else:
++        print("jump already present — idempotent, not duplicated")
++
++    print("applied")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/ops/cloudflare/t049-origin-allowlist.service b/ops/cloudflare/t049-origin-allowlist.service
+new file mode 100644
+index 0000000..c3b5cb0
+--- /dev/null
++++ b/ops/cloudflare/t049-origin-allowlist.service
+@@ -0,0 +1,41 @@
++# T-049 — reinstate the port-80 Cloudflare allowlist after a reboot.
++#
++# Ordering: after the network is up so the interface exists, and after Docker,
++# because Docker rebuilds its own chains on start and this unit must not race
++# it. It touches only T-049's own chain either way, but running afterwards
++# keeps the INPUT jump above nothing surprising.
++#
++# The unit deliberately does NOT fetch ranges. It applies the last validated
++# snapshot from disk, so a boot with no connectivity still restores the policy
++# instead of leaving the origin open while a download times out. Updating the
++# snapshot is a separate, reviewed action.
++#
++# Install:
++#   cp t049-origin-allowlist.service /etc/systemd/system/
++#   systemctl daemon-reload && systemctl enable t049-origin-allowlist.service
++#
++# The nginx half needs no unit: its configuration lives in /etc/nginx and is
++# loaded by nginx itself at boot.
++
++[Unit]
++Description=T-049 Cloudflare origin allowlist (public TCP/80)
++After=network-online.target docker.service
++Wants=network-online.target
++# Without this the unit can run before Docker has built its chains, which is
++# harmless for our own chain but makes the resulting rule order confusing.
++PartOf=docker.service
++
++[Service]
++Type=oneshot
++RemainAfterExit=yes
++# Idempotent by construction: the chain is rebuilt in one atomic transaction
++# and the INPUT jump is only inserted when absent, so repeated starts and a
++# daemon-reload cannot stack duplicate rules.
++ExecStart=/usr/bin/python3 /opt/t049/firewall.py --interface eth0 --snapshot /opt/t049/cloudflare-ranges.json --apply
++# A failure must be loud and must not leave a half-applied policy; the atomic
++# restore means the previous chain is still in force if this exits non-zero.
++StandardOutput=journal
++StandardError=journal
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/ops/cloudflare/verify_routing.py b/ops/cloudflare/verify_routing.py
+new file mode 100755
+index 0000000..1abfbc0
+--- /dev/null
++++ b/ops/cloudflare/verify_routing.py
+@@ -0,0 +1,202 @@
++#!/usr/bin/env python3
++"""
++T-049 — prove the SNI/source routing matrix against a real nginx.
++
++Static inspection of the config is not evidence: `map` precedence, the phase
++in which `$ssl_preread_server_name` becomes available, and how an unmatched
++key falls through are all things nginx decides, not the reader. This starts a
++throwaway nginx with the production routing logic, points its upstreams at
++marker listeners, and drives every cell of the matrix.
++
++Source addresses are varied using 127.0.0.0/8, all of which the kernel already
++routes to loopback — no interface is created or modified, and the host
++firewall is never touched. One loopback address stands in for "a Cloudflare
++range", another for "an ordinary public source".
++
++Run as root only because nginx wants it for the pid file; nothing outside the
++temp prefix is written.
++"""
++
++from __future__ import annotations
++
++import socket
++import ssl
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++from pathlib import Path
++
++MODULE = "/usr/lib/nginx/modules/ngx_stream_module.so"
++FRONT = 19999          # stands in for public :443
++WEB, VPN, NOSNI = 19443, 19444, 18888
++REJECT = 19445
++CF_SOURCE = "127.0.0.2"       # inside the simulated Cloudflare set
++OTHER_SOURCE = "127.0.0.3"    # an ordinary public source
++
++CONF = f"""
++load_module {MODULE};
++events {{ worker_connections 64; }}
++error_log {{prefix}}/logs/error.log warn;
++pid {{prefix}}/logs/nginx.pid;
++stream {{
++    geo $lookla_cf_source {{
++        default 0;
++        include {{prefix}}/conf/cloudflare-v4.conf;
++    }}
++    map $ssl_preread_server_name $lookla_sni_class {{
++        lookla.gr        web;
++        www.lookla.gr    web;
++        ""               nosni;
++        default          vpn;
++    }}
++    map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream {{
++        "web:1"      127.0.0.1:{WEB};
++        "web:0"      127.0.0.1:{REJECT};
++        "nosni:1"    127.0.0.1:{NOSNI};
++        "nosni:0"    127.0.0.1:{NOSNI};
++        "vpn:1"      127.0.0.1:{VPN};
++        "vpn:0"      127.0.0.1:{VPN};
++        default      127.0.0.1:{VPN};
++    }}
++    server {{
++        listen 127.0.0.1:{FRONT};
++        proxy_pass            $lookla_upstream;
++        proxy_connect_timeout 5s;
++        ssl_preread           on;
++    }}
++    server {{
++        listen 127.0.0.1:{REJECT};
++        return "";
++    }}
++}}
++"""
++
++hits: dict[int, int] = {}
++lock = threading.Lock()
++
++
++def marker_listener(port: int, stop: threading.Event) -> None:
++    srv = socket.socket()
++    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++    srv.bind(("127.0.0.1", port))
++    srv.listen(16)
++    srv.settimeout(0.3)
++    while not stop.is_set():
++        try:
++            conn, _ = srv.accept()
++        except socket.timeout:
++            continue
++        with lock:
++            hits[port] = hits.get(port, 0) + 1
++        conn.close()
++    srv.close()
++
++
++def probe(source: str, sni: str | None) -> None:
++    """Open a TLS ClientHello from `source` with `sni`; the handshake may fail."""
++    sock = socket.socket()
++    sock.settimeout(4)
++    sock.bind((source, 0))
++    try:
++        sock.connect(("127.0.0.1", FRONT))
++    except OSError:
++        sock.close()
++        return
++    if sni is None:
++        # No SNI at all: a bare TLS 1.0 ClientHello with no extensions.
++        sock.sendall(bytes.fromhex(
++            "160301002c010000280301" + "00" * 32 + "000002002f0100"
++        ))
++        time.sleep(0.4)
++        sock.close()
++        return
++    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
++    ctx.check_hostname = False
++    ctx.verify_mode = ssl.CERT_NONE
++    try:
++        wrapped = ctx.wrap_socket(sock, server_hostname=sni)
++        wrapped.close()
++    except (ssl.SSLError, OSError):
++        pass
++    finally:
++        try:
++            sock.close()
++        except OSError:
++            pass
++    time.sleep(0.3)
++
++
++def main() -> int:
++    prefix = Path(tempfile.mkdtemp(prefix="t049-verify-"))
++    (prefix / "logs").mkdir()
++    (prefix / "conf").mkdir()
++    # The simulated Cloudflare membership file, same shape as the generated one.
++    (prefix / "conf" / "cloudflare-v4.conf").write_text(f"{CF_SOURCE}/32 1;\n")
++    conf_path = prefix / "conf" / "nginx.conf"
++    conf_path.write_text(CONF.replace("{prefix}", str(prefix)))
++
++    test = subprocess.run(  # noqa: S603
++        ["nginx", "-t", "-p", str(prefix), "-c", str(conf_path)],
++        capture_output=True, text=True,
++    )
++    if test.returncode != 0:
++        print(test.stderr)
++        return 1
++    print("nginx -t: ok")
++
++    stop = threading.Event()
++    threads = [
++        threading.Thread(target=marker_listener, args=(p, stop), daemon=True)
++        for p in (WEB, VPN, NOSNI)
++    ]
++    for t in threads:
++        t.start()
++    time.sleep(0.4)
++
++    subprocess.run(  # noqa: S603
++        ["nginx", "-p", str(prefix), "-c", str(conf_path)], check=True
++    )
++    time.sleep(0.6)
++
++    names = {WEB: "web", VPN: "xray", NOSNI: "tinyproxy", None: "reject/none"}
++    cases = [
++        ("Cloudflare source + Lookla SNI",      CF_SOURCE,    "lookla.gr",     WEB),
++        ("Cloudflare source + www Lookla SNI",  CF_SOURCE,    "www.lookla.gr", WEB),
++        ("ordinary source + Lookla SNI",        OTHER_SOURCE, "lookla.gr",     None),
++        ("ordinary source + www Lookla SNI",    OTHER_SOURCE, "www.lookla.gr", None),
++        ("ordinary source + VPN/default SNI",   OTHER_SOURCE, "amazon.com",    VPN),
++        ("Cloudflare source + non-Lookla SNI",  CF_SOURCE,    "amazon.com",    VPN),
++        ("ordinary source + unknown SNI",       OTHER_SOURCE, "example.net",   VPN),
++        ("ordinary source + empty SNI",         OTHER_SOURCE, None,            NOSNI),
++    ]
++
++    print(f"\n{'case':38} {'expected':12} {'observed':12} result")
++    ok = True
++    for label, source, sni, expected in cases:
++        with lock:
++            hits.clear()
++        probe(source, sni)
++        time.sleep(0.3)
++        with lock:
++            observed = dict(hits)
++        got = next(iter(observed), None)
++        passed = got == expected
++        ok &= passed
++        print(
++            f"{label:38} {names[expected]:12} {names.get(got, str(got)):12} "
++            f"{'PASS' if passed else 'FAIL'}"
++        )
++
++    subprocess.run(  # noqa: S603
++        ["nginx", "-p", str(prefix), "-c", str(conf_path), "-s", "quit"], check=False
++    )
++    stop.set()
++    time.sleep(0.6)
++    print("\nRESULT:", "PASS" if ok else "FAIL")
++    return 0 if ok else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/ops/nginx/stream.d/port443.conf b/ops/nginx/stream.d/port443.conf
+new file mode 100644
+index 0000000..8905922
+--- /dev/null
++++ b/ops/nginx/stream.d/port443.conf
+@@ -0,0 +1,78 @@
++# T-049 — SNI-aware Cloudflare gate for the shared public :443 listener.
++#
++# This file REPLACES the previous /etc/nginx/stream.d/port443.conf. Deploy it
++# with ops/cloudflare/apply_t049.sh, never by hand — the geo includes it
++# depends on are generated from a validated snapshot and must exist first.
++#
++# Why this is not a firewall rule. Port 443 on this host is not "the Lookla
++# port": it is a multiplexed listener. The previous configuration routed
++# lookla.gr / www.lookla.gr to the web vhost on 127.0.0.1:8443, an empty SNI
++# to tinyproxy, and *everything else* to the Xray VLESS/REALITY VPN on
++# 127.0.0.1:4443 — which serves real clients from ordinary residential
++# addresses. A packet filter sees address and port but not SNI, so an
++# allowlist on TCP/443 would take the VPN down with the web. The gate
++# therefore has to live where SNI is visible.
++#
++# `ssl_preread` reads the SNI out of the TLS ClientHello without terminating
++# TLS, so this decision happens before any HTTP exists and trusts no header —
++# CF-Connecting-IP and X-Forwarded-For are irrelevant here, as they must be.
++#
++# Note on phases: nginx's stream access phase runs BEFORE the preread phase,
++# so `allow`/`deny` cannot see $ssl_preread_server_name. Enforcement is
++# therefore a routing decision in the content phase, not an access rule.
++
++# Is the connection's source one of Cloudflare's published proxy ranges?
++#
++# `default 0` is the load-bearing line and lives here, in the reviewed file,
++# rather than in the generated includes: if a generated include were ever
++# empty or truncated, the result must be "nobody is Cloudflare" — which closes
++# the web path — and never "everybody is Cloudflare".
++geo $lookla_cf_source {
++    default 0;
++    include /etc/nginx/stream.d/cloudflare-v4.conf;
++    include /etc/nginx/stream.d/cloudflare-v6.conf;
++}
++
++# Classify the SNI. The hostname list is exactly the set the previous
++# configuration routed to the web upstream — no wildcard is introduced.
++# cdn.lookla.gr is deliberately absent: it was not in the previous map either,
++# it is served from R2 through Cloudflare, and adding it here would silently
++# move it off the VPN default it currently follows.
++map $ssl_preread_server_name $lookla_sni_class {
++    lookla.gr        web;
++    www.lookla.gr    web;
++    ""               nosni;
++    default          vpn;
++}
++
++# The three-way decision. Only the web class is gated on source; every other
++# class keeps its previous destination byte for byte, so no VPN path changes.
++map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream {
++    "web:1"      127.0.0.1:8443;   # Lookla SNI from Cloudflare → web vhost
++    "web:0"      127.0.0.1:9443;   # Lookla SNI from anywhere else → reject
++    "nosni:1"    127.0.0.1:8888;   # unchanged: no SNI → tinyproxy
++    "nosni:0"    127.0.0.1:8888;   # unchanged
++    "vpn:1"      127.0.0.1:4443;   # unchanged: Cloudflare source, other SNI
++    "vpn:0"      127.0.0.1:4443;   # unchanged: the VPN's normal path
++    default      127.0.0.1:4443;   # unchanged fallback
++}
++
++server {
++    listen 443;
++    listen [::]:443;
++    proxy_pass            $lookla_upstream;
++    proxy_connect_timeout 10s;
++    ssl_preread           on;
++}
++
++# Dedicated reject path for a Lookla SNI arriving from a non-Cloudflare
++# source. A real listener rather than an unreachable address: pointing
++# proxy_pass at a dead port produces connection-refused churn and error-log
++# noise, and its behaviour is an accident of the kernel rather than something
++# stated. `return ""` sends nothing and closes, so the client completes no TLS
++# handshake, sees no certificate, receives no application response, and never
++# reaches either the web or the VPN backend.
++server {
++    listen 127.0.0.1:9443;
++    return "";
++}

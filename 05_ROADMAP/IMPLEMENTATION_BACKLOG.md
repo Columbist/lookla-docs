@@ -2131,6 +2131,36 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
 
 ---
 
+### T-072 — Audit and restrict unexpected public listeners
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
+**Dependencies:** T-049 ✅
+**Status:** Open.
+
+**Found during the T-049 inventory**, and deliberately not touched by it: services unrelated to Lookla are listening on public interfaces on this host.
+
+| Listener | Bound to | Owner |
+|---|---|---|
+| `tinyproxy` | `0.0.0.0:8888` and `[::]:8888` | HTTP proxy, systemd |
+| `next-server` ×3 | `*:3997`, `*:3998`, `*:3999` | unrelated Node projects |
+| empty-SNI branch of the `:443` stream router | → `127.0.0.1:8888` | routes SNI-less TLS to tinyproxy |
+
+T-049 preserved the empty-SNI → `:8888` route **only as an unchanged pre-existing contract**. That is not an endorsement: it was left alone because changing it was outside the reviewed scope, not because it was assessed as safe.
+
+`tinyproxy` reachable from the whole internet is the sharpest item. An open HTTP proxy can be used to relay arbitrary traffic through this host, which is an abuse and attribution problem regardless of what else it protects. The `:443` no-SNI branch means it is reachable on **two** public ports.
+
+**This ticket must inventory before it restricts** — these listeners may have consumers this project does not know about, and silently closing them is the same class of mistake T-049 avoided with the VPN.
+
+For each listener establish: the owning process and unit; whether it is reachable externally (verified, not assumed); whether it requires authentication; whether access is logged; who actually consumes it; whether a source allowlist or a `127.0.0.1` bind would suffice; and whether it can simply be switched off.
+
+**Acceptance Criteria:**
+- [ ] Every public listener has a named owner and a documented consumer, or is switched off
+- [ ] `tinyproxy` is authenticated, source-restricted, bound to loopback, or removed — with evidence it is not an open relay
+- [ ] The `:443` empty-SNI route is re-decided explicitly rather than inherited
+- [ ] The three `next-server` processes are bound to loopback or firewalled
+- [ ] No restriction is applied before its consumers are identified
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
@@ -2375,15 +2405,233 @@ Sitemap: https://lookla.gr/sitemap.xml
 ---
 
 ### T-049 — Restrict origin server to Cloudflare IP ranges
-**Priority:** P2 | **Owner:** OPS | **Estimate:** 1h | **Epic:** EPIC-09
-**Dependencies:** None
+**Priority:** P2 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
+**Dependencies:** T-050 ✅, T-071 ✅
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #72 (`63cbab4`) and follow-up fix PR #73 (`5ded205`). Applied to production on the second attempt — the first failed safely at `nginx -t` before the firewall was touched, and the prepared rollback restored the tree exactly. No container was rebuilt or restarted; nginx was reloaded, never restarted.
 
-**Description:** T-017's Privacy Policy review found that the origin server's ports 80/443 are reachable directly from the public internet, not only via Cloudflare (confirmed: `ufw status` inactive, no `iptables`/`nft` source-IP restriction, and live nginx access logs show scanner/bot traffic hitting the origin IP directly). This is a real security gap independent of the Privacy Policy wording fix (which now correctly states the origin "may also be technically reachable directly" rather than falsely claiming all traffic passes through Cloudflare).
+**Risk being addressed:** the origin's ports 80/443 are reachable directly from the public internet, so anyone who learns the origin IP can bypass Cloudflare's WAF, rate limiting and bot controls entirely. Confirmed live: no packet filtering of any kind is active on this host.
 
-**Acceptance Criteria:**
-- [ ] Firewall rule (ufw or iptables) restricts inbound 80/443 to Cloudflare's published IP ranges (`https://www.cloudflare.com/ips/`)
-- [ ] A documented process exists for updating the allowlist when Cloudflare rotates its IP ranges
-- [ ] Deployed with a safe rollback plan (e.g. verify via a maintenance window, not a blind cutover) — a misconfigured rule here takes the entire site offline
+#### Step 2 — Production network path inventory
+
+| Layer | Current implementation | Relevant rule/path | T-049 implication |
+|---|---|---|---|
+| OS | Ubuntu 24.04.4 LTS, kernel 6.8 | — | — |
+| Docker | Engine 29.4.2, **Firewall Backend: iptables** | `DOCKER-USER` exists and is **empty** | available if ever needed |
+| iptables | v1.8.10 (**nf_tables** shim), `ip6tables` likewise | policies `INPUT/FORWARD/OUTPUT ACCEPT` | no backend migration required or permitted |
+| Host firewall | **none active** — UFW `inactive`, firewalld `inactive`, nftables unit `inactive`, zero custom `INPUT` rules | — | the control would be new, not a modification |
+| Public interface | `eth0`, single public IPv4 | default route via `eth0` | rule scope = `eth0` |
+| IPv6 | **no global IPv6 address exists** (link-local only) | nginx binds `[::]:80/443` but nothing routes | see Step 10 |
+| Ports 80/443 | **host nginx**, not a container | `0.0.0.0:80`, `0.0.0.0:443` | **`DOCKER-USER` is the wrong layer here** |
+| Docker published ports | `127.0.0.1` only — web 3000, api 8001, redis 6379, db 5432 | loopback-bound | not publicly reachable at all; out of scope |
+
+**The Docker premise in the ticket does not hold on this host.** The ticket assumed public ports are Docker-published and therefore bypass `INPUT`. They are not: nginx runs on the host and owns 80/443 directly, so ordinary `INPUT` filtering *is* the correct and sufficient layer, and `DOCKER-USER` must be left alone. Every Docker-published port is already bound to loopback and unreachable from outside.
+
+#### Step 3/4 — Blocking conflict: port 443 is shared with a live VPN
+
+`/etc/nginx/stream.d/port443.conf` makes port 443 an **SNI router**, not a web port:
+
+```nginx
+map $ssl_preread_server_name $upstream {
+    lookla.gr       127.0.0.1:8443;   # web  → nginx HTTPS vhost
+    www.lookla.gr   127.0.0.1:8443;
+    ""              127.0.0.1:8888;   # no SNI → tinyproxy
+    default         127.0.0.1:4443;   # everything else → Xray VLESS/REALITY
+}
+```
+
+Lookla's HTTPS vhost does **not** listen on `0.0.0.0:443` at all — it listens on `127.0.0.1:8443` behind that router. The `default` branch carries a **Xray VLESS/REALITY VPN** (10 provisioned clients, REALITY `serverNames: amazon.com`), whose users connect to the origin IP on port 443 from ordinary residential addresses worldwide.
+
+Evidence that this is live production traffic, not a dormant service:
+
+```text
+/var/log/xray/access.log, 7 days
+  22 868 lines total
+   6 052 local stats-API polls (the /opt/xray-traffic-collector.py cron)
+  16 816 real proxied client requests
+  active on every one of the last 7 days, including today
+  most recent real request: 2026-08-03 05:01:44, identity user05@xray
+```
+
+**Consequence: a source-IP allowlist on TCP/443 would terminate the VPN.** The firewall sees only address and port; it cannot distinguish the `lookla.gr` SNI from the VPN's. This is the Step 3 stop condition in a form the ticket did not anticipate — not a DNS-only hostname, but a different service sharing the port. The rule would be technically correct and would break legitimate production traffic, so it has not been applied.
+
+**Port 80 is not affected by this conflict.** It serves only the `lookla.gr` → HTTPS redirect and a default `localhost` vhost; nothing else on the host uses it.
+
+#### Step 3 — DNS and proxy-status audit
+
+| Hostname | A / AAAA target | Proxied | Served on this origin | Needs public 80/443 |
+|---|---|---|---|---|
+| `lookla.gr` | Cloudflare (`172.67.x`, `104.21.x`; AAAA `2606:4700:…`) | **proxied** | yes | via Cloudflare only |
+| `www.lookla.gr` | same | **proxied** | yes | via Cloudflare only |
+| `cdn.lookla.gr` | same | **proxied** | R2-backed, not this origin | no |
+| `api.lookla.gr` | **does not resolve** | — | no | no |
+
+No DNS-only A/AAAA record pointing at this origin was found for any web hostname. The VPN reaches the origin by **IP literal**, not by a DNS name, which is precisely why a DNS audit alone would have missed the conflict.
+
+#### Step 4 — Direct origin consumers
+
+| Consumer | Path | Needs direct origin access |
+|---|---|---|
+| Browsers / crawlers | proxied hostname | no |
+| Xray VPN clients | **origin IP:443 directly** | **yes — the blocking conflict** |
+| Tinyproxy (`:8888`, and the no-SNI 443 branch) | direct | separate service, outside T-049 scope |
+| Certificate renewal | none — see Step 5 | no |
+| Monitoring / webhooks / payments | none configured against the origin IP | no |
+
+#### Step 5 — TLS renewal compatibility: **no conflict**
+
+```text
+issuer   CloudFlare Origin SSL Certificate Authority
+notAfter Jun 20 15:07:00 2041 GMT
+```
+
+A **Cloudflare Origin Certificate**, valid for another ~15 years. No `certbot`, no `acme.sh`, no `/etc/letsencrypt`, no renewal timers. There is no HTTP-01 validation path to break, so the ticket's second mandatory precondition is satisfied outright.
+
+#### Steps 6–7 — Official range source, validated fail-closed
+
+`ops/cloudflare/cf_ranges.py` fetches only `https://www.cloudflare.com/ips-v4` and `/ips-v6`.
+
+```text
+retrieved_at_utc  2026-08-03T11:24:03Z
+ipv4  count=15  sha256=f02c6d83bc01ab0ae8577160e036d700c7455359bce054df884e5d7d9e4e9e7b
+ipv6  count=7   sha256=9e9d39e3e83bad00c4decafd53c63fa62029f3d95db68de937d2be28234ca0a9
+```
+
+Validation is a pure function, separated from I/O so it is testable without a network. It rejects: empty or whitespace-only bodies, HTML/JSON/XML error pages, wrong address family, invalid CIDRs, bare addresses without a prefix, networks with host bits set, truncated final lines, and counts outside plausible bounds. Duplicates are normalised deterministically so a snapshot diff reflects a real change rather than ordering noise. Any fetch or validation failure leaves the stored snapshot authoritative — the active list is never replaced by a partial one.
+
+41 tests, and the guards were confirmed discriminating by mutation rather than assumed: disabling the minimum-count guard fails 1 test, the family check 2, the empty check 2.
+
+`--check` mode is proven non-mutating (file hash unchanged across a run that detected a change) and exits `2` on change, so a third party editing their published list can never become an automatic firewall change.
+
+#### Step 10 — IPv6
+
+IPv6 is **not active** on this host, with proof rather than inference:
+
+- `ip -6 addr show scope global` returns **zero** addresses (link-local `fe80::` only);
+- there is no IPv6 default route;
+- nginx binds `[::]:80` and `[::]:443`, but nothing routes to them from outside;
+- Docker publishes no IPv6;
+- `lookla.gr` AAAA records point at **Cloudflare**, not at this origin.
+
+Direct IPv6 origin access is therefore not currently possible. The IPv6 allowlist is nonetheless fetched, validated and stored, so enabling IPv6 later does not silently ship an unprotected path.
+
+#### Approved design — why the two layers differ
+
+Port 80 is Lookla's alone, so it is filtered where filtering belongs: a dedicated `LOOKLA-CLOUDFLARE` chain entered only by `-i eth0 -p tcp --dport 80`. Port 443 is a shared SNI-multiplexed listener, and a packet filter cannot see SNI, so the gate for it has to live where SNI is visible — the nginx `stream` router that already routes it.
+
+**A phase detail that decides the implementation:** nginx's stream *access* phase runs **before** the *preread* phase, so `allow`/`deny` cannot see `$ssl_preread_server_name`. The gate therefore cannot be an access rule; it is a routing decision in the content phase, built from a `geo` lookup on `$remote_addr` combined with the SNI class.
+
+```nginx
+geo $lookla_cf_source {          # default 0 lives HERE, in the reviewed file
+    default 0;                   # a truncated generated include must mean
+    include .../cloudflare-v4.conf;   # "nobody is Cloudflare", never everybody
+    include .../cloudflare-v6.conf;
+}
+map $ssl_preread_server_name $lookla_sni_class { lookla.gr web; www.lookla.gr web; "" nosni; default vpn; }
+map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream { ... }
+```
+
+| SNI class | Source | Destination | Change |
+|---|---|---|---|
+| `lookla.gr`, `www.lookla.gr` | official Cloudflare range | `127.0.0.1:8443` web vhost | unchanged |
+| `lookla.gr`, `www.lookla.gr` | anything else | `127.0.0.1:9443` **reject** | **new** |
+| empty SNI | any | `127.0.0.1:8888` tinyproxy | unchanged |
+| any other SNI | any | `127.0.0.1:4443` Xray | unchanged |
+
+The Lookla hostname list is exactly the pre-existing one — no wildcard was introduced, and `cdn.lookla.gr` is deliberately absent because it was not in the previous map either; adding it would silently move it off the route it has today.
+
+**The reject path is a real listener** (`listen 127.0.0.1:9443; return "";`), not a dead address. Pointing `proxy_pass` at an unreachable port makes the behaviour an accident of the kernel and fills the error log; `return ""` sends nothing and closes, so the client completes no handshake, sees no certificate, gets no application response, and reaches neither backend.
+
+#### Isolated verification — a real nginx, full matrix
+
+Static inspection is not evidence: `map` precedence and the phase in which `$ssl_preread_server_name` becomes available are nginx's decisions, not the reader's. `ops/cloudflare/verify_routing.py` starts a throwaway nginx with the production routing logic, points the upstreams at marker listeners, and varies the source address across `127.0.0.0/8` (already routed to loopback — no interface is created, the host firewall is never touched).
+
+| case | expected | observed |
+|---|---|---|
+| Cloudflare source + `lookla.gr` | web | web ✅ |
+| Cloudflare source + `www.lookla.gr` | web | web ✅ |
+| ordinary source + `lookla.gr` | reject | reject ✅ |
+| ordinary source + `www.lookla.gr` | reject | reject ✅ |
+| ordinary source + VPN SNI | Xray | Xray ✅ |
+| Cloudflare source + non-Lookla SNI | Xray | Xray ✅ |
+| ordinary source + unknown SNI | Xray | Xray ✅ |
+| ordinary source + empty SNI | tinyproxy | tinyproxy ✅ |
+
+The harness was itself mutation-tested: routing `web:0` to the web upstream turns exactly the two reject rows red, so a passing run is a result rather than a formality.
+
+#### Atomicity, rollback, persistence
+
+`ipset` is not installed and `netfilter-persistent` is absent, so neither is used — adding a package to a production host is a larger change than this ticket warrants. Instead the chain is replaced by a single `iptables-restore --noflush` transaction (`:LOOKLA-CLOUDFLARE - [0:0]` creates-or-flushes inside the transaction), so there is no window in which the chain is empty, no momentary allow-all, and an interrupted run leaves the previous rules in force. `--noflush` leaves every other chain, Docker's included, untouched. The INPUT jump is inserted only after the chain is populated, and only when absent — so reapplying cannot stack duplicates.
+
+`apply_t049.sh` orders the steps so the working state survives any failure: back up both layers → **arm a timed `systemd-run` rollback before the first mutation** → render includes from the stored snapshot → `nginx -t` *before* touching the firewall → apply the firewall atomically → `nginx -t` again → **reload, never restart** (a restart drops the established VPN connections a reload preserves) → verify → only then cancel the rollback. The generated `rollback.sh` needs no network and no repository: it removes only T-049's chain and jump, restores the saved stream directory, and reloads.
+
+Persistence is a systemd oneshot that applies the **stored snapshot** and never fetches — a boot without connectivity restores the policy rather than leaving the origin open while a download times out.
+
+#### IPv6
+
+Public IPv6 remains proven inactive (zero global addresses, no v6 default route, AAAA records pointing at Cloudflare), so no IPv6 packet-filter policy is invented. The validated IPv6 snapshot and its generated `geo` include are still produced and wired into the stream config, so enabling IPv6 later cannot silently ship an ungated path.
+
+#### Tests
+
+**326 backend tests** (271 before + 55 for this layer), ruff clean, frontend unchanged. The scope guarantees are asserted against the bytes that would reach the kernel, not against intent: no rule references 443, 22, 8888, 3997–3999, 3000, 5432, 6379 or 8001; `build_jump_rule` refuses a forbidden port outright; no Docker chain is named; only T-049's own chain is populated; an empty allowlist cannot produce a chain; the deny is last and every Cloudflare range precedes it.
+
+**Safety checklist:** Backend changed **No** · Frontend changed **No** · Database changed **No** · API contract changed **No** · Cloudflare DNS changed **No** · Proxy status changed **No** · TLS renewal verified **Yes — Origin Certificate to 2041, no ACME** · DNS-only consumers audited **Yes — none** · Direct integrations audited **Yes — VPN found** · Firewall backend preserved **Yes — nothing applied** · Docker firewall path handled **Yes — determined inapplicable, `DOCKER-USER` untouched** · UFW treated as sufficient **N/A — ports are host-owned, not Docker-published** · Docker chains modified **No** · Docker firewall management disabled **No** · IPv4 port 80 protected **Yes (implemented, not applied)** · IPv6 proven inactive **Yes** · VPN preserved **Yes — verified in isolation** · SSH rules changed **No** · Official endpoints used **Yes** · Lists validated **Yes** · Empty-list replacement possible **No** · Production firewall touched **No** · Full firewall dump published **No** · Origin IP published **No** · Containers restarted **No** · PM2 used **No**
+
+#### Decision required
+
+The origin IP cannot be protected on 443 without deciding what happens to the VPN. Options, with the trade-off stated honestly:
+
+1. **Port 80 now, 443 deferred.** Immediate, zero risk to the VPN — but 443 is where the real bypass risk lives, so this alone buys little security.
+2. **SNI-aware rejection in the nginx stream layer.** Combine `$ssl_preread_server_name` with a `geo` set of Cloudflare ranges: a `lookla.gr` SNI from a non-Cloudflare source is dropped, everything else routes as today. Keeps the VPN working and closes the WAF bypass. Enforcement is in nginx rather than the packet filter — it is still pre-HTTP and trusts no header, but the origin still accepts the TCP connection. Requires an nginx reload (no container restart).
+3. **Move the VPN to another port**, then apply a clean firewall allowlist on 443. Strongest result; requires reconfiguring 10 VPN clients, and an uncommon port is more fingerprintable than 443.
+4. **Cloudflare Tunnel for Lookla** — removes the public origin web ports entirely and makes the whole question moot. Largest change; the ticket lists it as an explicit follow-up, not as T-049.
+
+Recommended: **2 combined with 1** — port 80 restricted at the packet filter, and 443 filtered by SNI + source in the stream layer — with 4 recorded as the durable fix.
+
+#### Production rollout — two attempts, the first rolled back
+
+**Attempt 1 (12:52) failed at `nginx -t`, before the firewall was touched.** `nginx.conf` carries `stream { include /etc/nginx/stream.d/*.conf; }`, so rendering the generated allowlist into `stream.d` made nginx parse `103.21.244.0/22 1;` as a stream-level directive:
+
+```text
+[emerg] unknown directive "103.21.244.0/22" in /etc/nginx/stream.d/cloudflare-v4.conf:4
+[t049] FAIL: nginx -t failed — firewall untouched
+```
+
+The running nginx kept its configuration in memory, so production was never affected. The prepared `rollback.sh` was run immediately rather than waiting for the timer, and restored `port443.conf` byte for byte (md5 `af1c0d93…`), removed the rendered includes, and reloaded — with no chain created, no container touched and no VPN traffic lost.
+
+**The test suite did not catch it.** The include-path test asserted the path against the same constant the config was written from — it proved the string matched itself and nothing about the environment. PR #73 replaced it with an assertion of the relationship that matters (the render directory is not one nginx globs into the stream block, which fails when the path is reverted) and made a failed `nginx -t` restore the previous file, so a broken config can no longer sit on disk waiting for the next reload, logrotate hook or reboot to turn it into an outage.
+
+**Attempt 2 (16:14:29 Europe/Athens) succeeded.**
+
+```text
+Lookla origin restriction boundary:
+2026-08-03 16:14:29 Europe/Athens (EEST)
+```
+
+#### Production smoke — results
+
+| Check | Before | After |
+|---|---|---|
+| Direct TCP/80 from external non-Cloudflare nodes | **open** (bg1, hk1, se2) | **blocked, connection timed out** (ir6, it2, nl1, se1) |
+| Direct :443 + SNI `lookla.gr` from a non-Cloudflare source | served the **Cloudflare Origin Certificate** | **`no peer certificate available`**; `curl --resolve` exits 35 |
+| Direct :443 + SNI `www.lookla.gr` | — | **`no peer certificate available`** |
+| Web access log for those rejected requests | — | **zero entries** (the successful Cloudflare-path requests did log, so the log itself was working) |
+| :443 TCP reachability from outside | open | **still open** (ca1, nl1, tr1) — the VPN needs it |
+| Non-Lookla SNI (`amazon.com`) | Xray | **Xray** — returns `CN = *.peg.a2z.com`, i.e. REALITY behaviour intact |
+| Empty SNI | tinyproxy | **tinyproxy**, unchanged |
+| Cloudflare path | 200 | **200** — `/`, `/en`, `/ru`, `/uk`, search, map, `/privacy`, `/cookies`, `/api/salons` |
+| VPN access log | 22890 | **advancing** (22891) |
+| Containers | — | **untouched**: api/web `Up 2 hours`, crawler `Up 13 days`, db/redis `Up 3 weeks` |
+| `DOCKER-USER` and Docker chains | empty / 23 rules | **unchanged** |
+
+**Firewall scope, verified against the live rules:** exactly one INPUT jump, `-i eth0 -p tcp --dport 80`; T-049's own chain contains 15 ACCEPT + 1 RETURN + 1 DROP and **no port match at all**; ports 443, 22, 8888 and 3997–3999 are absent. Rules that do mention 3000, 5432, 6379 and 8001 are pre-existing Docker DNAT entries in the `DOCKER` chain, not T-049's. A first pass at this check reported "2 rules on port 80" — a grep artefact, since `dport 80` also matches `dport 8001`; the precise count is one.
+
+**Idempotence and persistence:** re-running the apply left the rule count unchanged at 46 with a single INPUT jump. The systemd unit is installed, enabled and active (`exit status 0`), and applies the stored snapshot without fetching, so a boot with no connectivity still restores the policy.
+
+**Rollback:** armed before the first mutation both times, cancelled only after every check above passed. The artifact is retained at `/var/backups/t049/20260803T131429Z/` and needs neither network nor repository.
+
+#### Follow-ups (deliberately not folded into T-049)
+
+Authenticated Origin Pulls · Cloudflare Tunnel · origin IP rotation · automatic range-change monitoring · `tinyproxy` on `0.0.0.0:8888` and three `next-server` processes bound to `*:3997-3999` are publicly reachable and unrelated to Lookla — they deserve their own review.
 
 ---
 
