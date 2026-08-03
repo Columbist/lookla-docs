@@ -2391,7 +2391,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 **Priority:** P2 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** None
 
-**Status:** Implemented and verified. Rebased onto `main` after T-071 restored the backend test gate, so its regression tests now execute in CI. Awaiting independent review; no production deploy yet.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #70 (`a07b2e6` on `main`), `beauty_api` **and** `beauty_web` rebuilt and recreated together — `db`, `redis`, `crawler` and `crawler_worker` untouched (`Up 2 weeks` / `Up 12 days` across the deploy). Production smoke passed on `https://lookla.gr`.
 
 **Description:** `backend/app/services/email.py`'s no-API-key fallback path (`send_email`) printed the intended recipient's email address to stdout instead of sending the email (`print(f"[email] No API key — skipping: {template} to {to}")`). Docker's json-file driver captures that with no size or rotation limit, so a transient delivery problem became durable PII storage that no retention policy covers.
 
@@ -2485,10 +2485,39 @@ The T-017 tripwire that pinned the old disclosure fired correctly and was update
 - [x] Docker's `beauty_api` logging driver has `max-size: 10m` / `max-file: 3`
 - [x] T-017 Privacy Policy corrected in all four locales
 - [x] Regression tests actually execute in CI — T-071 merged (`25b3bc2`), gate proven red-then-green
-- [ ] Production deploy — requires rebuilding `beauty_api` **and** `beauty_web`, and `LOG_PII_HMAC_KEY` added to `.env` first
-- [ ] Independent review
+- [x] Production deploy — `beauty_api` + `beauty_web` only; `LOG_PII_HMAC_KEY` installed in `.env` before the api container was recreated
+- [x] Independent review — **APPROVE**
+- [x] T-050 regressions: **0**
 
 **Deploy note:** unlike every ticket since T-055, this one is not web-only. The fix lives in the backend and the policy text in the frontend, so both containers must be rebuilt; `db`, `redis`, `crawler` and `crawler_worker` stay untouched. `LOG_PII_HMAC_KEY` must exist in `.env` **before** the api container is recreated, or the first fallback log line will read `recipient_ref=unavailable`.
+
+#### Production smoke — `https://lookla.gr`, after deploy
+
+**Boundary recorded:**
+
+```text
+Email log-redaction boundary:
+2026-08-03 13:54:58 Europe/Athens (EEST)   — beauty_api  (the security boundary)
+2026-08-03 13:55:00 Europe/Athens (EEST)   — beauty_web  (Privacy Policy wording)
+```
+
+Deploy verified: `LOG_PII_HMAC_KEY` present in the api container (64 chars, distinct from `SECRET_KEY` and from the Resend key, single `.env` line), and the json-file driver now reports `max-file:3 max-size:10m` on `beauty_api`.
+
+| Check | Result |
+|---|---|
+| Probe identifiers anywhere in `beauty_api` / `beauty_web` / nginx logs | **0 occurrences** of the address, the bare domain, `%40` or `%2540` forms, in any case |
+| All three branches under the **live container's real settings** | one stable `recipient_ref` across all three; a second address produced a different ref; `[redacted-email]` substituted 3× |
+| Secrets in log records | no Resend key, no `Authorization`, no `Bearer`, no reset code |
+| Log forging | no embedded newlines; record count equals emission count |
+| Privacy Policy, 4 locales | new wording present, pre-T-050 wording absent, `lastUpdated 2026-08-03`, no console or hydration errors |
+| Pages | `/privacy` and `/cookies` 200 in all 4 locales; `/`, `/en/search`, `?view=map`, `/api/salons`, `/api/areas` all 200 |
+| Backend errors since deploy | no tracebacks, nothing from `log_redaction` |
+
+**What could not be proven live, stated plainly.** A *synchronous* provider rejection is not reachable from production without changing configuration, which the review explicitly prohibited. A real send to the synthetic recipient, and three concurrent password-reset sends, were all **accepted** by Resend, so no error branch fired. That run's only live assertion is a negative one — no address appears in the logs — and a negative assertion over an empty set proves nothing on its own. The branch behaviour was therefore exercised inside the running container against the real settings object, which proves the production key yields a valid 12-hex reference and that scrubbing works under production configuration, but does not re-prove the journey to `docker logs`; that path is covered by the CI end-to-end capture test, which asserts against a real `caplog` and fails when `print()` bypasses logging.
+
+**Synthetic data removed.** `t050-probe@t050-probe.lookla.gr` — a subdomain of our own domain with no MX, chosen because the review's `example.invalid` is a reserved special-use name that Pydantic's `EmailStr` rejects before `send_email` is ever called. Cleanup deleted 3 `password_resets`, 1 `email_verifications` and 1 `users` row; 0 remain.
+
+**No boundary redefined:** the Beta Visual Baseline stays `2026-07-30 11:39:31`, the Map `search_results_view` correction boundary stays `2026-07-30 18:26:17`, and the Map latest-request correctness boundary stays `2026-07-31 17:34:10` — all Europe/Athens.
 
 #### Recorded, not fixed (out of this ticket's boundary)
 
