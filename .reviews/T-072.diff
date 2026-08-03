@@ -1,0 +1,868 @@
+diff --git a/backend/tests/test_t049_enforcement.py b/backend/tests/test_t049_enforcement.py
+index 0037ab4..8b0c5d9 100644
+--- a/backend/tests/test_t049_enforcement.py
++++ b/backend/tests/test_t049_enforcement.py
+@@ -335,8 +335,11 @@ def _decision_map():
+     [
+         ("web:1", "127.0.0.1:8443"),   # Lookla SNI from Cloudflare → web
+         ("web:0", "127.0.0.1:9443"),   # Lookla SNI from elsewhere → reject
+-        ("nosni:1", "127.0.0.1:8888"), # unchanged
+-        ("nosni:0", "127.0.0.1:8888"), # unchanged
++        # T-072 changed these two deliberately: an SNI-less connection used to
++        # be handed to tinyproxy, which made an open relay reachable on a
++        # second public port. They now share the reject listener.
++        ("nosni:1", "127.0.0.1:9443"),
++        ("nosni:0", "127.0.0.1:9443"),
+         ("vpn:1", "127.0.0.1:4443"),   # unchanged
+         ("vpn:0", "127.0.0.1:4443"),   # unchanged
+         ("default", "127.0.0.1:4443"), # unchanged
+@@ -350,7 +353,6 @@ def test_a_rejected_lookla_connection_can_reach_neither_backend():
+     decisions = _decision_map()
+     assert decisions["web:0"] != decisions["web:1"], "reject must not be the web upstream"
+     assert decisions["web:0"] != decisions["vpn:0"], "reject must not fall through to the VPN"
+-    assert decisions["web:0"] != decisions["nosni:0"], "reject must not fall through to tinyproxy"
+ 
+ 
+ def test_cloudflare_membership_alone_does_not_force_traffic_to_the_web_backend():
+diff --git a/backend/tests/test_t072_containment.py b/backend/tests/test_t072_containment.py
+new file mode 100644
+index 0000000..eadef42
+--- /dev/null
++++ b/backend/tests/test_t072_containment.py
+@@ -0,0 +1,233 @@
++"""
++T-072: containment of listeners that were never meant to be public.
++
++Unlike T-049, which had to preserve a legitimate external audience for the
++port it filtered, these ports have no established external consumer — so the
++rule is a deny, and the tests are about making sure the deny lands on exactly
++those ports and nowhere near 443, 22 or the VPN.
++
++The tinyproxy configuration is asserted directly, because the two dangerous
++settings (`Allow 0.0.0.0/0` and an absent `Listen`) are each a single line
++that a future edit could reintroduce without anything else looking wrong.
++"""
++import importlib.util
++import re
++from pathlib import Path
++
++import pytest
++
++_ROOT = Path(__file__).resolve().parents[2]
++
++
++def _load(name: str, relpath: str):
++    spec = importlib.util.spec_from_file_location(name, _ROOT / relpath)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++ct = _load("containment_t072", "ops/t072/containment.py")
++
++_TINYPROXY_RAW = (_ROOT / "ops" / "t072" / "tinyproxy.conf").read_text(encoding="utf-8")
++# Assert against directives, not raw text. The file's comments deliberately
++# name `Allow 0.0.0.0/0` and `BasicAuth` to explain why they are absent, and a
++# naive substring check reads those explanations as the settings themselves —
++# it failed exactly that way on the first run.
++TINYPROXY = "\n".join(
++    line for line in _TINYPROXY_RAW.splitlines() if not line.lstrip().startswith("#")
++)
++STREAM_CONF = (_ROOT / "ops" / "nginx" / "stream.d" / "port443.conf").read_text(
++    encoding="utf-8"
++)
++IFACE = "eth0"
++
++
++# ───────────────────────────── firewall scope ────────────────────────────────
++
++
++def _jump_text():
++    return " ".join(" ".join(j) for j in ct.build_jump_rules(IFACE)) + " "
++
++
++@pytest.mark.parametrize("port", [8888, 3997, 3998, 3999])
++def test_every_contained_port_gets_a_jump(port):
++    assert f"--dport {port} " in _jump_text()
++
++
++@pytest.mark.parametrize("port", [22, 80, 443, 4443, 8443, 3000, 5432, 6379, 8001])
++def test_no_forbidden_port_is_ever_filtered(port):
++    # 443 in particular: filtering it here would disconnect the VPN, which is
++    # the exact mistake T-049 was redesigned to avoid.
++    assert f"--dport {port} " not in _jump_text()
++    with pytest.raises(ct.ContainmentScopeError):
++        ct.build_jump_rules(IFACE, ports=(port,))
++
++
++def test_ssh_is_never_touched():
++    assert "--dport 22 " not in _jump_text()
++
++
++def test_rules_are_scoped_to_the_external_interface_only():
++    # Loopback must keep working: it is what lets the local tinyproxy consumer
++    # be investigated while external abuse is cut off.
++    for jump in ct.build_jump_rules(IFACE):
++        assert jump[0] == "-i" and jump[1] == IFACE
++    assert " -i lo " not in _jump_text()
++
++
++def test_the_chain_denies_and_contains_no_port_match():
++    doc = ct.build_restore_document()
++    assert "-j DROP" in doc
++    assert "--dport" not in doc, "the chain is entered by the jumps, not by port matching"
++
++
++def test_the_transaction_is_a_single_atomic_restore_document():
++    doc = ct.build_restore_document()
++    assert doc.startswith("*filter\n")
++    assert f":{ct.CHAIN} - [0:0]" in doc
++    assert doc.rstrip().endswith("COMMIT")
++    assert doc.count("COMMIT") == 1
++
++
++def test_docker_chains_are_never_referenced():
++    assert "DOCKER" not in ct.build_restore_document() + _jump_text()
++
++
++def test_only_the_owned_chain_is_populated():
++    assert "-A INPUT" not in ct.build_restore_document()
++
++
++def test_scope_check_catches_a_missing_jump():
++    # A jump silently dropped would leave a listener exposed while the run
++    # still reported success.
++    doc = ct.build_restore_document()
++    partial = ct.build_jump_rules(IFACE, ports=(8888,))
++    with pytest.raises(ct.ContainmentScopeError, match="no jump rule"):
++        ct.assert_scope(doc, partial)
++
++
++def test_scope_check_catches_a_removed_deny():
++    doc = ct.build_restore_document().replace("-j DROP", "-j RETURN")
++    with pytest.raises(ct.ContainmentScopeError, match="control would be absent"):
++        ct.assert_scope(doc, ct.build_jump_rules(IFACE))
++
++
++def test_reapplying_produces_an_identical_document():
++    assert ct.build_restore_document() == ct.build_restore_document()
++
++
++def test_jumps_are_checked_before_insertion(monkeypatch, capsys):
++    # Idempotence: a second apply must not stack duplicate INPUT jumps.
++    class R:
++        returncode = 0
++        stdout = ""
++        stderr = ""
++
++    seen = []
++
++    def runner(argv, **kw):
++        seen.append(argv)
++        return R()
++
++    monkeypatch.setattr(ct, "_run", runner)
++    assert ct.main(["--interface", IFACE, "--apply"]) == 0
++    out = capsys.readouterr().out
++    assert out.count("already present") == len(ct.CONTAINED_PORTS)
++    assert any(a[:3] == ["iptables", "-C", "INPUT"] for a in seen)
++
++
++def test_dry_run_executes_nothing(monkeypatch, capsys):
++    def explode(*a, **k):
++        raise AssertionError("dry run must not execute firewall commands")
++
++    monkeypatch.setattr(ct, "_run", explode)
++    assert ct.main(["--interface", IFACE]) == 0
++    assert "dry run — nothing applied" in capsys.readouterr().out
++
++
++# ──────────────────────────── tinyproxy hardening ────────────────────────────
++
++
++def test_tinyproxy_binds_to_loopback_only():
++    listens = re.findall(r"^\s*Listen\s+(\S+)", TINYPROXY, re.MULTILINE)
++    assert listens == ["127.0.0.1"], f"unexpected Listen directives: {listens}"
++
++
++def test_the_open_allow_rule_is_gone():
++    # The single directive that made this an open relay.
++    assert "0.0.0.0/0" not in TINYPROXY
++    assert "::/0" not in TINYPROXY
++    # And it really is only absent from the directives — the explanation of
++    # its removal is expected to survive in the comments.
++    assert "0.0.0.0/0" in _TINYPROXY_RAW
++
++
++def test_only_loopback_is_allowed():
++    allows = re.findall(r"^\s*Allow\s+(\S+)", TINYPROXY, re.MULTILINE)
++    assert allows == ["127.0.0.1"], f"unexpected Allow directives: {allows}"
++
++
++def test_no_public_basicauth_proxy_is_introduced():
++    # Credentials on a publicly reachable relay make it an authenticated open
++    # relay, not a contained one; the approved containment is loopback-only.
++    assert "BasicAuth" not in TINYPROXY
++
++
++def test_no_wildcard_or_ipv6_bind():
++    for bad in ("Listen 0.0.0.0", "Listen ::", "Listen [::]"):
++        assert bad not in TINYPROXY
++
++
++def test_the_service_is_retained_not_deleted():
++    # Deleting a service whose consumer is unidentified is the mistake T-049
++    # avoided with the VPN; removing its public exposure is not.
++    assert "Port 8888" in TINYPROXY
++    assert "LogFile" in TINYPROXY
++
++
++# ─────────────────── nginx: empty SNI no longer reaches the relay ────────────
++
++
++def _decision_map():
++    block = STREAM_CONF[STREAM_CONF.index('map "$lookla_sni_class:$lookla_cf_source"') :]
++    block = block[: block.index("}")]
++    return dict(re.findall(r'"?([\w:]+)"?\s+(127\.0\.0\.1:\d+);', block))
++
++
++@pytest.mark.parametrize("key", ["nosni:0", "nosni:1"])
++def test_empty_sni_now_goes_to_the_reject_listener(key):
++    assert _decision_map()[key] == "127.0.0.1:9443"
++
++
++@pytest.mark.parametrize("key", ["nosni:0", "nosni:1"])
++def test_empty_sni_can_no_longer_reach_tinyproxy(key):
++    # The second public path into the relay: nginx connects to it from
++    # loopback, so binding tinyproxy to 127.0.0.1 alone would not have closed
++    # this route.
++    assert _decision_map()[key] != "127.0.0.1:8888"
++
++
++def test_tinyproxy_is_not_referenced_anywhere_in_the_stream_config():
++    decisions = _decision_map()
++    assert "127.0.0.1:8888" not in decisions.values()
++
++
++@pytest.mark.parametrize("key", ["nosni:0", "nosni:1"])
++def test_empty_sni_does_not_fall_through_to_the_vpn(key):
++    # Handing unclassified traffic to Xray would be a change to the VPN
++    # contract, not a containment.
++    assert _decision_map()[key] != "127.0.0.1:4443"
++
++
++@pytest.mark.parametrize("key", ["nosni:0", "nosni:1"])
++def test_empty_sni_does_not_reach_the_web_backend(key):
++    assert _decision_map()[key] != "127.0.0.1:8443"
++
++
++def test_t049_routing_is_otherwise_unchanged():
++    decisions = _decision_map()
++    assert decisions["web:1"] == "127.0.0.1:8443"
++    assert decisions["web:0"] == "127.0.0.1:9443"
++    assert decisions["vpn:0"] == "127.0.0.1:4443"
++    assert decisions["vpn:1"] == "127.0.0.1:4443"
++    assert decisions["default"] == "127.0.0.1:4443"
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 3b04322..f6e7ddb 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2131,33 +2131,103 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
+ 
+ ---
+ 
+-### T-072 — Audit and restrict unexpected public listeners
+-**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
++### T-072 — Emergency containment of a public proxy and orphaned Next servers
++**Priority:** P0 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Incident response
+ **Dependencies:** T-049 ✅
+-**Status:** Open.
++**Status:** Implemented, draft PR. **Nothing applied to production** — awaiting independent APPROVE.
+ 
+-**Found during the T-049 inventory**, and deliberately not touched by it: services unrelated to Lookla are listening on public interfaces on this host.
++Raised from P1 to P0 once the inventory showed this is not a theoretical exposure but abuse already in progress.
+ 
+-| Listener | Bound to | Owner |
+-|---|---|---|
+-| `tinyproxy` | `0.0.0.0:8888` and `[::]:8888` | HTTP proxy, systemd |
+-| `next-server` ×3 | `*:3997`, `*:3998`, `*:3999` | unrelated Node projects |
+-| empty-SNI branch of the `:443` stream router | → `127.0.0.1:8888` | routes SNI-less TLS to tinyproxy |
++#### Finding 1 — `tinyproxy` is an open, unauthenticated HTTP relay
+ 
+-T-049 preserved the empty-SNI → `:8888` route **only as an unchanged pre-existing contract**. That is not an endorsement: it was left alone because changing it was outside the reviewed scope, not because it was assessed as safe.
++```text
++Listener       0.0.0.0:8888 and [::]:8888   (no `Listen` directive → wildcard bind)
++Authentication none                          (no BasicAuth configured)
++Source policy  Allow 0.0.0.0/0
++Second path    public :443 + empty SNI → 127.0.0.1:8888
++```
+ 
+-`tinyproxy` reachable from the whole internet is the sharpest item. An open HTTP proxy can be used to relay arbitrary traffic through this host, which is an abuse and attribution problem regardless of what else it protects. The `:443` no-SNI branch means it is reachable on **two** public ports.
++Measured over **4 h 07 min** of log:
+ 
+-**This ticket must inventory before it restricts** — these listeners may have consumers this project does not know about, and silently closing them is the same class of mistake T-049 avoided with the VPN.
++| | |
++|---|---|
++| CONNECT requests | **65,965** |
++| "Maximum number of connections reached" | **15,884** |
++| distinct clients | **94** — 93 external public, 0 WireGuard, 1 loopback |
++| top destination ports | 443 (16,204), 80 (2,274), 7227 (1,118), 8080 (394), **5432** (362), **21** (351) |
++| top individual clients | ~2,300–2,800 requests each |
+ 
+-For each listener establish: the owning process and unit; whether it is reachable externally (verified, not assumed); whether it requires authentication; whether access is logged; who actually consumes it; whether a source allowlist or a `127.0.0.1` bind would suffice; and whether it can simply be switched off.
++The whole log is 68 MB / 727k lines for a single day. The connection ceiling being hit ~15,900 times in four hours means the relay is saturated, not incidentally used.
+ 
+-**Acceptance Criteria:**
+-- [ ] Every public listener has a named owner and a documented consumer, or is switched off
+-- [ ] `tinyproxy` is authenticated, source-restricted, bound to loopback, or removed — with evidence it is not an open relay
+-- [ ] The `:443` empty-SNI route is re-decided explicitly rather than inherited
+-- [ ] The three `next-server` processes are bound to loopback or firewalled
+-- [ ] No restriction is applied before its consumers are identified
++**No legitimate consumer exists.** No reference to a proxy in `.env`, the crawler, `docker-compose.yml` or the environment; zero requests from WireGuard. The only non-external client is `127.0.0.1` (88 requests), which is unidentified and is why the service is retained on loopback rather than removed.
++
++**Internal-target audit (Phase 2): clean.** Of **90,977** parsed requests, **zero** targeted loopback, RFC1918, the Docker bridges, WireGuard, link-local, cloud metadata (`169.254.169.254`) or the host's own public address. This is outbound relay abuse, not a pivot into internal systems — but the host's IP is the one attributed to it.
++
++#### Finding 2 — three orphaned `next-server` processes serving Lookla publicly
++
++```text
++*:3997, *:3998, *:3999   next-server v14.2.35, running as root
++cwd /root/beauty-gr/frontend, ppid 1, cgroup session-882.scope
++started Jul 20 09:11, Jul 21 15:26, Jul 22 10:44
++serving HTTP 200, title "Lookla — Κομμωτήρια & Σαλόνια"
++```
++
++They bind every interface (Next.js defaults to `0.0.0.0` unless a hostname is given), so they served Lookla **around Cloudflare and around the T-049 gate** — which is why T-049's result was narrower than it appeared.
++
++**Startup mechanism (Phase 8): none.** No systemd unit, no cron, no PM2 (which manages only `tiktok-bot`). Their environment carries `npm_lifecycle_event=npx`, `npm_lifecycle_script=next`, and `CLAUDECODE` / `AI_AGENT` / `CLAUDE_CODE_SESSION_ID` — they are leftover `npx next` invocations from **earlier agent sessions in this repository**, orphaned to PID 1 when SSH session 882 ended. They cannot respawn.
++
++**Stale-build secret audit (Phase 9): clean.** `.next` is 152 MB, `BUILD_ID hQyZPK84_x5VeTVnfj1oK` built 2026-07-31 10:46 — different from the container's `thRta0ps07erbSYJm27AP`, confirming the exposed copy is not current. No match for `sk_live`/`sk_test`, Resend keys, `SECRET_KEY`, `DB_PASSWORD`, `REDIS_PASSWORD`, `LOG_PII_HMAC_KEY`, private-key headers, `whsec_` or AWS key IDs in `.next/static` or `.next/server`. Two `.map` files exist and are noted.
++
++#### Evidence preserved before any change (Phase 1)
++
++`/var/backups/t072-incident/20260803T151052Z/` — 75 MB, mode `0700`, 9 files with SHA-256 sums: tinyproxy config and unit, the pre-change `port443.conf`, the full 727k-line log plus yesterday's rotated archive, listener inventory, and per-process forensic metadata (pid, ppid, start time, exe, cwd, cgroup, **environment variable names only**). No client IPs, destinations or secret values are recorded here or in public docs.
++
++#### Containment design
++
++Both external paths must close together. A firewall rule alone leaves the service listening; binding to loopback alone still leaves it reachable **through nginx**, which connects from loopback. Neither is sufficient by itself, which is why they ship as one change.
++
++| Layer | Change |
++|---|---|
++| `ops/t072/containment.py` | `LOOKLA-T072-DENY` chain, one jump per contained port on `eth0` only: 8888, 3997–3999. Loopback untouched — that is what keeps the local consumer investigable. |
++| `ops/nginx/stream.d/port443.conf` | `nosni:0` and `nosni:1` now select the existing reject listener instead of `127.0.0.1:8888`. Not the VPN: handing unclassified traffic to Xray would change the VPN contract rather than contain anything. |
++| `ops/t072/tinyproxy.conf` | explicit `Listen 127.0.0.1`, `Allow 127.0.0.1`, `Allow 0.0.0.0/0` removed, **no BasicAuth** — credentials on a reachable relay make it an authenticated open relay, not a contained one. |
++| orphans | stopped last, `TERM` then `KILL` after 10 s, with a post-check that no listener remains. |
++
++`FORBIDDEN_PORTS` refuses 22, 80, 443, 4443, 8443 and the Docker-published ports in code, not only in review — filtering 443 here would disconnect the VPN, the exact mistake T-049 was redesigned to avoid.
++
++#### Rollback — deliberately not all-or-nothing
++
++The thing being removed is active abuse, so an unrelated smoke failure must not hand the internet back an open relay. The **timed** guard covers **only nginx and the firewall** — the layers that can take Lookla or the VPN down. Tinyproxy and the orphaned processes get manual scripts:
++
++```text
++rollback-network.sh    armed on a timer, restores nginx + firewall
++rollback-tinyproxy.sh  manual only, warns that it restores a measured open relay
++rollback-orphans.sh    refuses by design — production is the beauty_web container
++```
++
++Order of application puts the firewall first: it closes the abuse in milliseconds and is trivially reversible, before any service is reconfigured. nginx is reloaded, never restarted, so established VPN connections survive. A failed `nginx -t` restores the previous file; a tinyproxy that fails to start restores its previous config.
++
++#### Verification
++
++**367 backend tests** (327 + 40 new), ruff clean. The full source/SNI matrix was re-run against a real nginx with the new routing:
++
++| case | expected | observed |
++|---|---|---|
++| Cloudflare + `lookla.gr` / `www` | web | web ✅ |
++| ordinary + `lookla.gr` / `www` | reject | reject ✅ |
++| ordinary + VPN SNI | Xray | Xray ✅ |
++| Cloudflare + non-Lookla SNI | Xray | Xray ✅ |
++| ordinary + unknown SNI | Xray | Xray ✅ |
++| **ordinary + empty SNI** | **reject** | **reject** ✅ |
++| **Cloudflare + empty SNI** | **reject** | **reject** ✅ |
++
++Two of the new tests were wrong before the config was: they matched `Allow 0.0.0.0/0` and `BasicAuth` as raw substrings, which the file's own comments contain in order to explain their absence. They now parse directives, and additionally assert the explanation still survives in the comments.
++
++**Safety checklist:** Tinyproxy classified as active incident **Yes** · External 8888 blocked **Yes** · Empty-SNI proxy route removed **Yes** · Tinyproxy bound to loopback **Yes** · Public BasicAuth proxy introduced **No** · Localhost consumer investigated after containment **Deferred to follow-up, by design** · 3997–3999 blocked **Yes** · Orphans stopped **Yes (in the rollout script)** · Startup mechanism investigated **Yes — none exists** · Stale builds checked for secrets **Yes — clean** · Cloudflare Lookla path changed **No** · Xray route changed **No** · Docker production changed **No** · Containers restarted **No** · Evidence preserved before cleanup **Yes** · Automatic rollback prepared **Yes, network layer only** · Abuse restored automatically on unrelated failure **No** · Production touched before review **No**
++
++#### Follow-ups
++
++Identify the `127.0.0.1` consumer (88 requests) by local tracing after containment · assess provider abuse reports and IP reputation · decide whether to disable and mask tinyproxy if no local consumer is found · review log retention (68 MB/day) · migrate any confirmed personal proxy use to WireGuard with authentication.
+ 
+ ---
+ 
+diff --git a/ops/cloudflare/verify_routing.py b/ops/cloudflare/verify_routing.py
+index 1abfbc0..7057cd1 100755
+--- a/ops/cloudflare/verify_routing.py
++++ b/ops/cloudflare/verify_routing.py
+@@ -54,8 +54,8 @@ stream {{
+     map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream {{
+         "web:1"      127.0.0.1:{WEB};
+         "web:0"      127.0.0.1:{REJECT};
+-        "nosni:1"    127.0.0.1:{NOSNI};
+-        "nosni:0"    127.0.0.1:{NOSNI};
++        "nosni:1"    127.0.0.1:{REJECT};
++        "nosni:0"    127.0.0.1:{REJECT};
+         "vpn:1"      127.0.0.1:{VPN};
+         "vpn:0"      127.0.0.1:{VPN};
+         default      127.0.0.1:{VPN};
+@@ -169,7 +169,8 @@ def main() -> int:
+         ("ordinary source + VPN/default SNI",   OTHER_SOURCE, "amazon.com",    VPN),
+         ("Cloudflare source + non-Lookla SNI",  CF_SOURCE,    "amazon.com",    VPN),
+         ("ordinary source + unknown SNI",       OTHER_SOURCE, "example.net",   VPN),
+-        ("ordinary source + empty SNI",         OTHER_SOURCE, None,            NOSNI),
++        ("ordinary source + empty SNI",         OTHER_SOURCE, None,            None),
++        ("Cloudflare source + empty SNI",       CF_SOURCE,    None,            None),
+     ]
+ 
+     print(f"\n{'case':38} {'expected':12} {'observed':12} result")
+diff --git a/ops/nginx/stream.d/port443.conf b/ops/nginx/stream.d/port443.conf
+index 12bcd13..e0774d6 100644
+--- a/ops/nginx/stream.d/port443.conf
++++ b/ops/nginx/stream.d/port443.conf
+@@ -57,8 +57,14 @@ map $ssl_preread_server_name $lookla_sni_class {
+ map "$lookla_sni_class:$lookla_cf_source" $lookla_upstream {
+     "web:1"      127.0.0.1:8443;   # Lookla SNI from Cloudflare → web vhost
+     "web:0"      127.0.0.1:9443;   # Lookla SNI from anywhere else → reject
+-    "nosni:1"    127.0.0.1:8888;   # unchanged: no SNI → tinyproxy
+-    "nosni:0"    127.0.0.1:8888;   # unchanged
++    # T-072: an SNI-less TLS connection used to be handed to tinyproxy, which
++    # made an open HTTP relay reachable on a second public port. Nothing
++    # legitimate arrives here — Cloudflare always sends SNI and so does the VPN
++    # — so it now goes to the same reject listener as an ungated Lookla SNI.
++    # It must not fall through to the VPN either: that would hand unclassified
++    # traffic to Xray, which is a change to the VPN contract, not a containment.
++    "nosni:1"    127.0.0.1:9443;   # no SNI → reject
++    "nosni:0"    127.0.0.1:9443;   # no SNI → reject
+     "vpn:1"      127.0.0.1:4443;   # unchanged: Cloudflare source, other SNI
+     "vpn:0"      127.0.0.1:4443;   # unchanged: the VPN's normal path
+     default      127.0.0.1:4443;   # unchanged fallback
+@@ -72,8 +78,8 @@ server {
+     ssl_preread           on;
+ }
+ 
+-# Dedicated reject path for a Lookla SNI arriving from a non-Cloudflare
+-# source. A real listener rather than an unreachable address: pointing
++# Dedicated reject path, shared by an ungated Lookla SNI and (since T-072) by
++# SNI-less connections. A real listener rather than an unreachable address: pointing
+ # proxy_pass at a dead port produces connection-refused churn and error-log
+ # noise, and its behaviour is an accident of the kernel rather than something
+ # stated. `return ""` sends nothing and closes, so the client completes no TLS
+diff --git a/ops/t072/apply_t072.sh b/ops/t072/apply_t072.sh
+new file mode 100755
+index 0000000..70801fe
+--- /dev/null
++++ b/ops/t072/apply_t072.sh
+@@ -0,0 +1,179 @@
++#!/usr/bin/env bash
++# T-072 — contain an open HTTP relay and three orphaned public Lookla servers.
++#
++# Rollback here is deliberately NOT one all-or-nothing restoration. The thing
++# being removed is active abuse: if an unrelated verification step fails, the
++# correct outcome is to restore Lookla, the VPN and SSH — not to hand the
++# internet back an open relay because a smoke check was flaky. So the timed
++# automatic guard covers only the layers that can take the site or the VPN
++# down (nginx and the firewall). Tinyproxy and the orphaned processes get
++# manual rollback scripts that an operator runs deliberately, never a timer.
++#
++# Order is chosen so that the more dangerous change is always the one already
++# proven:
++#   1. back up everything, write the three separate rollback scripts
++#   2. arm the timed guard for nginx+firewall only
++#   3. firewall first — it is reversible in milliseconds and closes the abuse
++#      immediately, before any service is reconfigured
++#   4. nginx: `-t` then reload (never restart: a restart drops established VPN
++#      connections a reload preserves)
++#   5. tinyproxy config + restart (its own service only)
++#   6. stop the orphans last, once nothing else can still need them
++#
++# Usage: ./apply_t072.sh --interface eth0 [--rollback-after 900] [--dry-run]
++
++set -euo pipefail
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++REPO="$(cd "$HERE/../.." && pwd)"
++BACKUP_DIR="/var/backups/t072"
++STREAM_DIR="/etc/nginx/stream.d"
++TP_CONF="/etc/tinyproxy/tinyproxy.conf"
++ROLLBACK_AFTER=900
++INTERFACE=""
++DRY_RUN=0
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --interface)      INTERFACE="$2"; shift 2 ;;
++    --rollback-after) ROLLBACK_AFTER="$2"; shift 2 ;;
++    --dry-run)        DRY_RUN=1; shift ;;
++    *) echo "unknown argument: $1" >&2; exit 2 ;;
++  esac
++done
++
++[[ -n "$INTERFACE" ]] || { echo "--interface is required" >&2; exit 2; }
++[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 2; }
++
++log()  { printf '[t072] %s\n' "$*"; }
++fail() { printf '[t072] FAIL: %s\n' "$*" >&2; exit 1; }
++
++STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
++BACKUP="$BACKUP_DIR/$STAMP"
++mkdir -p "$BACKUP"
++iptables-save                 > "$BACKUP/iptables.rules"
++cp -a "$STREAM_DIR"             "$BACKUP/stream.d"
++cp -a "$TP_CONF"                "$BACKUP/tinyproxy.conf"
++ss -lntup                     > "$BACKUP/listeners-before.txt" 2>/dev/null || true
++[[ -s "$BACKUP/iptables.rules" ]] || fail "iptables backup empty — refusing to continue"
++ln -sfn "$BACKUP" "$BACKUP_DIR/latest"
++log "backup: $BACKUP"
++
++# ── rollback 1: nginx + firewall (the timed guard restores only this) ────────
++cat > "$BACKUP/rollback-network.sh" <<NET
++#!/usr/bin/env bash
++# Restores the layers that can take Lookla or the VPN down. Deliberately does
++# NOT restore tinyproxy's public exposure.
++set -euo pipefail
++for port in 8888 3997 3998 3999; do
++  iptables -D INPUT -i ${INTERFACE} -p tcp --dport \$port -m comment --comment "T-072 contain public listener \$port" -j LOOKLA-T072-DENY 2>/dev/null || true
++done
++iptables -F LOOKLA-T072-DENY 2>/dev/null || true
++iptables -X LOOKLA-T072-DENY 2>/dev/null || true
++cp -a $BACKUP/stream.d/port443.conf ${STREAM_DIR}/port443.conf
++nginx -t && nginx -s reload
++echo "[t072] network layer rolled back from $BACKUP"
++NET
++
++# ── rollback 2: tinyproxy — manual only, never automatic ─────────────────────
++cat > "$BACKUP/rollback-tinyproxy.sh" <<TP
++#!/usr/bin/env bash
++# MANUAL ONLY. This restores a configuration that was measured serving 93
++# external clients as an open relay. Run it only with a deliberate decision.
++set -euo pipefail
++cp -a $BACKUP/tinyproxy.conf ${TP_CONF}
++systemctl restart tinyproxy
++echo "[t072] tinyproxy config restored — VERIFY IT IS NOT PUBLICLY REACHABLE"
++TP
++
++# ── rollback 3: orphaned servers — manual, and normally never wanted ─────────
++cat > "$BACKUP/rollback-orphans.sh" <<'ORPH'
++#!/usr/bin/env bash
++# MANUAL ONLY, and normally never wanted. The three next-server processes were
++# orphaned `npx next` invocations serving an outdated Lookla build on public
++# ports, bypassing Cloudflare. Production is served by the beauty_web
++# container; restarting these restores an exposure, not a capability.
++echo "[t072] refusing to relaunch orphaned public servers automatically."
++echo "       Production frontend is the beauty_web container."
++exit 1
++ORPH
++
++chmod +x "$BACKUP"/rollback-*.sh
++log "rollback scripts: network (timed) + tinyproxy (manual) + orphans (manual)"
++
++if [[ $DRY_RUN -eq 1 ]]; then
++  log "dry run"
++  python3 "$HERE/containment.py" --interface "$INTERFACE"
++  diff -u "$TP_CONF" "$REPO/ops/t072/tinyproxy.conf" || true
++  diff -u "$STREAM_DIR/port443.conf" "$REPO/ops/nginx/stream.d/port443.conf" || true
++  exit 0
++fi
++
++# ── 2. arm the timed guard for the network layer only ────────────────────────
++systemd-run --on-active="${ROLLBACK_AFTER}" --unit=t072-rollback \
++  --description="T-072 automatic network rollback" "$BACKUP/rollback-network.sh" >/dev/null
++log "timed network rollback armed: ${ROLLBACK_AFTER}s (nginx+firewall only, by design)"
++
++# ── 3. firewall first: closes the abuse immediately, trivially reversible ────
++python3 "$HERE/containment.py" --interface "$INTERFACE" --apply \
++  || fail "firewall apply failed"
++
++# ── 4. nginx: remove the empty-SNI route into the relay ──────────────────────
++install -m 0644 "$REPO/ops/nginx/stream.d/port443.conf" "$STREAM_DIR/port443.conf.new"
++mv -f "$STREAM_DIR/port443.conf.new" "$STREAM_DIR/port443.conf"
++if ! nginx -t; then
++  cp -a "$BACKUP/stream.d/port443.conf" "$STREAM_DIR/port443.conf"
++  fail "nginx -t rejected the new config — previous config restored"
++fi
++nginx -s reload || fail "nginx reload failed"
++log "nginx reloaded — empty SNI no longer routes to the proxy"
++
++# ── 5. tinyproxy: loopback only ──────────────────────────────────────────────
++install -m 0644 "$REPO/ops/t072/tinyproxy.conf" "$TP_CONF"
++if ! systemctl restart tinyproxy; then
++  cp -a "$BACKUP/tinyproxy.conf" "$TP_CONF"
++  systemctl restart tinyproxy || true
++  fail "tinyproxy failed to start with the new config — previous config restored"
++fi
++sleep 2
++if ss -lnt 2>/dev/null | grep -qE '(0\.0\.0\.0|\[::\]):8888'; then
++  fail "tinyproxy is STILL listening publicly — investigate before continuing"
++fi
++log "tinyproxy restricted to loopback"
++
++# ── 6. stop the orphans last ─────────────────────────────────────────────────
++for port in 3997 3998 3999; do
++  pid="$(ss -lntp 2>/dev/null | grep ":$port " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2 || true)"
++  [[ -n "${pid:-}" ]] || { log "port $port: no listener"; continue; }
++  log "stopping orphan on :$port (pid $pid)"
++  kill -TERM "$pid" 2>/dev/null || true
++  for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
++  if kill -0 "$pid" 2>/dev/null; then
++    log "  did not exit on TERM, sending KILL"
++    kill -KILL "$pid" 2>/dev/null || true
++  fi
++done
++sleep 2
++still="$(ss -lnt 2>/dev/null | grep -cE ':(3997|3998|3999) ' || true)"
++[[ "$still" -eq 0 ]] || fail "ports 3997-3999 still have listeners after termination"
++log "orphaned servers stopped"
++
++ss -lntup > "$BACKUP/listeners-after.txt" 2>/dev/null || true
++
++cat <<'NEXT'
++
++[t072] Applied. The timed rollback covers nginx+firewall ONLY — it will not
++       restore the open proxy. Verify from an EXTERNAL host, then cancel it:
++
++         1. origin:8888, :3997, :3998, :3999  → denied/timed out
++         2. public :443 with empty SNI        → reject, no tinyproxy log entry
++         3. https://lookla.gr/ through Cloudflare, all four locales
++         4. VPN clients still connecting
++         5. a second, independent SSH session still works
++
++         systemctl stop t072-rollback.timer
++
++       Manual rollbacks (deliberate use only):
++         /var/backups/t072/latest/rollback-network.sh
++         /var/backups/t072/latest/rollback-tinyproxy.sh
++NEXT
+diff --git a/ops/t072/containment.py b/ops/t072/containment.py
+new file mode 100644
+index 0000000..e0ab3c9
+--- /dev/null
++++ b/ops/t072/containment.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python3
++"""
++T-072 — deny external access to listeners that should never have been public.
++
++Two unrelated services were found reachable from the internet during the T-049
++inventory:
++
++  * `tinyproxy` on `0.0.0.0:8888` with `Allow 0.0.0.0/0` and no authentication —
++    an open HTTP relay, measured being used by 93 external hosts and hitting
++    its 100-connection ceiling ~15,900 times in four hours.
++  * three orphaned `next-server` processes on `*:3997-3999` serving Lookla
++    itself, bypassing both Cloudflare and the T-049 gate.
++
++The rules here are blunt on purpose. Unlike T-049, which had to preserve a
++legitimate external audience for the port it filtered, these ports have **no
++established external consumer at all** — so the correct rule is "deny from the
++public interface", not "allow a list". Loopback is untouched, which is what
++lets tinyproxy keep serving the one local client while its abusers are cut
++off.
++
++This does not replace binding the service to loopback; it complements it. A
++firewall rule alone leaves the service listening, and binding alone would
++still be reachable through nginx's stream router, which connects from
++loopback. Both are required, which is why they ship together.
++
++Rule construction is pure so the scope — exactly these ports, only inbound on
++the external interface, nothing else — is testable without a firewall.
++"""
++
++from __future__ import annotations
++
++import argparse
++import subprocess
++import sys
++
++CHAIN = "LOOKLA-T072-DENY"
++COMMENT = "T-072 contain public listener"
++
++#: The listeners this ticket contains. Each has been confirmed to have no
++#: legitimate external consumer; see the backlog entry for the evidence.
++CONTAINED_PORTS = (8888, 3997, 3998, 3999)
++
++#: Ports that must never appear in a T-072 rule. 80 and 443 belong to T-049 and
++#: to the shared SNI router — filtering 443 here would disconnect the VPN, the
++#: exact mistake T-049 was redesigned to avoid. 22 is the way back in.
++FORBIDDEN_PORTS = (22, 80, 443, 4443, 8443, 3000, 5432, 6379, 8001)
++
++
++class ContainmentScopeError(ValueError):
++    """Raised when a generated rule would exceed T-072's approved scope."""
++
++
++def build_chain_rules() -> list[str]:
++    """
++    Return the `iptables-restore` lines for T-072's chain.
++
++    A single DROP. The chain is only ever entered for the contained ports on
++    the external interface (see `build_jump_rules`), so there is nothing to
++    accept first: no external source is permitted to any of them.
++    """
++    return [
++        f'-A {CHAIN} -m comment --comment "{COMMENT}" -j DROP',
++    ]
++
++
++def build_jump_rules(interface: str, ports=CONTAINED_PORTS) -> list[list[str]]:
++    """Return one jump argv per contained port, scoped to the external interface."""
++    if not interface or " " in interface:
++        raise ContainmentScopeError(f"implausible interface name: {interface!r}")
++    jumps = []
++    for port in ports:
++        if port in FORBIDDEN_PORTS:
++            raise ContainmentScopeError(
++                f"port {port} must never be filtered by T-072 — it belongs to "
++                "T-049, the shared SNI router, or management access"
++            )
++        if port not in CONTAINED_PORTS:
++            raise ContainmentScopeError(
++                f"port {port} is outside T-072's approved scope {CONTAINED_PORTS}"
++            )
++        jumps.append([
++            "-i", interface,
++            "-p", "tcp",
++            "--dport", str(port),
++            "-m", "comment", "--comment", f"{COMMENT} {port}",
++            "-j", CHAIN,
++        ])
++    return jumps
++
++
++def build_restore_document() -> str:
++    """One atomic `iptables-restore --noflush` transaction for the chain."""
++    body = "\n".join(build_chain_rules())
++    return f"*filter\n:{CHAIN} - [0:0]\n{body}\nCOMMIT\n"
++
++
++def assert_scope(document: str, jumps: list[list[str]]) -> None:
++    """Fail loudly before anything is applied if the scope drifted."""
++    joined = document + " " + " ".join(" ".join(j) for j in jumps)
++    for port in FORBIDDEN_PORTS:
++        if f"--dport {port} " in joined + " ":
++            raise ContainmentScopeError(
++                f"generated rules reference forbidden port {port}"
++            )
++    if "DOCKER" in joined:
++        raise ContainmentScopeError("generated rules must not reference Docker chains")
++    if "-A INPUT" in document:
++        raise ContainmentScopeError("only T-072's own chain may be populated here")
++    if "-j DROP" not in document:
++        raise ContainmentScopeError("no deny rule present — the control would be absent")
++    # Every contained port must actually be covered; a jump silently dropped
++    # would leave a listener exposed while the run still reported success.
++    for port in CONTAINED_PORTS:
++        if f"--dport {port} " not in " ".join(" ".join(j) for j in jumps) + " ":
++            raise ContainmentScopeError(f"contained port {port} has no jump rule")
++
++
++def _run(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
++    return subprocess.run(  # noqa: S603
++        argv, input=input_text, capture_output=True, text=True, check=False
++    )
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--interface", required=True)
++    parser.add_argument(
++        "--apply",
++        action="store_true",
++        help="apply the rules; without it the transaction is only printed",
++    )
++    args = parser.parse_args(argv)
++
++    try:
++        document = build_restore_document()
++        jumps = build_jump_rules(args.interface)
++        assert_scope(document, jumps)
++    except ContainmentScopeError as exc:
++        print(f"FAIL: {exc}", file=sys.stderr)
++        return 1
++
++    print(f"# containing ports {CONTAINED_PORTS} on {args.interface}")
++    if not args.apply:
++        print(document, end="")
++        for jump in jumps:
++            print(f"# jump: iptables -I INPUT 1 {' '.join(jump)}")
++        print("# dry run — nothing applied")
++        return 0
++
++    restore = _run(["iptables-restore", "--noflush"], input_text=document)
++    if restore.returncode != 0:
++        print(f"FAIL: iptables-restore: {restore.stderr.strip()}", file=sys.stderr)
++        return 1
++
++    for jump in jumps:
++        if _run(["iptables", "-C", "INPUT", *jump]).returncode == 0:
++            print(f"jump for {jump[5]} already present — not duplicated")
++            continue
++        inserted = _run(["iptables", "-I", "INPUT", "1", *jump])
++        if inserted.returncode != 0:
++            print(f"FAIL: could not install jump: {inserted.stderr.strip()}", file=sys.stderr)
++            return 1
++        print(f"jump installed for port {jump[5]}")
++
++    print("applied")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/ops/t072/tinyproxy.conf b/ops/t072/tinyproxy.conf
+new file mode 100644
+index 0000000..19421b2
+--- /dev/null
++++ b/ops/t072/tinyproxy.conf
+@@ -0,0 +1,52 @@
++# T-072 — tinyproxy restricted to loopback.
++#
++# The previous configuration combined `Port 8888` with an implicit wildcard
++# bind and `Allow 0.0.0.0/0`, and set no `BasicAuth` — an open, unauthenticated
++# HTTP relay reachable from the whole internet. Measured over four hours it was
++# serving 93 external clients and exhausting its 100-connection ceiling roughly
++# 15,900 times. Destinations were entirely external (no loopback, RFC1918,
++# Docker, WireGuard or metadata targets appeared in 90,977 parsed requests), so
++# this was outbound relay abuse rather than a pivot into internal systems —
++# but the host's address is the one attributed to that traffic.
++#
++# The service is kept, bound to loopback only, until the 88 requests observed
++# from 127.0.0.1 are traced to a process. Deleting a service whose consumer is
++# unidentified is the mistake T-049 avoided with the VPN; removing its public
++# exposure is not.
++#
++# Deliberately NOT done here:
++#   * no `BasicAuth` on a public listener — credentials on an open relay make
++#     it an authenticated open relay, not a contained one;
++#   * no WireGuard allowlist — there were zero WireGuard clients, so there is
++#     nothing to preserve;
++#   * no IPv6 listener.
++#
++# If personal use is later confirmed, it comes back through WireGuard with
++# authentication, as its own reviewed change. The public unauthenticated
++# listener is not restored.
++
++User tinyproxy
++Group tinyproxy
++
++# Bind explicitly. Without `Listen`, tinyproxy accepts on every interface.
++Listen 127.0.0.1
++Port 8888
++
++Timeout 600
++
++DefaultErrorFile "/usr/share/tinyproxy/default.html"
++StatFile "/usr/share/tinyproxy/stats.html"
++
++LogFile "/var/log/tinyproxy/tinyproxy.log"
++LogLevel Info
++
++PidFile "/run/tinyproxy/tinyproxy.pid"
++
++MaxClients 100
++
++# Loopback only. `Allow 0.0.0.0/0` is what made this an open relay; with a
++# loopback bind an Allow list is belt-and-braces, and it stays narrow so that
++# re-binding to a wider address later cannot silently re-open the relay.
++Allow 127.0.0.1
++
++ViaProxyName "tinyproxy"
