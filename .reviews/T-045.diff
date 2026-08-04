@@ -1,8 +1,8 @@
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 6906279..6bcfa53 100644
+index 6906279..40be846 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -2452,17 +2452,67 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -2452,17 +2452,83 @@ Sitemap: https://lookla.gr/sitemap.xml
  ---
  
  ### T-045 — Publish Terms of Service (pre-launch blocker)
@@ -10,7 +10,7 @@ index 6906279..6bcfa53 100644
 -**Dependencies:** T-017
 +**Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
 +**Dependencies:** T-017 ✅
-+**Status:** Drafted and shipped as a page. ⚠️ **Not legally reviewed** — see "Legal review required" below. Draft PR; nothing deployed.
++**Status:** Drafted, then corrected after review found two factually wrong legal statements. ⚠️ **Not legally reviewed** — publication is blocked on Greek legal advice, see "Legal review package" below. Draft PR; nothing deployed.
  
 -**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
 +**Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
@@ -44,14 +44,29 @@ index 6906279..6bcfa53 100644
 +- **Paid plans are addressed, not omitted.** The plans are discoverable through the API, so saying nothing would be a gap. The document states they cannot currently be bought, that no payment provider is configured, and that nothing on Lookla can currently create a payment obligation.
 +- **Retention is deferred to the Privacy Policy, not restated.** Two documents stating retention independently is how they drift apart; a test asserts the Terms do not restate a retention period.
 +
-+#### Legal review required — this is not optional
++#### Corrections made after the first review
 +
-+This document has **not** been reviewed by a Greek lawyer, and must be before launch. Two areas in particular state positions that mandatory law may narrow:
++Two statements in the first draft were **wrong**, not merely unreviewed. Both are the kind of error that a template inherits and nobody checks.
 +
-+- **Section 12 (liability).** Drafted to preserve the carve-outs Greek and EU consumer law require — no exclusion for death or personal injury from our negligence, for fraud, or for wilful misconduct and gross negligence, and an explicit statement that mandatory consumer rights are unaffected. Whether the remaining limitation is enforceable against a Greek consumer is a legal question, not a drafting one.
-+- **Section 14 (governing law and jurisdiction).** Greek law is stated, with the consumer's home-forum protection preserved and the EU ODR platform referenced. The interaction with Rome I / Brussels I recast for consumers needs confirming.
++**The EU ODR platform was cited, and it no longer exists.** Regulation (EU) 2024/3228 repealed the ODR Regulation with effect from 20 July 2025; the platform stopped accepting new complaints on 20 March 2025. Directing a user to a dead redress route is worse than saying nothing, because it looks like a remedy while consuming the time in which a real one could have been used. Removed in all four locales and replaced with a neutral statement that nothing in the Terms limits a mandatory right to an available out-of-court procedure or to a competent court. A named Greek ADR body will only be added once a lawyer confirms one applies to this model. Tests now fail if the URL, the phrase, or any of the three translated forms reappear, and separately if a commercial ADR provider is named.
 +
-+Also for the lawyer: whether operating as a natural person changes any disclosure obligation; whether the crawled-data provenance in Section 3 needs different wording under Greek unfair-competition or database rights; and whether the 16-year age floor is right for Greece.
++**The 16-year age floor was presented as though it were the legal threshold.** Article 21 of Greek Law 4624/2019 sets **15** for a minor's own consent to data processing. The product rule itself is defensible; stating it as if it were Greek law was not. Option A was taken: 16 remains a **Lookla eligibility rule**, and the document now says explicitly that this is not a statement about what Greek data-protection law sets, and that the consent threshold is a separate question from who may hold an account. Contractual capacity remains a question for the lawyer.
++
++**Moderation is now described as it actually works**, which DSA Article 14 requires and which the first draft under-specified. Verified against the code rather than assumed: `check_text` and `check_image` exist in `app/services/moderation.py` but are **called from no router**, so no automated screening runs at all; a report creates a row and, past a threshold, sets `needs_review`, which puts the listing in a queue a person reviews through the admin UI. The document therefore states that nothing is screened or filtered before publication, that no removal or restriction is decided by an automated system, that the single automated step is flagging for human review and changes nothing visible, and that **no formal internal complaints or appeals procedure exists** — with an undertaking to build one and update the Terms before relying on it, rather than describing one that is not there.
++
++#### Legal review package — blocking publication
++
++**Unresolved and blocking: the operator's geographic address.** Article 5 of the e-Commerce Directive requires an information-society service to make its name, geographic address and contact details easily and permanently accessible. Registration and VAT details are required only where they apply, and there is no company here — but that does not mean no address is required. This cannot be resolved from the code: it needs a decision about whether Lookla is currently an information-society service operated commercially, whether the operator's activity requires registration, and what address may lawfully be published. A home address must not be published without a deliberate decision; a professional or service address may be an option. **No address was invented.**
++
++For the lawyer, in priority order:
++
++1. **Geographic address and operator details** — the blocking item above, including the exact legal spelling of the name and whether an ΑΦΜ must be shown.
++2. **DSA classification (Article 14).** Lookla hosts owner-submitted data, messages and reviews, has a reporting mechanism, and can restrict or suspend accounts. If it is an intermediary/hosting service, Article 14 requires the Terms to describe restrictions on user information, the moderation measures and tools used, algorithmic decision-making and human review, and the internal complaint-handling procedure. The description now in the document is accurate; whether it is *sufficient*, and whether a formal complaint procedure must be built, is a legal determination. A follow-up ticket should be opened if `/api/reports` does not satisfy the required notice-and-action process.
++3. **Section 12, liability.** Drafted to preserve the mandatory carve-outs; whether what remains is enforceable against a Greek consumer is a legal question.
++4. **Section 14, governing law and jurisdiction.** Greek law with the consumer's home forum preserved; interaction with Rome I / Brussels I recast needs confirming.
++5. **Section 3, crawled-data provenance** — whether the wording needs adjusting under Greek unfair-competition or database rights.
++6. **Age and capacity** — whether 16 is the right product floor, and what contractual capacity requires separately from the data-protection threshold.
++7. **Acceptance** — where assent is legally required, what it must cover, and whether a version-stamped acceptance record must be stored. The current no-checkbox behaviour is documented rather than defended.
 +
 +#### Verification
 +
@@ -73,17 +88,18 @@ index 6906279..6bcfa53 100644
 +- [x] Linked from the Footer in all four locales
 +- [x] Version and effective date shown and pinned by test
 +- [x] No fictitious acceptance checkbox
-+- [ ] **Greek legal review** — required before launch
++- [ ] **Greek legal review** — required before launch; the operator's geographic address is unresolved and blocks publication
++- [ ] DSA Article 14 classification confirmed, and a formal complaints procedure built if required
 +- [ ] Independent review of this PR
  
  ### T-046 — Document legitimate-interest balancing assessments
  **Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
 diff --git a/frontend/app/[locale]/terms/content.ts b/frontend/app/[locale]/terms/content.ts
 new file mode 100644
-index 0000000..ee84210
+index 0000000..8e4a848
 --- /dev/null
 +++ b/frontend/app/[locale]/terms/content.ts
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,616 @@
 +/**
 + * T-045 — Terms of Service.
 + *
@@ -163,7 +179,7 @@ index 0000000..ee84210
 +        heading: '4. User accounts',
 +        paragraphs: [
 +          'You may use most of Lookla without an account. If you create one, you must provide an email address you control, keep your password confidential, and tell us promptly at hello@lookla.gr if you believe someone else has accessed your account.',
-+          'You must be at least 16 years old to create an account. Lookla is not intended for children.',
++          'You must be at least 16 years old to create or use a Lookla account. This is a Lookla eligibility rule. It is not a statement that Greek data-protection law generally sets the relevant age at 16 — Greek law sets its own threshold for a minor\'s consent to data processing, which is a separate question from who may hold an account here.',
 +          'You are responsible for what happens through your account. Do not share it, and do not create an account using someone else\'s identity or contact details.',
 +        ],
 +      },
@@ -203,7 +219,9 @@ index 0000000..ee84210
 +        heading: '9. Reporting content',
 +        paragraphs: [
 +          'Listings and reviews carry a report control. If you believe something is inaccurate, unlawful or abusive, report it, or write to hello@lookla.gr.',
-+          'We review reports and decide case by case. Depending on what we find we may correct the content, remove it, contact the person who posted it, or take no action. We will not always be able to tell you the outcome.',
++          'Reports are read by a person, not decided automatically. Depending on what we find we may correct the content, remove it, contact the person who posted it, restrict or suspend an account, or take no action.',
++          'To describe our moderation accurately: we do not automatically screen or filter content before it is published, and no decision to remove content or restrict an account is taken by an automated system. The only automated step is that a listing which attracts several reports about the same issue is flagged for a person to look at; the flag itself changes nothing that you can see.',
++          'We do not currently operate a formal internal complaints or appeals procedure. If you disagree with a decision, write to hello@lookla.gr and a person will look at it again. If we are required to provide a formal complaint-handling procedure, we will build one and update these Terms before relying on it.',
 +        ],
 +      },
 +      {
@@ -240,7 +258,8 @@ index 0000000..ee84210
 +        heading: '14. Governing law and jurisdiction',
 +        paragraphs: [
 +          'These Terms are governed by Greek law.',
-+          'If you are a consumer, this does not deprive you of the protection of the mandatory rules of the country in which you live, and you may bring proceedings in the courts of that country. Disputes may also be submitted to the European Commission\'s online dispute resolution platform.',
++          'If you are a consumer, this does not deprive you of the protection of the mandatory rules of the country in which you live, and you may bring proceedings in the courts of that country.',
++          'Nothing in these Terms limits any mandatory right you may have to seek an available out-of-court dispute resolution procedure, or to bring a claim before a competent court.',
 +        ],
 +      },
 +      {
@@ -304,7 +323,7 @@ index 0000000..ee84210
 +        heading: '4. Λογαριασμοί χρηστών',
 +        paragraphs: [
 +          'Μπορείτε να χρησιμοποιείτε το μεγαλύτερο μέρος του Lookla χωρίς λογαριασμό. Εάν δημιουργήσετε, πρέπει να δηλώσετε email που ελέγχετε, να διατηρείτε τον κωδικό σας εμπιστευτικό και να μας ειδοποιήσετε άμεσα στο hello@lookla.gr αν πιστεύετε ότι κάποιος άλλος απέκτησε πρόσβαση.',
-+          'Πρέπει να είστε τουλάχιστον 16 ετών για να δημιουργήσετε λογαριασμό. Το Lookla δεν απευθύνεται σε παιδιά.',
++          'Πρέπει να είστε τουλάχιστον 16 ετών για να δημιουργήσετε ή να χρησιμοποιείτε λογαριασμό Lookla. Πρόκειται για κανόνα επιλεξιμότητας του Lookla. Δεν αποτελεί δήλωση ότι το ελληνικό δίκαιο προστασίας δεδομένων ορίζει γενικά το όριο στα 16 — το ελληνικό δίκαιο θέτει δικό του όριο για τη συγκατάθεση ανηλίκου στην επεξεργασία δεδομένων, ζήτημα διακριτό από το ποιος μπορεί να διατηρεί λογαριασμό εδώ.',
 +          'Είστε υπεύθυνοι για ό,τι συμβαίνει μέσω του λογαριασμού σας. Μην τον μοιράζεστε και μη δημιουργείτε λογαριασμό με ταυτότητα ή στοιχεία επικοινωνίας άλλου προσώπου.',
 +        ],
 +      },
@@ -344,7 +363,9 @@ index 0000000..ee84210
 +        heading: '9. Αναφορά περιεχομένου',
 +        paragraphs: [
 +          'Οι καταχωρήσεις και οι κριτικές διαθέτουν δυνατότητα αναφοράς. Εάν θεωρείτε ότι κάτι είναι ανακριβές, παράνομο ή καταχρηστικό, αναφέρετέ το ή γράψτε στο hello@lookla.gr.',
-+          'Εξετάζουμε τις αναφορές κατά περίπτωση. Ανάλογα με τα ευρήματα ενδέχεται να διορθώσουμε ή να αφαιρέσουμε το περιεχόμενο, να επικοινωνήσουμε με τον συντάκτη ή να μην προβούμε σε ενέργεια. Δεν θα μπορούμε πάντα να σας γνωστοποιήσουμε την έκβαση.',
++          'Οι αναφορές διαβάζονται από άνθρωπο και δεν κρίνονται αυτόματα. Ανάλογα με τα ευρήματα ενδέχεται να διορθώσουμε ή να αφαιρέσουμε το περιεχόμενο, να επικοινωνήσουμε με τον συντάκτη, να περιορίσουμε ή να αναστείλουμε λογαριασμό, ή να μην προβούμε σε ενέργεια.',
++          'Για να περιγράψουμε με ακρίβεια τη μετριασμό μας: δεν ελέγχουμε ούτε φιλτράρουμε αυτόματα το περιεχόμενο πριν δημοσιευθεί, και καμία απόφαση αφαίρεσης περιεχομένου ή περιορισμού λογαριασμού δεν λαμβάνεται από αυτοματοποιημένο σύστημα. Το μόνο αυτοματοποιημένο βήμα είναι ότι μια καταχώρηση με πολλές αναφορές για το ίδιο ζήτημα επισημαίνεται για ανθρώπινο έλεγχο· η επισήμανση από μόνη της δεν αλλάζει τίποτα ορατό.',
++          'Δεν διαθέτουμε επί του παρόντος επίσημη εσωτερική διαδικασία παραπόνων ή προσφυγών. Εάν διαφωνείτε με μια απόφαση, γράψτε στο hello@lookla.gr και θα την εξετάσει ξανά άνθρωπος. Εάν απαιτηθεί επίσημη διαδικασία διαχείρισης παραπόνων, θα τη δημιουργήσουμε και θα ενημερώσουμε τους Όρους πριν βασιστούμε σε αυτήν.',
 +        ],
 +      },
 +      {
@@ -381,7 +402,8 @@ index 0000000..ee84210
 +        heading: '14. Εφαρμοστέο δίκαιο και δικαιοδοσία',
 +        paragraphs: [
 +          'Οι παρόντες Όροι διέπονται από το ελληνικό δίκαιο.',
-+          'Εάν είστε καταναλωτής, αυτό δεν σας στερεί την προστασία των αναγκαστικού δικαίου κανόνων της χώρας διαμονής σας και μπορείτε να προσφύγετε στα δικαστήριά της. Διαφορές μπορούν επίσης να υποβληθούν στην πλατφόρμα ηλεκτρονικής επίλυσης διαφορών της Ευρωπαϊκής Επιτροπής.',
++          'Εάν είστε καταναλωτής, αυτό δεν σας στερεί την προστασία των αναγκαστικού δικαίου κανόνων της χώρας διαμονής σας και μπορείτε να προσφύγετε στα δικαστήριά της.',
++          'Καμία διάταξη των Όρων δεν περιορίζει τυχόν αναγκαστικού δικαίου δικαίωμά σας να προσφύγετε σε διαθέσιμη διαδικασία εξωδικαστικής επίλυσης διαφορών ή να ασκήσετε αξίωση ενώπιον αρμόδιου δικαστηρίου.',
 +        ],
 +      },
 +      {
@@ -445,7 +467,7 @@ index 0000000..ee84210
 +        heading: '4. Учётные записи пользователей',
 +        paragraphs: [
 +          'Большей частью Lookla можно пользоваться без учётной записи. Если вы её создаёте, укажите email, которым вы владеете, храните пароль в тайне и незамедлительно сообщите на hello@lookla.gr, если считаете, что доступ получил кто-то ещё.',
-+          'Для создания учётной записи вам должно быть не менее 16 лет. Lookla не предназначен для детей.',
++          'Для создания или использования учётной записи Lookla вам должно быть не менее 16 лет. Это правило Lookla. Оно не является утверждением, что законодательство Греции о защите данных в целом устанавливает порог в 16 лет — греческое право задаёт собственный порог для согласия несовершеннолетнего на обработку данных, и это отдельный вопрос от того, кто может иметь здесь учётную запись.',
 +          'Вы отвечаете за то, что происходит через вашу учётную запись. Не передавайте её и не создавайте запись, используя чужую личность или контактные данные.',
 +        ],
 +      },
@@ -485,7 +507,9 @@ index 0000000..ee84210
 +        heading: '9. Жалобы на контент',
 +        paragraphs: [
 +          'У карточек и отзывов есть кнопка жалобы. Если считаете что-то неточным, незаконным или оскорбительным, сообщите об этом либо напишите на hello@lookla.gr.',
-+          'Мы рассматриваем жалобы индивидуально. В зависимости от результата мы можем исправить контент, удалить его, связаться с автором или не предпринимать действий. Мы не всегда сможем сообщить вам итог.',
++          'Жалобы читает человек, они не решаются автоматически. В зависимости от результата мы можем исправить контент, удалить его, связаться с автором, ограничить или заблокировать учётную запись либо не предпринимать действий.',
++          'Чтобы описать нашу модерацию точно: мы не проверяем и не фильтруем контент автоматически до публикации, и ни одно решение об удалении контента или ограничении учётной записи не принимается автоматической системой. Единственный автоматический шаг — карточка, собравшая несколько жалоб по одному поводу, помечается для просмотра человеком; сама пометка ничего видимого не меняет.',
++          'Формальной внутренней процедуры жалоб или обжалования у нас сейчас нет. Если вы не согласны с решением, напишите на hello@lookla.gr, и человек рассмотрит его повторно. Если формальная процедура рассмотрения жалоб окажется обязательной, мы её создадим и обновим Условия прежде, чем на неё ссылаться.',
 +        ],
 +      },
 +      {
@@ -522,7 +546,8 @@ index 0000000..ee84210
 +        heading: '14. Применимое право и подсудность',
 +        paragraphs: [
 +          'Настоящие Условия регулируются правом Греции.',
-+          'Если вы потребитель, это не лишает вас защиты императивных норм страны вашего проживания, и вы можете обратиться в суды этой страны. Споры также могут быть переданы на платформу онлайн-урегулирования споров Европейской комиссии.',
++          'Если вы потребитель, это не лишает вас защиты императивных норм страны вашего проживания, и вы можете обратиться в суды этой страны.',
++          'Ничто в настоящих Условиях не ограничивает ваше императивное право обратиться к доступной процедуре внесудебного урегулирования спора или предъявить иск в компетентный суд.',
 +        ],
 +      },
 +      {
@@ -586,7 +611,7 @@ index 0000000..ee84210
 +        heading: '4. Облікові записи користувачів',
 +        paragraphs: [
 +          'Більшістю можливостей Lookla можна користуватися без облікового запису. Якщо ви його створюєте, вкажіть email, яким володієте, зберігайте пароль у таємниці й негайно повідомте на hello@lookla.gr, якщо вважаєте, що доступ отримав хтось інший.',
-+          'Для створення облікового запису вам має бути щонайменше 16 років. Lookla не призначений для дітей.',
++          'Для створення або користування обліковим записом Lookla вам має бути щонайменше 16 років. Це правило Lookla. Воно не є твердженням, що законодавство Греції про захист даних загалом встановлює поріг у 16 років — грецьке право визначає власний поріг для згоди неповнолітнього на обробку даних, і це окреме питання від того, хто може мати тут обліковий запис.',
 +          'Ви відповідаєте за те, що відбувається через ваш обліковий запис. Не передавайте його та не створюйте запис, використовуючи чужу особу чи контактні дані.',
 +        ],
 +      },
@@ -626,7 +651,9 @@ index 0000000..ee84210
 +        heading: '9. Скарги на контент',
 +        paragraphs: [
 +          'Картки та відгуки мають кнопку скарги. Якщо вважаєте щось неточним, незаконним або образливим, повідомте про це або напишіть на hello@lookla.gr.',
-+          'Ми розглядаємо скарги індивідуально. Залежно від результату ми можемо виправити контент, видалити його, зв\'язатися з автором або не вживати заходів. Ми не завжди зможемо повідомити вам підсумок.',
++          'Скарги читає людина, вони не вирішуються автоматично. Залежно від результату ми можемо виправити контент, видалити його, зв\'язатися з автором, обмежити або заблокувати обліковий запис чи не вживати заходів.',
++          'Щоб описати нашу модерацію точно: ми не перевіряємо і не фільтруємо контент автоматично до публікації, і жодне рішення про видалення контенту чи обмеження облікового запису не ухвалюється автоматичною системою. Єдиний автоматичний крок — картка, що зібрала кілька скарг з одного приводу, позначається для перегляду людиною; сама позначка нічого видимого не змінює.',
++          'Формальної внутрішньої процедури скарг чи оскарження у нас наразі немає. Якщо ви не згодні з рішенням, напишіть на hello@lookla.gr, і людина розгляне його повторно. Якщо формальна процедура розгляду скарг виявиться обов\'язковою, ми її створимо і оновимо Умови, перш ніж на неї покладатися.',
 +        ],
 +      },
 +      {
@@ -663,7 +690,8 @@ index 0000000..ee84210
 +        heading: '14. Застосовне право та підсудність',
 +        paragraphs: [
 +          'Ці Умови регулюються правом Греції.',
-+          'Якщо ви споживач, це не позбавляє вас захисту імперативних норм країни вашого проживання, і ви можете звернутися до судів цієї країни. Спори також можуть бути передані на платформу онлайн-врегулювання спорів Європейської комісії.',
++          'Якщо ви споживач, це не позбавляє вас захисту імперативних норм країни вашого проживання, і ви можете звернутися до судів цієї країни.',
++          'Ніщо в цих Умовах не обмежує ваше імперативне право звернутися до доступної процедури позасудового врегулювання спору або подати позов до компетентного суду.',
 +        ],
 +      },
 +      {
@@ -792,10 +820,10 @@ index c33a8da..f5c7af1 100644
          {isAnalyticsConsentFeatureEnabled() && (
 diff --git a/frontend/lib/termsContent.test.ts b/frontend/lib/termsContent.test.ts
 new file mode 100644
-index 0000000..5e0ab13
+index 0000000..509fcea
 --- /dev/null
 +++ b/frontend/lib/termsContent.test.ts
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,333 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
@@ -939,6 +967,63 @@ index 0000000..5e0ab13
 +  });
 +});
 +
++describe('T-045: the age rule is presented as ours, not as Greek law', () => {
++  test('states the 16-year floor as a Lookla eligibility rule', () => {
++    assert.ok(/at least 16 years old to create or use a Lookla account/i.test(all('en')));
++    assert.ok(/This is a Lookla eligibility rule/i.test(all('en')));
++  });
++
++  test('explicitly disclaims that 16 is the Greek statutory threshold', () => {
++    // Greek law (art. 21 of L. 4624/2019) sets 15 for a minor's own consent to
++    // data processing. An earlier draft implied 16 was simply "the" age, which
++    // was wrong about Greek law even though the product rule itself is fine.
++    assert.ok(/not a statement that Greek data-protection law generally sets the relevant age at 16/i.test(all('en')));
++    for (const locale of LOCALES) {
++      assert.ok(!/Greek law requires you to be 16|греческое право требует 16/i.test(all(locale)));
++    }
++  });
++
++  test('every locale carries the same disclaimer, not just English', () => {
++    assert.ok(/κανόνα επιλεξιμότητας του Lookla/.test(all('el')));
++    assert.ok(/Это правило Lookla/.test(all('ru')));
++    assert.ok(/Це правило Lookla/.test(all('uk')));
++  });
++});
++
++describe('T-045: moderation is described as it actually works', () => {
++  // DSA Article 14 requires the restrictions and the moderation tools actually
++  // used to be described. Verified against the code: check_text/check_image
++  // exist in app/services/moderation.py but are called from no router, so no
++  // automated screening runs; reports create a row and, past a threshold, set
++  // needs_review for a human queue.
++
++  test('states that no automated screening happens before publication', () => {
++    assert.ok(/do not automatically screen or filter content before it is published/i.test(all('en')));
++  });
++
++  test('states that removals and restrictions are not automated decisions', () => {
++    assert.ok(/no decision to remove content or restrict an account is taken by an automated system/i.test(all('en')));
++  });
++
++  test('describes the one automated step that does exist, without overstating it', () => {
++    assert.ok(/flagged for a person to look at/i.test(all('en')));
++    assert.ok(/the flag itself changes nothing that you can see/i.test(all('en')));
++  });
++
++  test('does not invent an internal appeals procedure', () => {
++    assert.ok(/do not currently operate a formal internal complaints or appeals procedure/i.test(all('en')));
++    const text = LOCALES.map(all).join('\n');
++    assert.ok(!/appeal (a|our) decision within \d+ days/i.test(text));
++    assert.ok(!/independent (review|appeals) body/i.test(text));
++  });
++
++  test('every locale states the no-automated-screening fact', () => {
++    assert.ok(/δεν ελέγχουμε ούτε φιλτράρουμε αυτόματα/.test(all('el')));
++    assert.ok(/не проверяем и не фильтруем контент автоматически/.test(all('ru')));
++    assert.ok(/не перевіряємо і не фільтруємо контент автоматично/.test(all('uk')));
++  });
++});
++
 +describe('T-045: operator identity is stated honestly', () => {
 +  test('names the operator as a natural person in every locale', () => {
 +    for (const locale of LOCALES) assert.ok(all(locale).includes('Zhuykov Andrey'));
@@ -964,8 +1049,15 @@ index 0000000..5e0ab13
 +  });
 +
 +  test('the registration page does not render a terms-acceptance checkbox', () => {
-+    // The document says we do not collect an acceptance record; a checkbox
-+    // appearing later would make that statement false.
++    // This documents the CURRENT registration behaviour pending a final legal
++    // decision on notice, assent and version-recording requirements. It does
++    // not assert that an acceptance control is forbidden or will never be
++    // needed.
++    //
++    // If one is introduced, this test must fail until the Terms version, the
++    // acceptance scope and the evidence-storage contract are implemented
++    // together — the point is that those three ship as one change, not that
++    // acceptance stays uncollected forever.
 +    const register = fs.readFileSync(
 +      path.join(frontendRoot, 'app', '[locale]', 'register', 'page.tsx'), 'utf-8',
 +    );
@@ -989,6 +1081,38 @@ index 0000000..5e0ab13
 +  test('states governing law and preserves the consumer forum', () => {
 +    assert.ok(/governed by Greek law/i.test(all('en')));
 +    assert.ok(/courts of that country/i.test(all('en')));
++  });
++
++  test('does not point users at the EU ODR platform, which no longer exists', () => {
++    // Regulation (EU) 2024/3228 repealed the ODR Regulation with effect from
++    // 20 July 2025, and the platform stopped accepting new complaints on
++    // 20 March 2025. An earlier draft of this document cited it. Directing a
++    // user to a dead redress route is worse than saying nothing, because it
++    // looks like a remedy while consuming the time in which a real one could
++    // have been used.
++    for (const locale of LOCALES) {
++      const text = all(locale);
++      assert.ok(!/ec\.europa\.eu\/odr/i.test(text), `${locale} still links the ODR platform`);
++      assert.ok(!/online dispute resolution platform/i.test(text), `${locale} still cites the ODR platform`);
++      assert.ok(!/ηλεκτρονικής επίλυσης διαφορών της Ευρωπαϊκής Επιτροπής/.test(text));
++      assert.ok(!/платформу онлайн-урегулирования споров/.test(text));
++      assert.ok(!/платформу онлайн-врегулювання спорів/.test(text));
++    }
++  });
++
++  test('keeps a neutral out-of-court redress statement instead', () => {
++    // Removing the dead platform must not remove the acknowledgement that
++    // out-of-court routes may exist; a specific Greek ADR body is only added
++    // once a lawyer confirms one applies to this model.
++    assert.ok(/out-of-court dispute resolution procedure/i.test(all('en')));
++    assert.ok(/εξωδικαστικής επίλυσης διαφορών/.test(all('el')));
++    assert.ok(/внесудебного урегулирования спора/.test(all('ru')));
++    assert.ok(/позасудового врегулювання спору/.test(all('uk')));
++  });
++
++  test('does not name a commercial ADR provider', () => {
++    const text = LOCALES.map(all).join('\n');
++    assert.ok(!/arbitration service|ADR provider|mediation company/i.test(text));
 +  });
 +});
 +
