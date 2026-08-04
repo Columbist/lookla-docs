@@ -2454,7 +2454,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-045 — Publish Terms of Service (pre-launch blocker)
 **Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
 **Dependencies:** T-017 ✅
-**Status:** Drafted, then corrected after review found two factually wrong legal statements. ⚠️ **Not legally reviewed** — publication is blocked on Greek legal advice, see "Legal review package" below. Draft PR; nothing deployed.
+**Status:** Drafted, corrected after review, and **technically gated**. The page returns 404 and the footer link is hidden until the operator's Article 5 disclosure is complete and a Greek legal review is on file — so merging cannot cause an incomplete legal notice to go live through a later, unrelated frontend deploy. ⚠️ **Not legally reviewed.** Two items require input this project cannot produce: the operator's geographic address, and the review itself.
 
 **Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
 
@@ -2491,6 +2491,26 @@ Two statements in the first draft were **wrong**, not merely unreviewed. Both ar
 **The 16-year age floor was presented as though it were the legal threshold.** Article 21 of Greek Law 4624/2019 sets **15** for a minor's own consent to data processing. The product rule itself is defensible; stating it as if it were Greek law was not. Option A was taken: 16 remains a **Lookla eligibility rule**, and the document now says explicitly that this is not a statement about what Greek data-protection law sets, and that the consent threshold is a separate question from who may hold an account. Contractual capacity remains a question for the lawyer.
 
 **Moderation is now described as it actually works**, which DSA Article 14 requires and which the first draft under-specified. Verified against the code rather than assumed: `check_text` and `check_image` exist in `app/services/moderation.py` but are **called from no router**, so no automated screening runs at all; a report creates a row and, past a threshold, sets `needs_review`, which puts the listing in a queue a person reviews through the admin UI. The document therefore states that nothing is screened or filtered before publication, that no removal or restriction is decided by an automated system, that the single automated step is flagging for human review and changes nothing visible, and that **no formal internal complaints or appeals procedure exists** — with an undertaking to build one and update the Terms before relying on it, rather than describing one that is not there.
+
+#### Publication gate — why merging is now safe
+
+The reviewer's stated reason for blocking the merge was that a merged document could be published accidentally by any later frontend deploy. That is an engineering problem, and it is solved rather than managed by convention:
+
+```ts
+export const TERMS_PUBLICATION_ENABLED = false;
+export const OPERATOR_DISCLOSURE = { geographicAddress: '', /* … */ };
+export function isTermsPublishable() { … }   // both must hold
+```
+
+While the gate is closed, `TermsPage` calls `notFound()` **before rendering anything**, and the Footer omits the link — so the link and the page cannot disagree. Publishing an incomplete legal notice is worse than publishing none, which is why the page 404s instead of serving a partial document.
+
+Eight tests hold the gate shut, and they were mutation-tested rather than assumed: filling `geographicAddress` with a plausible placeholder (`'Athens, Greece'`) fails, and removing the `notFound()` guard fails. A placeholder is the realistic failure mode — it looks filled in, satisfies a naive truthiness check, and ships a false address to production. One test is dormant by design: if `TERMS_PUBLICATION_ENABLED` is ever flipped, it begins requiring a recorded Greek legal review in this backlog and a non-empty address.
+
+#### Legal review brief
+
+`docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md` is a self-contained document that can be sent to a Greek lawyer as-is. It states what the product verifiably does and does not do, and asks the questions in priority order: the Article 5 geographic address (blocking), DSA Article 14 classification and whether a formal notice-and-action procedure must be built, age and contractual capacity, the enforceability of the liability limitation and the jurisdiction clause against a Greek consumer, the crawled-data wording, and where assent is required.
+
+It records explicitly that the operator does not wish to publish a home address unless legally unavoidable, and that no address, company number or VAT number has been invented to fill the gap.
 
 #### Legal review package — blocking publication
 
