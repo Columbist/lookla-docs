@@ -2277,7 +2277,19 @@ Assess provider abuse reports and IP reputation · review log retention (68 MB/d
 ### T-073 — Open-proxy incident follow-up & IP reputation assessment
 **Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Incident response
 **Dependencies:** T-072 ✅
-**Status:** Technical assessment complete. **One confirmed listing.** Two items need account access this project does not have — see "Requires the operator" below.
+**Status:**
+
+```text
+Technical investigation:          ✅ Completed
+Barracuda listing confirmed:      Yes
+Barracuda removal request:        Attempted — blocked on a required phone number
+Provider notices reviewed:        Pending — needs account access
+Spamhaus official check:          Pending — DNS path unusable from this host
+Proofpoint/SORBS official check:  Pending — DNS path unusable from this host
+IP rotation required:             No, subject to the manual checks
+```
+
+Ready-to-use text for every outstanding action: `docs/07_LEGAL/T-073_OUTSTANDING_ACTIONS.md`.
 
 Follow-up to T-072, taken before T-047/T-048 because it is time-sensitive: an abuse ticket, a provider restriction or a reputation listing can appear *after* the relay stops.
 
@@ -2326,7 +2338,7 @@ Heavy abuse therefore ran for about **seven days**, on top of lighter use going 
 #### Requires the operator — this assessment cannot be completed from the host
 
 1. **Provider portal and abuse mailbox.** Check for warnings, complaints, automatic restrictions or rate limits. Nothing can be seen from the server: no notice was delivered locally, and the account's registered email is not readable here.
-2. **Barracuda delisting.** The listing is confirmed. Barracuda operates a self-service removal request, and the condition it checks — that the host is no longer an open relay — is now satisfied. **This was not submitted**: it is an outward-facing action, and the operator should choose when to make it.
+2. **Barracuda delisting — attempted, and blocked on one field.** The removal form was completed with the approved wording and rejected server-side: *"Please enter a phone number we can contact you at."* The field is not marked `required` in the HTML but is enforced on submission. **No number was invented, and nothing was recorded on Barracuda's side** — the listing still reads `127.0.0.2`. Barracuda states that requests with invalid information are ignored and that multiple requests are also ignored, so a fabricated number would have guaranteed rejection while consuming the single attempt that actually gets read. Needs a real, reachable number.
 3. **Spamhaus and SORBS** must be checked by hand through their web lookups, since neither answers via this host's resolver. They matter more than the lists that did answer.
 
 **Deliberately not done:** no approach was made to the provider. There is no open ticket to respond to, and volunteering an incident report without one invites a restriction rather than avoiding it. If a ticket exists, the timeline above is the factual basis for a reply.
@@ -2356,6 +2368,54 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost 
 - [ ] Spamhaus and SORBS checked manually — **operator**
 - [ ] Re-check after several days
 - [ ] Origin IP rotation decision
+
+---
+
+### T-074 — Restrict unnecessary outbound SMTP
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Post-incident hardening
+**Dependencies:** T-072 ✅, T-073 (assessment) ✅
+**Status:** Open — consumer audit already done, nothing applied.
+
+Outbound TCP/25 is unrestricted: a connection to a public MX completes and returns a `220` banner. That was useful evidence in T-073 (the provider has not applied the egress block that usually follows an abuse finding), but it is also a capability this host does not appear to need — and it is the classic second act after an open relay, since a compromised process could send mail directly with the host's address attached.
+
+#### Consumer audit — complete, and it found nothing
+
+Run before proposing any rule, because closing a port with an unknown consumer is the mistake T-049 avoided with the VPN:
+
+| Check | Result |
+|---|---|
+| Local MTA installed (postfix, exim4, sendmail, msmtp, ssmtp, nullmailer, opensmtpd) | **none** |
+| Listeners on 25 / 465 / 587 | **none** |
+| Established outbound connections to mail ports | **0** |
+| SMTP client code (`smtplib`, `nodemailer`, `sendmail`, direct port use) in backend, crawler or frontend | **none** |
+| Mail-related cron entries | **none** |
+| How Lookla actually sends email | Resend **HTTPS API** (`api.resend.com`), not SMTP |
+
+No legitimate consumer of outbound SMTP was found. Separately, **no PTR record is published** for the address, so direct mail from this host would be penalised or rejected by many receivers anyway — an additional argument that this origin should not be an SMTP sender.
+
+#### Proposed rule
+
+```text
+outbound TCP/25 → deny
+Resend HTTPS API → unchanged
+DNS               → unchanged
+established       → unchanged
+inbound rules     → untouched (T-049 and T-072 keep their chains)
+```
+
+Ports 465 and 587 are deliberately **not** included: they are submission ports for authenticated relay through a provider, which is what a legitimate future sender would use. Blocking 25 removes direct-to-MX delivery, which is the abuse path, without foreclosing a proper setup later.
+
+#### Boundaries
+
+Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mutation and persistence through the existing mechanism. No container restart. T-049's and T-072's chains untouched. If a consumer is discovered later, it goes through an authenticated submission port rather than reopening 25.
+
+**Acceptance Criteria:**
+- [x] Consumer audit completed before any rule was designed
+- [ ] Rule scoped to outbound TCP/25 only, verified against the live rules
+- [ ] 465/587 and all inbound rules provably untouched
+- [ ] Resend delivery verified still working after the change
+- [ ] Idempotent, atomic, persistent, with rollback
+- [ ] Independent review before application
 
 ---
 
