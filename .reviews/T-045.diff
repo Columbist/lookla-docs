@@ -1,0 +1,1083 @@
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 6906279..6bcfa53 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2452,17 +2452,67 @@ Sitemap: https://lookla.gr/sitemap.xml
+ ---
+ 
+ ### T-045 — Publish Terms of Service (pre-launch blocker)
+-**Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** TBD | **Epic:** EPIC-05
+-**Dependencies:** T-017
++**Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
++**Dependencies:** T-017 ✅
++**Status:** Drafted and shipped as a page. ⚠️ **Not legally reviewed** — see "Legal review required" below. Draft PR; nothing deployed.
+ 
+-**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
++**Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
+ 
+-**Acceptance Criteria:**
+-- [ ] Terms of Service drafted and reviewed (legal input required — do not have an AI agent invent binding contractual terms)
+-- [ ] `/terms` page published, linked from registration and the Privacy Policy
+-- [ ] Confirm with Greek counsel whether e-commerce/consumer-protection rules require additional disclosures (e.g. an operator postal address) beyond what GDPR Article 13 requires — this question was explicitly raised and deferred during T-017's review and is not resolved by this ticket alone
++#### Facts established before drafting
+ 
+----
++| Question | Verified answer |
++|---|---|
++| Who operates Lookla | **Zhuykov Andrey, a natural person in Greece.** No company, so no registration number, VAT number or registered office exists to cite. |
++| Is there online booking | **No.** `/availability-requests` exists in the API, but no page links to it — a reservation cannot be made. |
++| Can a paid plan be bought | **No.** `/pricing` redirects to `/`, and `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and `PAYMENT_PROVIDER` are all empty. `/api/payments/plans` does serve plan data (Pro €29/mo salon, €14/mo professional, "Online booking" listed as a feature), so the plans are visible to anyone reading the API while being unbuyable — which the document has to address rather than ignore. |
++| Is messaging live | **Yes** — `/account/messages` → `/api/chat/conversations`. |
++| Where listings come from | A crawler over **Google, Vrisko, Treatwell and Foursquare**, plus owner submissions. |
++| Can owners correct listings | **Yes** — claim by verification code sent to the business's already-held contact address, then edit. |
++| Is there a reporting mechanism | **Yes** — `ReportButton` → `/api/reports`. |
++| Is registration open | **Yes**, `/en/register` returns 200. |
++| Is there an acceptance checkbox | **No** — and the document says so rather than adding one. |
++
++#### What the document says, and why
++
++17 sections in four locales, covering the required scope: operator identity and contact, applicable law and jurisdiction, Lookla's status as a directory rather than a party to the transaction, the absence of online booking, responsibility for listing data, user and owner accounts, prohibited use, intellectual property, limitation of liability, suspension and termination, links to Privacy and Cookies, version/effective-date contract, and contact.
++
++Three drafting decisions worth stating:
++
++- **No acceptance checkbox, and the document explains why.** A tick-box would imply we had determined where acceptance is legally required and what it covers. That has not been determined, so the Terms say plainly that use constitutes acceptance rather than collecting a consent record that looks more considered than it is. A test asserts the registration page has no such checkbox, so adding one later fails until the text is updated to match.
++- **Paid plans are addressed, not omitted.** The plans are discoverable through the API, so saying nothing would be a gap. The document states they cannot currently be bought, that no payment provider is configured, and that nothing on Lookla can currently create a payment obligation.
++- **Retention is deferred to the Privacy Policy, not restated.** Two documents stating retention independently is how they drift apart; a test asserts the Terms do not restate a retention period.
++
++#### Legal review required — this is not optional
++
++This document has **not** been reviewed by a Greek lawyer, and must be before launch. Two areas in particular state positions that mandatory law may narrow:
++
++- **Section 12 (liability).** Drafted to preserve the carve-outs Greek and EU consumer law require — no exclusion for death or personal injury from our negligence, for fraud, or for wilful misconduct and gross negligence, and an explicit statement that mandatory consumer rights are unaffected. Whether the remaining limitation is enforceable against a Greek consumer is a legal question, not a drafting one.
++- **Section 14 (governing law and jurisdiction).** Greek law is stated, with the consumer's home-forum protection preserved and the EU ODR platform referenced. The interaction with Rome I / Brussels I recast for consumers needs confirming.
++
++Also for the lawyer: whether operating as a natural person changes any disclosure obligation; whether the crawled-data provenance in Section 3 needs different wording under Greek unfair-competition or database rights; and whether the 16-year age floor is right for Greece.
++
++#### Verification
++
++**1236 frontend tests** (1202 + 34 new), lint clean, production build clean with `/[locale]/terms` present at 4.22 kB.
++
++The tests deliberately guard the *honesty* of the document, not only its structure: booking and payment claims, listing-source disclosure, operator identity, absence of an invented company, the no-checkbox statement matching the actual registration page, the consumer-law carve-outs surviving in every locale, and version/effective-date agreement across locales — four locales disagreeing about which version is in force would make the document unenforceable in whichever one is wrong.
++
++One test was wrong before the document was: it asserted the phrase "cannot currently create a payment obligation" while the text reads "Nothing on Lookla can currently create a payment obligation". It failed on phrasing that was never there rather than on a missing guarantee, and now asserts the sentence the document actually contains, in all four locales.
++
++The T-060 Footer tripwire fired correctly — it pins the number of footer controls carrying the focus-ring token and the 44px touch target, and the Terms link makes four. Raised to 4 with a note that it must be raised deliberately when a control is added and never relaxed to a lower bound, since the pinned count is what catches a new control shipping without the token.
++
++**Acceptance Criteria:**
++- [x] Terms page at `/[locale]/terms`, SSR, all four locales
++- [x] Operator identity, contact, applicable law and jurisdiction stated
++- [x] Directory status and non-party role stated
++- [x] Absence of online booking stated
++- [x] Listing-data responsibility, owner correction and removal path stated
++- [x] Accounts, prohibited use, IP, liability, termination covered
++- [x] Linked from the Footer in all four locales
++- [x] Version and effective date shown and pinned by test
++- [x] No fictitious acceptance checkbox
++- [ ] **Greek legal review** — required before launch
++- [ ] Independent review of this PR
+ 
+ ### T-046 — Document legitimate-interest balancing assessments
+ **Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
+diff --git a/frontend/app/[locale]/terms/content.ts b/frontend/app/[locale]/terms/content.ts
+new file mode 100644
+index 0000000..ee84210
+--- /dev/null
++++ b/frontend/app/[locale]/terms/content.ts
+@@ -0,0 +1,604 @@
++/**
++ * T-045 — Terms of Service.
++ *
++ * Written the same way T-017's Privacy Policy was: every factual statement
++ * here was checked against the running application, not against a template.
++ * Specifically verified before writing:
++ *
++ *   - Lookla is operated by a natural person, not a company — there is no
++ *     VAT number, company registration or registered office to cite.
++ *   - No booking can be made: the availability-request endpoints exist in the
++ *     API but no page links to them, so the site cannot take a reservation.
++ *   - No paid plan can be bought: /pricing redirects to the homepage and the
++ *     payment provider is entirely unconfigured, so no charge is possible.
++ *   - Messaging between users and salons IS reachable (/account/messages).
++ *   - Salon records are compiled from public sources (Google, Vrisko,
++ *     Treatwell, Foursquare) by a crawler, which is why the accuracy and
++ *     objection sections exist and say what they say.
++ *
++ * IMPORTANT — this document has NOT been reviewed by a Greek lawyer. It is
++ * drafted to be factually accurate about the product so that a lawyer reviews
++ * something true rather than something invented. Sections 12 and 14 in
++ * particular (liability, governing law) state positions that mandatory Greek
++ * and EU consumer law may narrow, and must not be relied on until reviewed.
++ */
++
++export interface TermsSection {
++  heading: string;
++  paragraphs: string[];
++}
++
++export interface TermsContent {
++  title: string;
++  version: string;
++  effectiveDate: string;
++  lastUpdated: string;
++  intro: string[];
++  sections: TermsSection[];
++}
++
++export const TERMS_CONTENT: Record<'el' | 'en' | 'ru' | 'uk', TermsContent> = {
++  en: {
++    title: 'Terms of Service',
++    version: 'v1.0',
++    effectiveDate: '2026-08-04',
++    lastUpdated: '2026-08-04',
++    intro: [
++      'These Terms govern your use of Lookla (lookla.gr), a directory of beauty salons and independent beauty professionals in Greece.',
++      'Lookla is operated by Zhuykov Andrey, an individual based in Greece. Lookla is not currently operated by a company or other legal entity, so there is no company registration number, VAT number or registered office to state here. If operation is transferred to a registered business, these Terms will be updated to identify the new operator before that change takes effect.',
++      'You can reach us at hello@lookla.gr.',
++      'Please read these Terms together with our Privacy Policy and Cookie Policy, which form part of your use of the site.',
++    ],
++    sections: [
++      {
++        heading: '1. What Lookla is, and what it is not',
++        paragraphs: [
++          'Lookla is a directory. It helps you find beauty salons and independent professionals in Greece, see information about them, and contact them directly.',
++          'Lookla is not a party to any agreement between you and a salon or professional. We do not provide beauty services, we do not employ or supervise the people listed, we do not set their prices, and we do not take payment for their services. Any appointment, service, price, cancellation policy or dispute is between you and them.',
++          'Lookla does not currently offer online booking. The site has no page from which a reservation can be made; if you want an appointment, you contact the salon yourself using the details shown. If online booking is added later, these Terms will be updated before it goes live.',
++        ],
++      },
++      {
++        heading: '2. Accepting these Terms',
++        paragraphs: [
++          'By using Lookla you accept these Terms. If you do not accept them, please do not use the site.',
++          'We deliberately do not ask you to tick a box saying you accept these Terms when you register. A tick-box would suggest we had determined exactly where acceptance is legally required and what it covers, and we have not yet had that determined. Until we have, we would rather state plainly that use of the site constitutes acceptance than collect a consent record that looks more considered than it is.',
++        ],
++      },
++      {
++        heading: '3. Information about salons and professionals',
++        paragraphs: [
++          'Most listings on Lookla were compiled from publicly available sources, including Google, Vrisko, Treatwell and Foursquare, and from information submitted by salon owners themselves.',
++          'This means listing information may be out of date, incomplete or wrong. Opening hours change, phone numbers are reassigned, prices move, and businesses close. We do not verify every listing, and we cannot guarantee that any particular detail is correct at the moment you read it. Please confirm anything that matters — especially price, availability and address — directly with the salon before relying on it.',
++          'If you are the owner of a listed business and something is wrong, you can claim your listing and correct it (Section 5), or contact us at hello@lookla.gr to have it corrected or removed. You do not need an account to ask us to remove a listing.',
++        ],
++      },
++      {
++        heading: '4. User accounts',
++        paragraphs: [
++          'You may use most of Lookla without an account. If you create one, you must provide an email address you control, keep your password confidential, and tell us promptly at hello@lookla.gr if you believe someone else has accessed your account.',
++          'You must be at least 16 years old to create an account. Lookla is not intended for children.',
++          'You are responsible for what happens through your account. Do not share it, and do not create an account using someone else\'s identity or contact details.',
++        ],
++      },
++      {
++        heading: '5. Salon owner accounts and claiming a listing',
++        paragraphs: [
++          'If you own or manage a listed business, you can claim its listing. We send a verification code to the contact address already held for that business, and claiming succeeds only if you can receive it. This is a deliberate check: it means a listing can normally only be claimed by someone who already controls that business\'s published contact channel.',
++          'Once a claim is verified you can edit that listing\'s details, including its description, services and photos. You are responsible for the accuracy of everything you publish, and for having the right to publish it.',
++          'You must not claim a business you do not own or manage. If you do, we may remove the claim and suspend the account.',
++        ],
++      },
++      {
++        heading: '6. Messages',
++        paragraphs: [
++          'Lookla includes a messaging feature that lets a signed-in user and a salon exchange messages through the site.',
++          'Messages are stored on our servers so both sides can read them, and they are visible to us if we need to investigate a report of abuse. Do not send payment card details, passwords, identity documents or other sensitive information through Lookla messages.',
++          'How long messages are kept, and how they are deleted, is described in our Privacy Policy.',
++        ],
++      },
++      {
++        heading: '7. Reviews and other content you submit',
++        paragraphs: [
++          'If you post a review, photo, description or other content, you keep ownership of it. You give us a non-exclusive, royalty-free licence to host, display and distribute it on Lookla and in material promoting Lookla, for as long as you leave it published.',
++          'Only post content you have the right to post. Reviews must describe a genuine experience. Do not post reviews of your own business, of a competitor, or in exchange for payment.',
++          'We may remove content that breaks these Terms, that is reported and found to break them, or that we are legally required to remove. We are not obliged to monitor content in advance, and removing one thing does not mean we have reviewed everything else.',
++        ],
++      },
++      {
++        heading: '8. Acceptable use',
++        paragraphs: [
++          'Please do not: post unlawful, defamatory, hateful, threatening, deceptive or sexually explicit content; impersonate anyone; harass other users or listed businesses; publish anyone\'s personal data without their consent; or use Lookla to send unsolicited commercial messages.',
++          'Please do not attempt to break, overload, probe or circumvent the security of the site; scrape or bulk-copy listings; use automated systems to access the site beyond ordinary browsing; or resell or redistribute our content as a competing directory.',
++          'Please do not upload malicious code, or use Lookla in a way that breaks Greek or EU law.',
++        ],
++      },
++      {
++        heading: '9. Reporting content',
++        paragraphs: [
++          'Listings and reviews carry a report control. If you believe something is inaccurate, unlawful or abusive, report it, or write to hello@lookla.gr.',
++          'We review reports and decide case by case. Depending on what we find we may correct the content, remove it, contact the person who posted it, or take no action. We will not always be able to tell you the outcome.',
++        ],
++      },
++      {
++        heading: '10. Paid plans',
++        paragraphs: [
++          'Lookla is free to use, both for visitors and for listed businesses.',
++          'Paid subscription plans are described in our product materials, but they are not currently available to buy: there is no reachable page from which to subscribe, and no payment provider is configured, so no charge can be taken. Nothing on Lookla can currently create a payment obligation for you.',
++          'If paid plans become available, these Terms will be updated first to describe the price, billing period, renewal, cancellation and refund arrangements, and your statutory withdrawal rights.',
++        ],
++      },
++      {
++        heading: '11. Intellectual property',
++        paragraphs: [
++          'The Lookla name, the site design, its text and its software belong to the operator or are used under licence. You may not copy, adapt or reuse them beyond what normal use of the site requires, or what the law permits.',
++          'Content submitted by users and salon owners remains theirs, as described in Section 7. Business names, logos and trade marks belong to their respective owners and appear on Lookla to identify those businesses.',
++        ],
++      },
++      {
++        heading: '12. Disclaimers and limitation of liability',
++        paragraphs: [
++          'Lookla is provided as it is. We do not promise that the site will be uninterrupted or error-free, that listing information is accurate, or that any salon will be suitable for you.',
++          'We are not responsible for the services provided by salons or professionals found through Lookla, for their conduct, or for any agreement you make with them. Complaints about a service belong to the business that provided it.',
++          'Nothing in these Terms excludes or limits our liability where the law does not allow it — including liability for death or personal injury caused by our negligence, for fraud, or for wilful misconduct or gross negligence. Your mandatory rights as a consumer under Greek and EU law are not affected by these Terms.',
++        ],
++      },
++      {
++        heading: '13. Suspension and termination',
++        paragraphs: [
++          'You may stop using Lookla at any time, and you may ask us to delete your account as described in our Privacy Policy.',
++          'We may suspend or terminate access to an account that breaks these Terms, that is being used unlawfully, or that puts the site or other users at risk. Where it is reasonable and lawful to do so we will say why, and you can respond by writing to hello@lookla.gr.',
++        ],
++      },
++      {
++        heading: '14. Governing law and jurisdiction',
++        paragraphs: [
++          'These Terms are governed by Greek law.',
++          'If you are a consumer, this does not deprive you of the protection of the mandatory rules of the country in which you live, and you may bring proceedings in the courts of that country. Disputes may also be submitted to the European Commission\'s online dispute resolution platform.',
++        ],
++      },
++      {
++        heading: '15. Privacy and cookies',
++        paragraphs: [
++          'Our Privacy Policy explains what personal data we collect, why, and how long we keep it. Our Cookie Policy explains what is stored in your browser and what you can refuse. Both are linked from every page.',
++        ],
++      },
++      {
++        heading: '16. Changes to these Terms',
++        paragraphs: [
++          'These Terms carry a version number and an effective date, both shown at the top of this page. We update them when the product changes — not on a fixed schedule — and the effective date tells you when the current version began to apply.',
++          'If a change materially affects your rights, we will make it visible on the site before it takes effect. Continuing to use Lookla after that means you accept the updated Terms.',
++        ],
++      },
++      {
++        heading: '17. Contact',
++        paragraphs: [
++          'Questions about these Terms, corrections to a listing, reports and complaints: hello@lookla.gr.',
++        ],
++      },
++    ],
++  },
++
++  el: {
++    title: 'Όροι Χρήσης',
++    version: 'v1.0',
++    effectiveDate: '2026-08-04',
++    lastUpdated: '2026-08-04',
++    intro: [
++      'Οι παρόντες Όροι διέπουν τη χρήση του Lookla (lookla.gr), ενός καταλόγου κομμωτηρίων, σαλονιών ομορφιάς και ανεξάρτητων επαγγελματιών ομορφιάς στην Ελλάδα.',
++      'Το Lookla λειτουργεί από τον Zhuykov Andrey, φυσικό πρόσωπο που εδρεύει στην Ελλάδα. Το Lookla δεν λειτουργείται επί του παρόντος από εταιρεία ή άλλο νομικό πρόσωπο, επομένως δεν υπάρχει αριθμός μητρώου εταιρείας, ΑΦΜ ή καταστατική έδρα προς αναφορά εδώ. Εάν η λειτουργία μεταβιβαστεί σε καταχωρημένη επιχείρηση, οι Όροι θα ενημερωθούν ώστε να προσδιορίζουν τον νέο φορέα πριν τεθεί σε ισχύ η αλλαγή.',
++      'Μπορείτε να επικοινωνήσετε μαζί μας στο hello@lookla.gr.',
++      'Διαβάστε τους Όρους μαζί με την Πολιτική Απορρήτου και την Πολιτική Cookies, οι οποίες αποτελούν μέρος της χρήσης του ιστότοπου.',
++    ],
++    sections: [
++      {
++        heading: '1. Τι είναι το Lookla και τι δεν είναι',
++        paragraphs: [
++          'Το Lookla είναι κατάλογος. Σας βοηθά να βρείτε σαλόνια ομορφιάς και ανεξάρτητους επαγγελματίες στην Ελλάδα, να δείτε πληροφορίες γι\' αυτούς και να επικοινωνήσετε απευθείας μαζί τους.',
++          'Το Lookla δεν είναι συμβαλλόμενο μέρος σε καμία συμφωνία μεταξύ εσάς και ενός σαλονιού ή επαγγελματία. Δεν παρέχουμε υπηρεσίες ομορφιάς, δεν απασχολούμε ούτε εποπτεύουμε τα πρόσωπα που καταχωρούνται, δεν καθορίζουμε τις τιμές τους και δεν εισπράττουμε πληρωμές για τις υπηρεσίες τους. Κάθε ραντεβού, υπηρεσία, τιμή, πολιτική ακύρωσης ή διαφορά αφορά εσάς και εκείνους.',
++          'Το Lookla δεν προσφέρει επί του παρόντος online κρατήσεις. Ο ιστότοπος δεν διαθέτει σελίδα από την οποία να γίνεται κράτηση· αν θέλετε ραντεβού, επικοινωνείτε μόνοι σας με το σαλόνι με τα στοιχεία που εμφανίζονται. Εάν προστεθούν online κρατήσεις, οι Όροι θα ενημερωθούν πριν τεθούν σε λειτουργία.',
++        ],
++      },
++      {
++        heading: '2. Αποδοχή των Όρων',
++        paragraphs: [
++          'Χρησιμοποιώντας το Lookla αποδέχεστε τους παρόντες Όρους. Εάν δεν τους αποδέχεστε, παρακαλούμε μη χρησιμοποιείτε τον ιστότοπο.',
++          'Σκόπιμα δεν σας ζητάμε να τσεκάρετε κουτάκι αποδοχής κατά την εγγραφή. Ένα τέτοιο κουτάκι θα υπονοούσε ότι έχουμε προσδιορίσει με ακρίβεια πού απαιτείται νομικά η αποδοχή και τι καλύπτει, κάτι που δεν έχει ακόμη κριθεί. Μέχρι τότε, προτιμούμε να δηλώνουμε απλά ότι η χρήση συνιστά αποδοχή, παρά να συλλέγουμε αρχείο συγκατάθεσης που δείχνει πιο μελετημένο απ\' ό,τι είναι.',
++        ],
++      },
++      {
++        heading: '3. Πληροφορίες για σαλόνια και επαγγελματίες',
++        paragraphs: [
++          'Οι περισσότερες καταχωρήσεις συγκεντρώθηκαν από δημόσια διαθέσιμες πηγές, όπως Google, Vrisko, Treatwell και Foursquare, καθώς και από στοιχεία που υπέβαλαν οι ίδιοι οι ιδιοκτήτες.',
++          'Αυτό σημαίνει ότι οι πληροφορίες μπορεί να είναι παρωχημένες, ελλιπείς ή λανθασμένες. Τα ωράρια αλλάζουν, τα τηλέφωνα αλλάζουν κατόχους, οι τιμές μεταβάλλονται και επιχειρήσεις κλείνουν. Δεν επαληθεύουμε κάθε καταχώρηση και δεν μπορούμε να εγγυηθούμε ότι κάποιο συγκεκριμένο στοιχείο είναι σωστό τη στιγμή που το διαβάζετε. Επιβεβαιώστε ό,τι έχει σημασία — ιδίως τιμή, διαθεσιμότητα και διεύθυνση — απευθείας με το σαλόνι.',
++          'Εάν είστε ιδιοκτήτης καταχωρημένης επιχείρησης και κάτι είναι λάθος, μπορείτε να διεκδικήσετε την καταχώρησή σας και να τη διορθώσετε (Ενότητα 5) ή να επικοινωνήσετε στο hello@lookla.gr για διόρθωση ή αφαίρεση. Δεν χρειάζεται λογαριασμός για να ζητήσετε αφαίρεση.',
++        ],
++      },
++      {
++        heading: '4. Λογαριασμοί χρηστών',
++        paragraphs: [
++          'Μπορείτε να χρησιμοποιείτε το μεγαλύτερο μέρος του Lookla χωρίς λογαριασμό. Εάν δημιουργήσετε, πρέπει να δηλώσετε email που ελέγχετε, να διατηρείτε τον κωδικό σας εμπιστευτικό και να μας ειδοποιήσετε άμεσα στο hello@lookla.gr αν πιστεύετε ότι κάποιος άλλος απέκτησε πρόσβαση.',
++          'Πρέπει να είστε τουλάχιστον 16 ετών για να δημιουργήσετε λογαριασμό. Το Lookla δεν απευθύνεται σε παιδιά.',
++          'Είστε υπεύθυνοι για ό,τι συμβαίνει μέσω του λογαριασμού σας. Μην τον μοιράζεστε και μη δημιουργείτε λογαριασμό με ταυτότητα ή στοιχεία επικοινωνίας άλλου προσώπου.',
++        ],
++      },
++      {
++        heading: '5. Λογαριασμοί ιδιοκτητών και διεκδίκηση καταχώρησης',
++        paragraphs: [
++          'Εάν κατέχετε ή διαχειρίζεστε καταχωρημένη επιχείρηση, μπορείτε να διεκδικήσετε την καταχώρησή της. Στέλνουμε κωδικό επαλήθευσης στη διεύθυνση επικοινωνίας που ήδη τηρείται για την επιχείρηση, και η διεκδίκηση ολοκληρώνεται μόνο αν μπορείτε να τον λάβετε. Πρόκειται για σκόπιμο έλεγχο: κανονικά μια καταχώρηση μπορεί να διεκδικηθεί μόνο από κάποιον που ήδη ελέγχει το δημοσιευμένο κανάλι επικοινωνίας της επιχείρησης.',
++          'Μετά την επαλήθευση μπορείτε να επεξεργαστείτε τα στοιχεία της καταχώρησης, όπως περιγραφή, υπηρεσίες και φωτογραφίες. Είστε υπεύθυνοι για την ακρίβεια όσων δημοσιεύετε και για το δικαίωμα δημοσίευσής τους.',
++          'Δεν επιτρέπεται να διεκδικήσετε επιχείρηση που δεν κατέχετε ούτε διαχειρίζεστε. Σε τέτοια περίπτωση ενδέχεται να αφαιρέσουμε τη διεκδίκηση και να αναστείλουμε τον λογαριασμό.',
++        ],
++      },
++      {
++        heading: '6. Μηνύματα',
++        paragraphs: [
++          'Το Lookla διαθέτει λειτουργία μηνυμάτων που επιτρέπει σε συνδεδεμένο χρήστη και σε σαλόνι να ανταλλάσσουν μηνύματα μέσω του ιστότοπου.',
++          'Τα μηνύματα αποθηκεύονται στους διακομιστές μας ώστε να τα διαβάζουν και οι δύο πλευρές, και είναι ορατά σε εμάς εφόσον χρειαστεί να διερευνήσουμε αναφορά κατάχρησης. Μην στέλνετε στοιχεία καρτών, κωδικούς, έγγραφα ταυτοποίησης ή άλλες ευαίσθητες πληροφορίες μέσω μηνυμάτων.',
++          'Ο χρόνος διατήρησης και ο τρόπος διαγραφής των μηνυμάτων περιγράφονται στην Πολιτική Απορρήτου.',
++        ],
++      },
++      {
++        heading: '7. Κριτικές και άλλο περιεχόμενο που υποβάλλετε',
++        paragraphs: [
++          'Εάν δημοσιεύσετε κριτική, φωτογραφία, περιγραφή ή άλλο περιεχόμενο, παραμένετε κύριος αυτού. Μας παραχωρείτε μη αποκλειστική άδεια, χωρίς αμοιβή, να το φιλοξενούμε, να το προβάλλουμε και να το διανέμουμε στο Lookla και σε υλικό προβολής του Lookla, όσο το διατηρείτε δημοσιευμένο.',
++          'Δημοσιεύετε μόνο περιεχόμενο που δικαιούστε να δημοσιεύσετε. Οι κριτικές πρέπει να περιγράφουν πραγματική εμπειρία. Μη δημοσιεύετε κριτικές για τη δική σας επιχείρηση, για ανταγωνιστή ή έναντι αμοιβής.',
++          'Ενδέχεται να αφαιρέσουμε περιεχόμενο που παραβιάζει τους Όρους, που αναφέρθηκε και κρίθηκε παραβατικό, ή που υποχρεούμαστε νομικά να αφαιρέσουμε. Δεν έχουμε υποχρέωση προληπτικού ελέγχου, και η αφαίρεση ενός στοιχείου δεν σημαίνει ότι έχουμε ελέγξει όλα τα υπόλοιπα.',
++        ],
++      },
++      {
++        heading: '8. Αποδεκτή χρήση',
++        paragraphs: [
++          'Παρακαλούμε μη δημοσιεύετε παράνομο, δυσφημιστικό, μισαλλόδοξο, απειλητικό, παραπλανητικό ή σεξουαλικού περιεχομένου υλικό· μην υποδύεστε άλλο πρόσωπο· μην παρενοχλείτε χρήστες ή επιχειρήσεις· μη δημοσιεύετε προσωπικά δεδομένα τρίτων χωρίς τη συγκατάθεσή τους· και μη χρησιμοποιείτε το Lookla για μη ζητηθείσα εμπορική επικοινωνία.',
++          'Μην επιχειρείτε να παραβιάσετε, υπερφορτώσετε, ανιχνεύσετε ή να παρακάμψετε την ασφάλεια του ιστότοπου· μην αντιγράφετε μαζικά καταχωρήσεις· μη χρησιμοποιείτε αυτοματοποιημένα συστήματα πέραν της συνήθους περιήγησης· και μη μεταπωλείτε ή αναδιανέμετε το περιεχόμενό μας ως ανταγωνιστικό κατάλογο.',
++          'Μην ανεβάζετε κακόβουλο κώδικα και μη χρησιμοποιείτε το Lookla κατά παράβαση της ελληνικής ή ενωσιακής νομοθεσίας.',
++        ],
++      },
++      {
++        heading: '9. Αναφορά περιεχομένου',
++        paragraphs: [
++          'Οι καταχωρήσεις και οι κριτικές διαθέτουν δυνατότητα αναφοράς. Εάν θεωρείτε ότι κάτι είναι ανακριβές, παράνομο ή καταχρηστικό, αναφέρετέ το ή γράψτε στο hello@lookla.gr.',
++          'Εξετάζουμε τις αναφορές κατά περίπτωση. Ανάλογα με τα ευρήματα ενδέχεται να διορθώσουμε ή να αφαιρέσουμε το περιεχόμενο, να επικοινωνήσουμε με τον συντάκτη ή να μην προβούμε σε ενέργεια. Δεν θα μπορούμε πάντα να σας γνωστοποιήσουμε την έκβαση.',
++        ],
++      },
++      {
++        heading: '10. Συνδρομητικά πακέτα',
++        paragraphs: [
++          'Η χρήση του Lookla είναι δωρεάν, τόσο για τους επισκέπτες όσο και για τις καταχωρημένες επιχειρήσεις.',
++          'Συνδρομητικά πακέτα περιγράφονται στο υλικό μας, αλλά δεν είναι επί του παρόντος διαθέσιμα προς αγορά: δεν υπάρχει προσβάσιμη σελίδα εγγραφής σε συνδρομή και δεν έχει ρυθμιστεί πάροχος πληρωμών, επομένως καμία χρέωση δεν μπορεί να πραγματοποιηθεί. Τίποτα στο Lookla δεν μπορεί σήμερα να δημιουργήσει υποχρέωση πληρωμής για εσάς.',
++          'Εάν καταστούν διαθέσιμα, οι Όροι θα ενημερωθούν πρώτα ώστε να περιγράφουν τιμή, περίοδο χρέωσης, ανανέωση, ακύρωση, επιστροφές και τα νόμιμα δικαιώματα υπαναχώρησής σας.',
++        ],
++      },
++      {
++        heading: '11. Πνευματική ιδιοκτησία',
++        paragraphs: [
++          'Η ονομασία Lookla, ο σχεδιασμός, τα κείμενα και το λογισμικό του ιστότοπου ανήκουν στον φορέα λειτουργίας ή χρησιμοποιούνται κατόπιν άδειας. Δεν επιτρέπεται η αντιγραφή, προσαρμογή ή επαναχρησιμοποίησή τους πέραν όσων απαιτεί η συνήθης χρήση ή επιτρέπει ο νόμος.',
++          'Το περιεχόμενο που υποβάλλουν χρήστες και ιδιοκτήτες παραμένει δικό τους, όπως περιγράφεται στην Ενότητα 7. Επωνυμίες, λογότυπα και σήματα ανήκουν στους δικαιούχους τους και εμφανίζονται για την ταυτοποίηση των επιχειρήσεων.',
++        ],
++      },
++      {
++        heading: '12. Αποποιήσεις και περιορισμός ευθύνης',
++        paragraphs: [
++          'Το Lookla παρέχεται ως έχει. Δεν εγγυόμαστε αδιάλειπτη ή χωρίς σφάλματα λειτουργία, ούτε την ακρίβεια των καταχωρήσεων, ούτε ότι κάποιο σαλόνι θα είναι κατάλληλο για εσάς.',
++          'Δεν ευθυνόμαστε για τις υπηρεσίες που παρέχουν τα σαλόνια ή οι επαγγελματίες, για τη συμπεριφορά τους ή για οποιαδήποτε συμφωνία συνάπτετε μαζί τους. Τα παράπονα για υπηρεσία αφορούν την επιχείρηση που την παρείχε.',
++          'Καμία διάταξη των Όρων δεν αποκλείει ή περιορίζει την ευθύνη μας όπου ο νόμος δεν το επιτρέπει — περιλαμβανομένης της ευθύνης για θάνατο ή σωματική βλάβη από αμέλειά μας, για απάτη, ή για δόλο και βαριά αμέλεια. Τα αναγκαστικού δικαίου δικαιώματά σας ως καταναλωτή κατά την ελληνική και ενωσιακή νομοθεσία δεν θίγονται.',
++        ],
++      },
++      {
++        heading: '13. Αναστολή και διακοπή',
++        paragraphs: [
++          'Μπορείτε να σταματήσετε τη χρήση του Lookla οποτεδήποτε και να ζητήσετε διαγραφή του λογαριασμού σας, όπως περιγράφεται στην Πολιτική Απορρήτου.',
++          'Ενδέχεται να αναστείλουμε ή να διακόψουμε την πρόσβαση λογαριασμού που παραβιάζει τους Όρους, χρησιμοποιείται παράνομα ή θέτει σε κίνδυνο τον ιστότοπο ή άλλους χρήστες. Όπου είναι εύλογο και νόμιμο θα εξηγήσουμε τον λόγο, και μπορείτε να απαντήσετε στο hello@lookla.gr.',
++        ],
++      },
++      {
++        heading: '14. Εφαρμοστέο δίκαιο και δικαιοδοσία',
++        paragraphs: [
++          'Οι παρόντες Όροι διέπονται από το ελληνικό δίκαιο.',
++          'Εάν είστε καταναλωτής, αυτό δεν σας στερεί την προστασία των αναγκαστικού δικαίου κανόνων της χώρας διαμονής σας και μπορείτε να προσφύγετε στα δικαστήριά της. Διαφορές μπορούν επίσης να υποβληθούν στην πλατφόρμα ηλεκτρονικής επίλυσης διαφορών της Ευρωπαϊκής Επιτροπής.',
++        ],
++      },
++      {
++        heading: '15. Απόρρητο και cookies',
++        paragraphs: [
++          'Η Πολιτική Απορρήτου εξηγεί ποια προσωπικά δεδομένα συλλέγουμε, γιατί και για πόσο. Η Πολιτική Cookies εξηγεί τι αποθηκεύεται στο πρόγραμμα περιήγησής σας και τι μπορείτε να αρνηθείτε. Και οι δύο συνδέονται από κάθε σελίδα.',
++        ],
++      },
++      {
++        heading: '16. Αλλαγές στους Όρους',
++        paragraphs: [
++          'Οι Όροι φέρουν αριθμό έκδοσης και ημερομηνία έναρξης ισχύος, που εμφανίζονται στην κορυφή της σελίδας. Τους ενημερώνουμε όταν αλλάζει το προϊόν — όχι σε σταθερό χρονοδιάγραμμα — και η ημερομηνία ισχύος δηλώνει πότε άρχισε να εφαρμόζεται η τρέχουσα έκδοση.',
++          'Εάν μια αλλαγή επηρεάζει ουσιωδώς τα δικαιώματά σας, θα την καταστήσουμε εμφανή πριν τεθεί σε ισχύ. Η συνέχιση της χρήσης συνιστά αποδοχή των ενημερωμένων Όρων.',
++        ],
++      },
++      {
++        heading: '17. Επικοινωνία',
++        paragraphs: [
++          'Ερωτήσεις για τους Όρους, διορθώσεις καταχωρήσεων, αναφορές και παράπονα: hello@lookla.gr.',
++        ],
++      },
++    ],
++  },
++
++  ru: {
++    title: 'Условия использования',
++    version: 'v1.0',
++    effectiveDate: '2026-08-04',
++    lastUpdated: '2026-08-04',
++    intro: [
++      'Настоящие Условия регулируют использование Lookla (lookla.gr) — каталога салонов красоты и независимых бьюти-мастеров в Греции.',
++      'Lookla управляется физическим лицом — Zhuykov Andrey, находящимся в Греции. Lookla в настоящее время не управляется компанией или иным юридическим лицом, поэтому здесь нет регистрационного номера, налогового номера или юридического адреса. Если управление перейдёт к зарегистрированному бизнесу, Условия будут обновлены с указанием нового оператора до вступления изменения в силу.',
++      'Связаться с нами можно по адресу hello@lookla.gr.',
++      'Читайте Условия вместе с Политикой конфиденциальности и Политикой cookies — они являются частью использования сайта.',
++    ],
++    sections: [
++      {
++        heading: '1. Что такое Lookla и чем он не является',
++        paragraphs: [
++          'Lookla — это каталог. Он помогает найти салоны красоты и независимых мастеров в Греции, посмотреть информацию о них и связаться с ними напрямую.',
++          'Lookla не является стороной какого-либо соглашения между вами и салоном или мастером. Мы не оказываем услуги красоты, не нанимаем и не контролируем перечисленных лиц, не устанавливаем их цены и не принимаем оплату за их услуги. Любая запись, услуга, цена, политика отмены или спор — это отношения между вами и ними.',
++          'Lookla в настоящее время не предлагает онлайн-бронирование. На сайте нет страницы, с которой можно сделать бронь; если вам нужна запись, вы связываетесь с салоном самостоятельно по указанным контактам. Если онлайн-бронирование появится, Условия будут обновлены до его запуска.',
++        ],
++      },
++      {
++        heading: '2. Принятие Условий',
++        paragraphs: [
++          'Используя Lookla, вы принимаете настоящие Условия. Если вы с ними не согласны, пожалуйста, не пользуйтесь сайтом.',
++          'Мы намеренно не просим вас ставить галочку о принятии Условий при регистрации. Такая галочка подразумевала бы, что мы точно определили, где принятие требуется юридически и что оно охватывает, — а это ещё не установлено. До тех пор мы предпочитаем прямо сказать, что использование сайта означает принятие, вместо того чтобы собирать запись о согласии, выглядящую более продуманной, чем она есть.',
++        ],
++      },
++      {
++        heading: '3. Информация о салонах и мастерах',
++        paragraphs: [
++          'Большинство карточек собрано из общедоступных источников, включая Google, Vrisko, Treatwell и Foursquare, а также из данных, предоставленных самими владельцами.',
++          'Это означает, что информация может быть устаревшей, неполной или неверной. Часы работы меняются, номера телефонов переходят к другим, цены сдвигаются, заведения закрываются. Мы не проверяем каждую карточку и не можем гарантировать, что конкретная деталь верна в момент чтения. Уточняйте важное — особенно цену, доступность и адрес — напрямую у салона.',
++          'Если вы владелец указанного бизнеса и что-то неверно, вы можете подтвердить владение и исправить карточку (раздел 5) либо написать на hello@lookla.gr для исправления или удаления. Для запроса на удаление аккаунт не нужен.',
++        ],
++      },
++      {
++        heading: '4. Учётные записи пользователей',
++        paragraphs: [
++          'Большей частью Lookla можно пользоваться без учётной записи. Если вы её создаёте, укажите email, которым вы владеете, храните пароль в тайне и незамедлительно сообщите на hello@lookla.gr, если считаете, что доступ получил кто-то ещё.',
++          'Для создания учётной записи вам должно быть не менее 16 лет. Lookla не предназначен для детей.',
++          'Вы отвечаете за то, что происходит через вашу учётную запись. Не передавайте её и не создавайте запись, используя чужую личность или контактные данные.',
++        ],
++      },
++      {
++        heading: '5. Учётные записи владельцев и подтверждение карточки',
++        paragraphs: [
++          'Если вы владеете указанным бизнесом или управляете им, вы можете подтвердить владение карточкой. Мы отправляем код подтверждения на контактный адрес, уже имеющийся для этого бизнеса, и подтверждение проходит, только если вы можете его получить. Это намеренная проверка: обычно карточку может подтвердить лишь тот, кто уже контролирует опубликованный канал связи бизнеса.',
++          'После подтверждения вы можете редактировать данные карточки, включая описание, услуги и фотографии. Вы отвечаете за достоверность публикуемого и за наличие права на публикацию.',
++          'Нельзя подтверждать владение бизнесом, которым вы не владеете и не управляете. В таком случае мы можем отозвать подтверждение и заблокировать учётную запись.',
++        ],
++      },
++      {
++        heading: '6. Сообщения',
++        paragraphs: [
++          'В Lookla есть функция сообщений, позволяющая авторизованному пользователю и салону обмениваться сообщениями через сайт.',
++          'Сообщения хранятся на наших серверах, чтобы обе стороны могли их читать, и доступны нам при необходимости расследовать жалобу на злоупотребление. Не отправляйте через сообщения Lookla данные карт, пароли, документы или иную чувствительную информацию.',
++          'Сроки хранения и порядок удаления сообщений описаны в Политике конфиденциальности.',
++        ],
++      },
++      {
++        heading: '7. Отзывы и другой ваш контент',
++        paragraphs: [
++          'Публикуя отзыв, фотографию, описание или иной контент, вы сохраняете права на него. Вы предоставляете нам неисключительную безвозмездную лицензию размещать, показывать и распространять его в Lookla и в материалах о Lookla, пока он остаётся опубликованным.',
++          'Публикуйте только то, на что имеете право. Отзывы должны описывать реальный опыт. Не публикуйте отзывы о собственном бизнесе, о конкуренте или за вознаграждение.',
++          'Мы можем удалить контент, нарушающий Условия, признанный нарушающим после жалобы, либо подлежащий удалению по закону. Мы не обязаны проверять контент заранее, и удаление одного не означает, что мы проверили всё остальное.',
++        ],
++      },
++      {
++        heading: '8. Допустимое использование',
++        paragraphs: [
++          'Пожалуйста, не публикуйте незаконный, клеветнический, разжигающий ненависть, угрожающий, вводящий в заблуждение или сексуально откровенный контент; не выдавайте себя за другого; не преследуйте пользователей и заведения; не публикуйте чужие персональные данные без согласия; не используйте Lookla для незапрошенных коммерческих рассылок.',
++          'Не пытайтесь взломать, перегрузить, просканировать или обойти защиту сайта; не копируйте карточки массово; не используйте автоматизированные средства сверх обычного просмотра; не перепродавайте и не распространяйте наш контент как конкурирующий каталог.',
++          'Не загружайте вредоносный код и не используйте Lookla в нарушение законодательства Греции или ЕС.',
++        ],
++      },
++      {
++        heading: '9. Жалобы на контент',
++        paragraphs: [
++          'У карточек и отзывов есть кнопка жалобы. Если считаете что-то неточным, незаконным или оскорбительным, сообщите об этом либо напишите на hello@lookla.gr.',
++          'Мы рассматриваем жалобы индивидуально. В зависимости от результата мы можем исправить контент, удалить его, связаться с автором или не предпринимать действий. Мы не всегда сможем сообщить вам итог.',
++        ],
++      },
++      {
++        heading: '10. Платные тарифы',
++        paragraphs: [
++          'Пользование Lookla бесплатно — и для посетителей, и для указанных заведений.',
++          'Платные тарифы описаны в наших материалах, но сейчас их нельзя приобрести: доступной страницы оформления подписки нет, платёжный провайдер не настроен, поэтому списание невозможно. Ничто в Lookla сегодня не может создать для вас обязательство по оплате.',
++          'Если платные тарифы станут доступны, Условия будут обновлены заранее — с описанием цены, периода оплаты, продления, отмены, возвратов и ваших законных прав на отказ.',
++        ],
++      },
++      {
++        heading: '11. Интеллектуальная собственность',
++        paragraphs: [
++          'Название Lookla, дизайн сайта, его тексты и программное обеспечение принадлежат оператору или используются по лицензии. Их нельзя копировать, изменять или использовать повторно сверх того, что требует обычное пользование сайтом или разрешает закон.',
++          'Контент, размещённый пользователями и владельцами, остаётся их собственностью, как описано в разделе 7. Названия, логотипы и товарные знаки принадлежат их правообладателям и показаны для идентификации заведений.',
++        ],
++      },
++      {
++        heading: '12. Отказ от гарантий и ограничение ответственности',
++        paragraphs: [
++          'Lookla предоставляется «как есть». Мы не обещаем бесперебойной или безошибочной работы, точности карточек или того, что конкретный салон вам подойдёт.',
++          'Мы не отвечаем за услуги, оказанные салонами или мастерами, за их поведение и за соглашения, которые вы с ними заключаете. Претензии по услуге адресуются оказавшему её заведению.',
++          'Ничто в Условиях не исключает и не ограничивает нашу ответственность там, где это не допускается законом, — включая ответственность за смерть или вред здоровью вследствие нашей неосторожности, за мошенничество, умысел и грубую неосторожность. Ваши императивные права потребителя по законодательству Греции и ЕС не затрагиваются.',
++        ],
++      },
++      {
++        heading: '13. Приостановка и прекращение',
++        paragraphs: [
++          'Вы можете прекратить пользоваться Lookla в любой момент и попросить удалить вашу учётную запись, как описано в Политике конфиденциальности.',
++          'Мы можем приостановить или прекратить доступ к учётной записи, нарушающей Условия, используемой незаконно либо создающей риск для сайта или других пользователей. Где это разумно и законно, мы объясним причину, и вы можете ответить на hello@lookla.gr.',
++        ],
++      },
++      {
++        heading: '14. Применимое право и подсудность',
++        paragraphs: [
++          'Настоящие Условия регулируются правом Греции.',
++          'Если вы потребитель, это не лишает вас защиты императивных норм страны вашего проживания, и вы можете обратиться в суды этой страны. Споры также могут быть переданы на платформу онлайн-урегулирования споров Европейской комиссии.',
++        ],
++      },
++      {
++        heading: '15. Конфиденциальность и cookies',
++        paragraphs: [
++          'Политика конфиденциальности объясняет, какие персональные данные мы собираем, зачем и как долго храним. Политика cookies объясняет, что сохраняется в вашем браузере и от чего можно отказаться. Обе доступны со всех страниц.',
++        ],
++      },
++      {
++        heading: '16. Изменения Условий',
++        paragraphs: [
++          'Условия имеют номер версии и дату вступления в силу — они указаны вверху страницы. Мы обновляем их при изменении продукта, а не по расписанию; дата вступления в силу показывает, с какого момента действует текущая версия.',
++          'Если изменение существенно затрагивает ваши права, мы сделаем его заметным на сайте до вступления в силу. Продолжение пользования означает принятие обновлённых Условий.',
++        ],
++      },
++      {
++        heading: '17. Контакты',
++        paragraphs: [
++          'Вопросы по Условиям, исправления карточек, жалобы и претензии: hello@lookla.gr.',
++        ],
++      },
++    ],
++  },
++
++  uk: {
++    title: 'Умови користування',
++    version: 'v1.0',
++    effectiveDate: '2026-08-04',
++    lastUpdated: '2026-08-04',
++    intro: [
++      'Ці Умови регулюють користування Lookla (lookla.gr) — каталогом салонів краси та незалежних б\'юті-майстрів у Греції.',
++      'Lookla керується фізичною особою — Zhuykov Andrey, що перебуває у Греції. Lookla наразі не керується компанією чи іншою юридичною особою, тому тут немає реєстраційного номера, податкового номера чи юридичної адреси. Якщо керування перейде до зареєстрованого бізнесу, Умови буде оновлено із зазначенням нового оператора до набрання чинності змінами.',
++      'Зв\'язатися з нами можна за адресою hello@lookla.gr.',
++      'Читайте Умови разом із Політикою конфіденційності та Політикою cookies — вони є частиною користування сайтом.',
++    ],
++    sections: [
++      {
++        heading: '1. Чим є Lookla і чим він не є',
++        paragraphs: [
++          'Lookla — це каталог. Він допомагає знайти салони краси та незалежних майстрів у Греції, переглянути інформацію про них і зв\'язатися з ними напряму.',
++          'Lookla не є стороною жодної угоди між вами та салоном чи майстром. Ми не надаємо послуг краси, не наймаємо й не контролюємо перелічених осіб, не встановлюємо їхніх цін і не приймаємо оплату за їхні послуги. Будь-який запис, послуга, ціна, політика скасування чи спір — це відносини між вами та ними.',
++          'Lookla наразі не пропонує онлайн-бронювання. На сайті немає сторінки, з якої можна зробити бронь; якщо потрібен запис, ви звертаєтеся до салону самостійно за вказаними контактами. Якщо онлайн-бронювання з\'явиться, Умови буде оновлено до його запуску.',
++        ],
++      },
++      {
++        heading: '2. Прийняття Умов',
++        paragraphs: [
++          'Користуючись Lookla, ви приймаєте ці Умови. Якщо ви з ними не згодні, будь ласка, не користуйтеся сайтом.',
++          'Ми свідомо не просимо вас ставити позначку про прийняття Умов під час реєстрації. Така позначка означала б, що ми точно визначили, де прийняття вимагається юридично і що воно охоплює, — а це ще не встановлено. До того часу ми радше прямо скажемо, що користування означає прийняття, ніж збиратимемо запис про згоду, який виглядає продуманішим, ніж є.',
++        ],
++      },
++      {
++        heading: '3. Інформація про салони та майстрів',
++        paragraphs: [
++          'Більшість карток зібрано з загальнодоступних джерел, зокрема Google, Vrisko, Treatwell і Foursquare, а також із даних, наданих самими власниками.',
++          'Це означає, що інформація може бути застарілою, неповною або хибною. Години роботи змінюються, номери телефонів переходять до інших, ціни змінюються, заклади закриваються. Ми не перевіряємо кожну картку і не можемо гарантувати, що конкретна деталь є правильною на момент читання. Уточнюйте важливе — особливо ціну, доступність і адресу — безпосередньо в салоні.',
++          'Якщо ви власник зазначеного бізнесу і щось хибне, ви можете підтвердити володіння та виправити картку (розділ 5) або написати на hello@lookla.gr для виправлення чи видалення. Для запиту на видалення обліковий запис не потрібен.',
++        ],
++      },
++      {
++        heading: '4. Облікові записи користувачів',
++        paragraphs: [
++          'Більшістю можливостей Lookla можна користуватися без облікового запису. Якщо ви його створюєте, вкажіть email, яким володієте, зберігайте пароль у таємниці й негайно повідомте на hello@lookla.gr, якщо вважаєте, що доступ отримав хтось інший.',
++          'Для створення облікового запису вам має бути щонайменше 16 років. Lookla не призначений для дітей.',
++          'Ви відповідаєте за те, що відбувається через ваш обліковий запис. Не передавайте його та не створюйте запис, використовуючи чужу особу чи контактні дані.',
++        ],
++      },
++      {
++        heading: '5. Облікові записи власників і підтвердження картки',
++        paragraphs: [
++          'Якщо ви володієте зазначеним бізнесом або керуєте ним, ви можете підтвердити володіння карткою. Ми надсилаємо код підтвердження на контактну адресу, яка вже є для цього бізнесу, і підтвердження проходить лише якщо ви можете його отримати. Це свідома перевірка: зазвичай картку може підтвердити лише той, хто вже контролює опублікований канал зв\'язку бізнесу.',
++          'Після підтвердження ви можете редагувати дані картки, зокрема опис, послуги та фотографії. Ви відповідаєте за достовірність опублікованого і за наявність права на публікацію.',
++          'Не можна підтверджувати володіння бізнесом, яким ви не володієте і не керуєте. У такому разі ми можемо відкликати підтвердження та заблокувати обліковий запис.',
++        ],
++      },
++      {
++        heading: '6. Повідомлення',
++        paragraphs: [
++          'У Lookla є функція повідомлень, що дозволяє авторизованому користувачеві та салону обмінюватися повідомленнями через сайт.',
++          'Повідомлення зберігаються на наших серверах, щоб обидві сторони могли їх читати, і доступні нам за потреби розслідувати скаргу на зловживання. Не надсилайте через повідомлення Lookla дані карток, паролі, документи чи іншу чутливу інформацію.',
++          'Строки зберігання та порядок видалення повідомлень описані в Політиці конфіденційності.',
++        ],
++      },
++      {
++        heading: '7. Відгуки та інший ваш контент',
++        paragraphs: [
++          'Публікуючи відгук, фотографію, опис чи інший контент, ви зберігаєте права на нього. Ви надаєте нам невиключну безоплатну ліцензію розміщувати, показувати та поширювати його в Lookla і в матеріалах про Lookla, доки він залишається опублікованим.',
++          'Публікуйте лише те, на що маєте право. Відгуки мають описувати реальний досвід. Не публікуйте відгуки про власний бізнес, про конкурента або за винагороду.',
++          'Ми можемо видалити контент, що порушує Умови, визнаний порушенням після скарги, або той, який ми зобов\'язані видалити за законом. Ми не зобов\'язані перевіряти контент заздалегідь, і видалення одного не означає, що ми перевірили решту.',
++        ],
++      },
++      {
++        heading: '8. Прийнятне користування',
++        paragraphs: [
++          'Будь ласка, не публікуйте незаконний, наклепницький, ворожий, погрозливий, оманливий або сексуально відвертий контент; не видавайте себе за іншого; не переслідуйте користувачів і заклади; не публікуйте чужі персональні дані без згоди; не використовуйте Lookla для непроханих комерційних розсилок.',
++          'Не намагайтеся зламати, перевантажити, просканувати чи обійти захист сайту; не копіюйте картки масово; не використовуйте автоматизовані засоби понад звичайний перегляд; не перепродавайте й не поширюйте наш контент як конкурентний каталог.',
++          'Не завантажуйте шкідливий код і не використовуйте Lookla з порушенням законодавства Греції або ЄС.',
++        ],
++      },
++      {
++        heading: '9. Скарги на контент',
++        paragraphs: [
++          'Картки та відгуки мають кнопку скарги. Якщо вважаєте щось неточним, незаконним або образливим, повідомте про це або напишіть на hello@lookla.gr.',
++          'Ми розглядаємо скарги індивідуально. Залежно від результату ми можемо виправити контент, видалити його, зв\'язатися з автором або не вживати заходів. Ми не завжди зможемо повідомити вам підсумок.',
++        ],
++      },
++      {
++        heading: '10. Платні тарифи',
++        paragraphs: [
++          'Користування Lookla безкоштовне — і для відвідувачів, і для зазначених закладів.',
++          'Платні тарифи описані в наших матеріалах, але наразі їх неможливо придбати: доступної сторінки оформлення підписки немає, платіжного провайдера не налаштовано, тому списання неможливе. Ніщо в Lookla сьогодні не може створити для вас зобов\'язання щодо оплати.',
++          'Якщо платні тарифи стануть доступними, Умови буде оновлено заздалегідь — з описом ціни, періоду оплати, продовження, скасування, повернень і ваших законних прав на відмову.',
++        ],
++      },
++      {
++        heading: '11. Інтелектуальна власність',
++        paragraphs: [
++          'Назва Lookla, дизайн сайту, його тексти та програмне забезпечення належать оператору або використовуються за ліцензією. Їх не можна копіювати, змінювати чи використовувати повторно понад те, що вимагає звичайне користування сайтом або дозволяє закон.',
++          'Контент, розміщений користувачами та власниками, залишається їхньою власністю, як описано в розділі 7. Назви, логотипи та торговельні марки належать їхнім правовласникам і показані для ідентифікації закладів.',
++        ],
++      },
++      {
++        heading: '12. Відмова від гарантій та обмеження відповідальності',
++        paragraphs: [
++          'Lookla надається «як є». Ми не обіцяємо безперебійної чи безпомилкової роботи, точності карток або того, що конкретний салон вам підійде.',
++          'Ми не відповідаємо за послуги, надані салонами чи майстрами, за їхню поведінку та за угоди, які ви з ними укладаєте. Претензії щодо послуги адресуються закладу, який її надав.',
++          'Ніщо в Умовах не виключає і не обмежує нашу відповідальність там, де це не дозволено законом, — включно з відповідальністю за смерть чи шкоду здоров\'ю внаслідок нашої необережності, за шахрайство, умисел і грубу необережність. Ваші імперативні права споживача за законодавством Греції та ЄС не зачіпаються.',
++        ],
++      },
++      {
++        heading: '13. Призупинення та припинення',
++        paragraphs: [
++          'Ви можете припинити користування Lookla будь-коли й попросити видалити ваш обліковий запис, як описано в Політиці конфіденційності.',
++          'Ми можемо призупинити або припинити доступ до облікового запису, що порушує Умови, використовується незаконно чи створює ризик для сайту або інших користувачів. Де це розумно й законно, ми пояснимо причину, і ви можете відповісти на hello@lookla.gr.',
++        ],
++      },
++      {
++        heading: '14. Застосовне право та підсудність',
++        paragraphs: [
++          'Ці Умови регулюються правом Греції.',
++          'Якщо ви споживач, це не позбавляє вас захисту імперативних норм країни вашого проживання, і ви можете звернутися до судів цієї країни. Спори також можуть бути передані на платформу онлайн-врегулювання спорів Європейської комісії.',
++        ],
++      },
++      {
++        heading: '15. Конфіденційність і cookies',
++        paragraphs: [
++          'Політика конфіденційності пояснює, які персональні дані ми збираємо, навіщо і як довго зберігаємо. Політика cookies пояснює, що зберігається у вашому браузері та від чого можна відмовитися. Обидві доступні з усіх сторінок.',
++        ],
++      },
++      {
++        heading: '16. Зміни Умов',
++        paragraphs: [
++          'Умови мають номер версії та дату набрання чинності — вони зазначені вгорі сторінки. Ми оновлюємо їх при зміні продукту, а не за розкладом; дата набрання чинності показує, з якого моменту діє поточна версія.',
++          'Якщо зміна суттєво зачіпає ваші права, ми зробимо її помітною на сайті до набрання чинності. Продовження користування означає прийняття оновлених Умов.',
++        ],
++      },
++      {
++        heading: '17. Контакти',
++        paragraphs: [
++          'Питання щодо Умов, виправлення карток, скарги та претензії: hello@lookla.gr.',
++        ],
++      },
++    ],
++  },
++};
+diff --git a/frontend/app/[locale]/terms/page.tsx b/frontend/app/[locale]/terms/page.tsx
+new file mode 100644
+index 0000000..fe10434
+--- /dev/null
++++ b/frontend/app/[locale]/terms/page.tsx
+@@ -0,0 +1,56 @@
++import type { Metadata } from 'next';
++import Header from '@/components/Header';
++import { TERMS_CONTENT } from './content';
++
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++type Locale = (typeof LOCALES)[number];
++
++function isLocale(value: string): value is Locale {
++  return (LOCALES as readonly string[]).includes(value);
++}
++
++export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
++  const { locale } = await params;
++  const content = TERMS_CONTENT[isLocale(locale) ? locale : 'el'];
++  return { title: content.title };
++}
++
++export default async function TermsPage({ params }: { params: Promise<{ locale: string }> }) {
++  const { locale } = await params;
++  const resolved: Locale = isLocale(locale) ? locale : 'el';
++  const content = TERMS_CONTENT[resolved];
++  const prefix = resolved === 'el' ? '' : `/${resolved}`;
++
++  return (
++    <div className="min-h-screen bg-surface-subtle">
++      <Header locale={resolved} variant="legal" backHref={prefix || '/'} />
++
++      {/* Same reading measure and wrapping treatment as the Privacy Policy —
++          see that page for why break-words/hyphens-auto sit on the container:
++          overflow-wrap is inherited, and legal copy carries long unbreakable
++          tokens that overflow 320px otherwise. */}
++      <main id="main-content" className="max-w-shell-reading mx-auto px-4 py-8 break-words hyphens-auto">
++        <h1 className="text-page-title text-text mb-1">{content.title}</h1>
++        {/* Version and effective date are shown together and always: the
++            document's own "Changes" section points here, so this line is part
++            of the contract rather than decoration. */}
++        <p className="text-caption text-text-muted mb-6">
++          {content.version} · {content.effectiveDate}
++        </p>
++
++        {content.intro.map((p, i) => (
++          <p key={`intro-${i}`} className="text-body text-text-secondary mb-4 leading-relaxed">{p}</p>
++        ))}
++
++        {content.sections.map((section, si) => (
++          <section key={`section-${si}`} className="mt-8">
++            <h2 className="text-section-title text-text mb-3">{section.heading}</h2>
++            {section.paragraphs.map((p, pi) => (
++              <p key={`section-${si}-p-${pi}`} className="text-body text-text-secondary mb-3 leading-relaxed">{p}</p>
++            ))}
++          </section>
++        ))}
++      </main>
++    </div>
++  );
++}
+diff --git a/frontend/components/Footer.test.tsx b/frontend/components/Footer.test.tsx
+index 75c362b..53ea001 100644
+--- a/frontend/components/Footer.test.tsx
++++ b/frontend/components/Footer.test.tsx
+@@ -21,15 +21,21 @@ describe('T-060: Footer — Direction B tokens applied', () => {
+   });
+ 
+   test('uses the shared focus-ring token on every link/button', () => {
++    // T-045 added the Terms link, making four controls. The count is pinned
++    // rather than lower-bounded on purpose: it is what catches a new control
++    // being added without the token, which is the actual regression. Raise it
++    // deliberately when a control is added, never relax it to >=.
+     const count = (source.match(/focus-ring-token/g) || []).length;
+-    assert.equal(count, 3, 'expected the 3 footer links/buttons (privacy, cookies, cookie settings) to all carry the focus-ring token');
++    assert.equal(count, 4, 'expected the 4 footer links/buttons (terms, privacy, cookies, cookie settings) to all carry the focus-ring token');
+   });
+ });
+ 
+ describe('T-060: Footer — touch targets', () => {
+   test('every link/button meets the 44px minimum height', () => {
++    // Four controls since T-045 added Terms; same reasoning as the focus-ring
++    // count above.
+     const count = (source.match(/min-h-\[44px\]/g) || []).length;
+-    assert.equal(count, 3);
++    assert.equal(count, 4);
+   });
+ });
+ 
+diff --git a/frontend/components/Footer.tsx b/frontend/components/Footer.tsx
+index c33a8da..f5c7af1 100644
+--- a/frontend/components/Footer.tsx
++++ b/frontend/components/Footer.tsx
+@@ -16,6 +16,7 @@ export default function Footer() {
+   return (
+     <footer className="border-t border-border bg-surface py-6 px-4">
+       <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-body-sm text-text-secondary">
++        <Link href={`${prefix}/terms`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('terms')}</Link>
+         <Link href={`${prefix}/privacy`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('privacy')}</Link>
+         <Link href={`${prefix}/cookies`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('cookies')}</Link>
+         {isAnalyticsConsentFeatureEnabled() && (
+diff --git a/frontend/lib/termsContent.test.ts b/frontend/lib/termsContent.test.ts
+new file mode 100644
+index 0000000..5e0ab13
+--- /dev/null
++++ b/frontend/lib/termsContent.test.ts
+@@ -0,0 +1,237 @@
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { TERMS_CONTENT } from '../app/[locale]/terms/content';
++
++const here = path.dirname(fileURLToPath(import.meta.url));
++const frontendRoot = path.join(here, '..');
++const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
++
++const all = (locale: (typeof LOCALES)[number]) => JSON.stringify(TERMS_CONTENT[locale]);
++
++describe('T-045: Terms page exists and is SSR', () => {
++  test('page.tsx exists at app/[locale]/terms/page.tsx', () => {
++    assert.ok(fs.existsSync(path.join(frontendRoot, 'app', '[locale]', 'terms', 'page.tsx')));
++  });
++
++  test('page is a server component, like the other legal pages', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'terms', 'page.tsx'), 'utf-8');
++    assert.ok(!source.includes("'use client'"));
++    assert.ok(source.includes('export default async function TermsPage'));
++  });
++
++  test('version and effective date are rendered, not just stored', () => {
++    // Section 16 tells the reader these appear at the top of the page, so the
++    // page has to actually show them or the document contradicts itself.
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'terms', 'page.tsx'), 'utf-8');
++    assert.ok(source.includes('{content.version}'));
++    assert.ok(source.includes('{content.effectiveDate}'));
++  });
++});
++
++describe('T-045: structural parity across all four locales', () => {
++  for (const locale of LOCALES) {
++    test(`${locale} content is complete`, () => {
++      const c = TERMS_CONTENT[locale];
++      assert.ok(c.title.length > 0);
++      assert.ok(c.version.length > 0);
++      assert.ok(c.effectiveDate.length > 0);
++      assert.ok(c.intro.length > 0);
++      assert.ok(c.sections.length > 0);
++      for (const s of c.sections) {
++        assert.ok(s.heading.length > 0);
++        assert.ok(s.paragraphs.length > 0, `empty section "${s.heading}" in ${locale}`);
++        for (const p of s.paragraphs) assert.ok(p.trim().length > 0);
++      }
++    });
++
++    test(`${locale} sections are numbered 1..N with no gaps or duplicates`, () => {
++      const numbers = TERMS_CONTENT[locale].sections.map(s => {
++        const m = s.heading.match(/^(\d+)\./);
++        assert.ok(m, `heading "${s.heading}" (${locale}) does not start with "N."`);
++        return Number(m![1]);
++      });
++      const expected = Array.from({ length: numbers.length }, (_, i) => i + 1);
++      assert.deepEqual(numbers, expected, `numbering out of order in ${locale}`);
++    });
++  }
++
++  test('all four locales have the same number of sections', () => {
++    const counts = LOCALES.map(l => TERMS_CONTENT[l].sections.length);
++    assert.ok(counts.every(c => c === counts[0]), `section counts differ: ${JSON.stringify(counts)}`);
++  });
++
++  test('version and effective date are identical across locales', () => {
++    // Four locales disagreeing about which version is in force would make the
++    // document unenforceable in whichever one is wrong.
++    const versions = new Set(LOCALES.map(l => TERMS_CONTENT[l].version));
++    const dates = new Set(LOCALES.map(l => TERMS_CONTENT[l].effectiveDate));
++    assert.equal(versions.size, 1, `versions differ: ${[...versions]}`);
++    assert.equal(dates.size, 1, `effective dates differ: ${[...dates]}`);
++  });
++
++  test('no locale is left in English by accident', () => {
++    // Four consecutive earlier tickets shipped a change in one locale only.
++    assert.ok(/Όροι/.test(TERMS_CONTENT.el.title));
++    assert.ok(/Условия/.test(TERMS_CONTENT.ru.title));
++    assert.ok(/Умови/.test(TERMS_CONTENT.uk.title));
++  });
++});
++
++describe('T-045: the document must not claim capabilities the product lacks', () => {
++  // The same honesty standard as T-017: every statement was checked against
++  // the running application. These guards fail if the product changes and the
++  // document is left behind — which is the realistic failure, since the API
++  // already contains booking and payment endpoints that no page reaches.
++
++  test('states plainly that online booking is not offered', () => {
++    assert.ok(/does not currently offer online booking/i.test(all('en')));
++    assert.ok(/δεν προσφέρει επί του παρόντος online κρατήσεις/i.test(all('el')));
++    assert.ok(/не предлагает онлайн-бронирование/i.test(all('ru')));
++    assert.ok(/не пропонує онлайн-бронювання/i.test(all('uk')));
++  });
++
++  test('never promises that a booking can be made through the site', () => {
++    for (const locale of LOCALES) {
++      const text = all(locale);
++      assert.ok(!/book (an appointment|online) (through|on) (this site|Lookla)/i.test(text));
++      assert.ok(!/reserve your appointment/i.test(text));
++    }
++  });
++
++  test('states that paid plans cannot currently be bought', () => {
++    assert.ok(/not currently available to buy/i.test(all('en')));
++    assert.ok(/no payment provider is configured/i.test(all('en')));
++    assert.ok(/δεν είναι επί του παρόντος διαθέσιμα προς αγορά/i.test(all('el')));
++    assert.ok(/нельзя приобрести/i.test(all('ru')));
++    assert.ok(/неможливо придбати/i.test(all('uk')));
++  });
++
++  test('states that nothing on the site can create a payment obligation', () => {
++    // Assert the sentence the document actually contains. An earlier version
++    // of this test looked for "cannot currently create", while the text reads
++    // "Nothing on Lookla can currently create" — it failed on phrasing that
++    // was never there, not on a missing guarantee.
++    assert.ok(/Nothing on Lookla can currently create a payment obligation/i.test(all('en')));
++    assert.ok(/Τίποτα στο Lookla δεν μπορεί σήμερα να δημιουργήσει υποχρέωση πληρωμής/i.test(all('el')));
++    assert.ok(/Ничто в Lookla сегодня не может создать/i.test(all('ru')));
++    assert.ok(/Ніщо в Lookla сьогодні не може створити/i.test(all('uk')));
++  });
++
++  test('discloses that listings come from public sources and may be wrong', () => {
++    const en = all('en');
++    for (const source of ['Google', 'Vrisko', 'Treatwell', 'Foursquare']) {
++      assert.ok(en.includes(source), `${source} must be disclosed as a listing source`);
++    }
++    assert.ok(/out of date, incomplete or wrong/i.test(en));
++  });
++
++  test('tells listed businesses how to correct or remove a listing without an account', () => {
++    assert.ok(/do not need an account to ask us to remove a listing/i.test(all('en')));
++    for (const locale of LOCALES) assert.ok(all(locale).includes('hello@lookla.gr'));
++  });
++
++  test('states that Lookla is not a party to the transaction', () => {
++    assert.ok(/not a party to any agreement/i.test(all('en')));
++    assert.ok(/δεν είναι συμβαλλόμενο μέρος/i.test(all('el')));
++    assert.ok(/не является стороной/i.test(all('ru')));
++    assert.ok(/не є стороною/i.test(all('uk')));
++  });
++});
++
++describe('T-045: operator identity is stated honestly', () => {
++  test('names the operator as a natural person in every locale', () => {
++    for (const locale of LOCALES) assert.ok(all(locale).includes('Zhuykov Andrey'));
++    assert.ok(/an individual based in Greece/i.test(all('en')));
++  });
++
++  test('does not invent a company, VAT number or registered office', () => {
++    const text = LOCALES.map(all).join('\n');
++    assert.ok(!/VAT number: /i.test(text));
++    assert.ok(!/\bLtd\.|\bLLC\b|S\.A\.|Α\.Ε\.|Ε\.Π\.Ε\./.test(text));
++    assert.ok(!/registered office at/i.test(text));
++  });
++
++  test('says explicitly that there is no company registration to cite', () => {
++    assert.ok(/not currently operated by a company/i.test(all('en')));
++    assert.ok(/no company registration number, VAT number or registered office/i.test(all('en')));
++  });
++});
++
++describe('T-045: acceptance is not faked', () => {
++  test('explains that there is deliberately no acceptance checkbox', () => {
++    assert.ok(/do not ask you to tick a box/i.test(all('en')));
++  });
++
++  test('the registration page does not render a terms-acceptance checkbox', () => {
++    // The document says we do not collect an acceptance record; a checkbox
++    // appearing later would make that statement false.
++    const register = fs.readFileSync(
++      path.join(frontendRoot, 'app', '[locale]', 'register', 'page.tsx'), 'utf-8',
++    );
++    const acceptsTerms = /type=["']checkbox["'][\s\S]{0,400}(terms|Όρο|услови|умов)/i.test(register);
++    assert.ok(!acceptsTerms, 'a terms checkbox exists — the Terms text must be updated to match');
++  });
++});
++
++describe('T-045: consumer protections are not over-claimed away', () => {
++  test('does not exclude liability the law does not allow excluding', () => {
++    assert.ok(/death or personal injury caused by our negligence/i.test(all('en')));
++    assert.ok(/mandatory rights as a consumer/i.test(all('en')));
++  });
++
++  test('every locale keeps the mandatory-rights carve-out', () => {
++    assert.ok(/αναγκαστικού δικαίου δικαιώματά σας ως καταναλωτή/i.test(all('el')));
++    assert.ok(/императивные права потребителя/i.test(all('ru')));
++    assert.ok(/імперативні права споживача/i.test(all('uk')));
++  });
++
++  test('states governing law and preserves the consumer forum', () => {
++    assert.ok(/governed by Greek law/i.test(all('en')));
++    assert.ok(/courts of that country/i.test(all('en')));
++  });
++});
++
++describe('T-045: linked from the footer in every locale', () => {
++  const footer = fs.readFileSync(path.join(frontendRoot, 'components', 'Footer.tsx'), 'utf-8');
++
++  test('Footer links to /terms', () => {
++    assert.ok(footer.includes('${prefix}/terms'));
++    assert.ok(footer.includes("t('terms')"));
++  });
++
++  test('the existing privacy and cookies links are not disturbed', () => {
++    assert.ok(footer.includes('${prefix}/privacy'));
++    assert.ok(footer.includes('${prefix}/cookies'));
++  });
++
++  test('every locale has a translated footer label', () => {
++    for (const locale of LOCALES) {
++      const messages = JSON.parse(
++        fs.readFileSync(path.join(frontendRoot, 'messages', `${locale}.json`), 'utf-8'),
++      );
++      assert.ok(messages.footer?.terms, `${locale}.json is missing footer.terms`);
++    }
++    const el = JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', 'el.json'), 'utf-8'));
++    const ru = JSON.parse(fs.readFileSync(path.join(frontendRoot, 'messages', 'ru.json'), 'utf-8'));
++    assert.notEqual(el.footer.terms, 'Terms of Service', 'el label was left in English');
++    assert.notEqual(ru.footer.terms, 'Terms of Service', 'ru label was left in English');
++  });
++});
++
++describe('T-045: cross-references to the other legal documents', () => {
++  test('points at the Privacy and Cookie policies', () => {
++    assert.ok(/Privacy Policy/i.test(all('en')) && /Cookie Policy/i.test(all('en')));
++    assert.ok(/Πολιτική Απορρήτου/.test(all('el')) && /Πολιτική Cookies/.test(all('el')));
++    assert.ok(/Политикой конфиденциальности/.test(all('ru')));
++    assert.ok(/Політикою конфіденційності/.test(all('uk')));
++  });
++
++  test('defers retention and deletion detail to the Privacy Policy rather than restating it', () => {
++    // Two documents stating retention independently is how they drift apart.
++    assert.ok(/described in our Privacy Policy/i.test(all('en')));
++    assert.ok(!/we keep messages for \d+ (months|years)/i.test(all('en')));
++  });
++});
+diff --git a/frontend/messages/el.json b/frontend/messages/el.json
+index 1a334ad..a55a648 100644
+--- a/frontend/messages/el.json
++++ b/frontend/messages/el.json
+@@ -292,6 +292,7 @@
+   },
+   "footer": {
+     "privacy": "Πολιτική Απορρήτου",
++    "terms": "Όροι Χρήσης",
+     "cookies": "Πολιτική Cookies",
+     "cookieSettings": "Ρυθμίσεις cookies"
+   },
+diff --git a/frontend/messages/en.json b/frontend/messages/en.json
+index a9f5121..bff2789 100644
+--- a/frontend/messages/en.json
++++ b/frontend/messages/en.json
+@@ -292,6 +292,7 @@
+   },
+   "footer": {
+     "privacy": "Privacy Policy",
++    "terms": "Terms of Service",
+     "cookies": "Cookie Policy",
+     "cookieSettings": "Cookie settings"
+   },
+diff --git a/frontend/messages/ru.json b/frontend/messages/ru.json
+index d102373..689ddd3 100644
+--- a/frontend/messages/ru.json
++++ b/frontend/messages/ru.json
+@@ -292,6 +292,7 @@
+   },
+   "footer": {
+     "privacy": "Политика конфиденциальности",
++    "terms": "Условия использования",
+     "cookies": "Политика использования cookies",
+     "cookieSettings": "Настройки cookies"
+   },
+diff --git a/frontend/messages/uk.json b/frontend/messages/uk.json
+index 32c3450..fa77be0 100644
+--- a/frontend/messages/uk.json
++++ b/frontend/messages/uk.json
+@@ -292,6 +292,7 @@
+   },
+   "footer": {
+     "privacy": "Політика конфіденційності",
++    "terms": "Умови користування",
+     "cookies": "Політика використання cookies",
+     "cookieSettings": "Налаштування cookies"
+   },
