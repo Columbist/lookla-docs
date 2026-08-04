@@ -2491,6 +2491,16 @@ Alternatives if forwarding is not wanted: a hosted mailbox (Google Workspace, Zo
 - [x] Barracuda request re-checked — **cleared**; the unreachable contact did not void it
 - [ ] Privacy and Cookie policies re-checked: the address they publish is the one that works
 
+#### Sending as `hello@lookla.gr` — deferred, and why the first plan was dropped
+
+The original plan was Gmail's "Send mail as" with the Resend SMTP relay. It works: a diagnostic message sent through `smtp.resend.com` as `hello@lookla.gr` scored **10/10** on mail-tester, with `SPF_PASS` on the `send.lookla.gr` envelope, `DKIM_VALID_AU` signing as `d=lookla.gr`, and an explicit DMARC pass. The DNS side is complete and needs no further work.
+
+It was dropped anyway. **Gmail is discontinuing "Send mail as" for third-party addresses in January 2027** — Workspace aliases are exempt, a custom-domain address like this one is not. That gives the arrangement roughly seventeen months, after which the channel for GDPR correspondence would break on a date nobody chose. This was found by the operator, not during the original recommendation, which did not check the feature's lifecycle.
+
+The operator will select a mail host separately. Receiving through Cloudflare Email Routing is unaffected by that decision and continues to work. When a host is chosen, MX moves to it and Email Routing is retired; `send.lookla.gr` and `resend._domainkey.lookla.gr` must be left alone in that migration — they belong to Resend's sending path for the application's transactional mail, which is independent of this mailbox.
+
+Until then, replies to `hello@lookla.gr` have to go out some other way. That is a real gap for data-subject correspondence and should not be left open indefinitely.
+
 **Do not** change the `send.lookla.gr` records while adding root MX — they belong to Resend's sending path and are unrelated to inbound.
 
 ---
