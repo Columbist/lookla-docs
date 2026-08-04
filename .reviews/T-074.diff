@@ -278,6 +278,122 @@ index a18d935..bab1841 100644
  #### Proposed rule
  
  ```text
+diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
+new file mode 100755
+index 0000000..67e1674
+--- /dev/null
++++ b/ops/t074/apply_t074.sh
+@@ -0,0 +1,110 @@
++#!/usr/bin/env bash
++# T-074 — apply the outbound SMTP restriction.
++#
++# The rule itself is small; the ordering is what makes it safe. A mistake here
++# does not take the site down — the rule only touches TCP/25, which nothing
++# uses — but "nothing uses it" is a conclusion from an audit, and an audit can
++# be wrong. So the rollback is armed before the first mutation, as with T-049
++# and T-072, and the bridge is resolved rather than assumed: a stale bridge
++# name produces a rule that matches nothing while the run still reports
++# success, which is the failure that would leave containers able to send.
++#
++# Usage: ./apply_t074.sh --interface eth0 [--rollback-after 600] [--dry-run]
++
++set -euo pipefail
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++BACKUP_DIR="/var/backups/t074"
++NETWORK="beauty-gr_default"
++ROLLBACK_AFTER=600
++INTERFACE=""
++DRY_RUN=0
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --interface)      INTERFACE="$2"; shift 2 ;;
++    --network)        NETWORK="$2"; shift 2 ;;
++    --rollback-after) ROLLBACK_AFTER="$2"; shift 2 ;;
++    --dry-run)        DRY_RUN=1; shift ;;
++    *) echo "unknown argument: $1" >&2; exit 2 ;;
++  esac
++done
++
++[[ -n "$INTERFACE" ]] || { echo "--interface is required" >&2; exit 2; }
++[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 2; }
++
++log()  { printf '[t074] %s\n' "$*"; }
++fail() { printf '[t074] FAIL: %s\n' "$*" >&2; exit 1; }
++
++# ── resolve the bridge first: no bridge, no run ──────────────────────────────
++BRIDGE="$(docker network inspect "$NETWORK" \
++  --format '{{index .Options "com.docker.network.bridge.name"}}' 2>/dev/null || true)"
++if [[ -z "$BRIDGE" || "$BRIDGE" == "<no value>" ]]; then
++  NETID="$(docker network inspect "$NETWORK" --format '{{.Id}}' 2>/dev/null || true)"
++  [[ -n "$NETID" ]] || fail "cannot resolve the bridge for network $NETWORK — refusing to apply a rule that would match nothing"
++  BRIDGE="br-${NETID:0:12}"
++fi
++ip link show "$BRIDGE" >/dev/null 2>&1 || fail "bridge $BRIDGE does not exist on this host"
++log "compose bridge: $BRIDGE"
++
++# ── every container on that bridge, for the smoke list ───────────────────────
++log "containers on $NETWORK: $(docker network inspect "$NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null)"
++
++# ── backups ──────────────────────────────────────────────────────────────────
++STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
++BACKUP="$BACKUP_DIR/$STAMP"
++mkdir -p "$BACKUP"
++iptables-save > "$BACKUP/iptables.rules"
++[[ -s "$BACKUP/iptables.rules" ]] || fail "iptables backup is empty — refusing to continue"
++# Kept separately so a reviewer can diff the neighbouring tickets' chains
++# afterwards and see they were untouched.
++iptables -S LOOKLA-CLOUDFLARE > "$BACKUP/t049-chain.txt" 2>/dev/null || true
++iptables -S LOOKLA-T072-DENY  > "$BACKUP/t072-chain.txt" 2>/dev/null || true
++ln -sfn "$BACKUP" "$BACKUP_DIR/latest"
++log "backup: $BACKUP"
++
++cat > "$BACKUP/rollback.sh" <<ROLLBACK
++#!/usr/bin/env bash
++# Removes exactly what T-074 added, and nothing else. Needs no network and no
++# repository — everything it refers to is named here.
++set -euo pipefail
++iptables -D OUTPUT -o ${INTERFACE} -p tcp --dport 25 -m comment --comment "T-074 deny outbound SMTP host" -j LOOKLA-T074-DENY 2>/dev/null || true
++iptables -D DOCKER-USER -i ${BRIDGE} -o ${INTERFACE} -p tcp --dport 25 -m comment --comment "T-074 deny outbound SMTP containers" -j LOOKLA-T074-DENY 2>/dev/null || true
++iptables -F LOOKLA-T074-DENY 2>/dev/null || true
++iptables -X LOOKLA-T074-DENY 2>/dev/null || true
++echo "[t074] rolled back from $BACKUP"
++ROLLBACK
++chmod +x "$BACKUP/rollback.sh"
++bash -n "$BACKUP/rollback.sh" || fail "generated rollback script is not valid shell"
++log "rollback script: $BACKUP/rollback.sh"
++
++if [[ $DRY_RUN -eq 1 ]]; then
++  log "dry run"
++  python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE"
++  exit 0
++fi
++
++# ── arm the rollback BEFORE the first mutation ───────────────────────────────
++systemd-run --on-active="${ROLLBACK_AFTER}" --unit=t074-rollback \
++  --description="T-074 automatic rollback" "$BACKUP/rollback.sh" >/dev/null
++log "automatic rollback armed: ${ROLLBACK_AFTER}s (systemctl stop t074-rollback.timer to cancel)"
++
++python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE" --apply \
++  || fail "apply failed — rollback is armed and will restore automatically"
++
++cat <<NEXT
++
++[t074] Applied. Verify before cancelling the rollback:
++
++    1. host:        a TCP connect to a public MX on 25 is refused IMMEDIATELY
++    2. containers:  the same from each container on the bridge
++    3. positive:    443 and 53 still work; 465/587 are not blocked
++    4. wg0:         VPN egress policy unchanged
++    5. app:         lookla.gr in all locales, API, Resend HTTPS path
++
++  systemctl stop t074-rollback.timer
++
++Roll back at any point:
++
++  $(readlink -f /var/backups/t074/latest)/rollback.sh
++NEXT
 diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
 new file mode 100644
 index 0000000..ef1fea8
@@ -500,3 +616,50 @@ index 0000000..ef1fea8
 +
 +if __name__ == "__main__":
 +    raise SystemExit(main())
+diff --git a/ops/t074/t074-smtp-egress.service b/ops/t074/t074-smtp-egress.service
+new file mode 100644
+index 0000000..c71ad9f
+--- /dev/null
++++ b/ops/t074/t074-smtp-egress.service
+@@ -0,0 +1,41 @@
++# T-074 — reinstate the outbound SMTP denial after a reboot or a Docker restart.
++#
++# `PartOf=docker.service` is the load-bearing line here, and for a reason
++# specific to this ticket. Docker rebuilds its own chains when it starts, and
++# recreating the compose network changes the bridge name. This unit re-runs the
++# apply, which resolves the bridge from the current state rather than from a
++# stored value — so a network recreated under a new id gets a correct rule
++# instead of a stale one that silently matches nothing.
++#
++# It does not fetch anything and needs no network of its own.
++#
++# Install:
++#   cp t074-smtp-egress.service /etc/systemd/system/
++#   systemctl daemon-reload && systemctl enable t074-smtp-egress.service
++#
++# Known limitation, deliberately not automated: if the compose network is
++# removed and recreated *without* restarting Docker, systemd sees no event and
++# this unit does not re-run. Re-run it by hand after such a change —
++# `systemctl restart t074-smtp-egress` — or the container half of the rule will
++# point at a bridge that no longer exists. The apply refuses to run at all when
++# the bridge cannot be resolved, so the failure is loud rather than silent.
++
++[Unit]
++Description=T-074 outbound SMTP restriction (TCP/25)
++After=network-online.target docker.service
++Wants=network-online.target
++Requires=docker.service
++PartOf=docker.service
++
++[Service]
++Type=oneshot
++RemainAfterExit=yes
++# Idempotent by construction: the chain is rebuilt in one atomic transaction
++# and each jump is inserted only when absent, so repeated starts cannot stack
++# duplicates.
++ExecStart=/usr/bin/python3 /opt/t074/smtp_egress.py --interface eth0 --apply
++StandardOutput=journal
++StandardError=journal
++
++[Install]
++WantedBy=multi-user.target
