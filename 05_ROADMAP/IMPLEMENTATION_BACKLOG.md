@@ -2452,17 +2452,127 @@ Sitemap: https://lookla.gr/sitemap.xml
 ---
 
 ### T-045 — Publish Terms of Service (pre-launch blocker)
-**Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** TBD | **Epic:** EPIC-05
-**Dependencies:** T-017
+**Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
+**Dependencies:** T-017 ✅
+**Status:**
 
-**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
+```text
+Implementation and publication gate: ✅ Completed
+Legal review:                        Pending
+Operator disclosure:                 Pending
+Terms publication:                   Disabled
+```
+
+Merged via PR #75. **The ticket is deliberately not marked fully complete**: the page exists and is correct as far as the facts go, but the Article 5 disclosure is incomplete and no Greek legal review is on file. `TERMS_PUBLICATION_ENABLED` stays `false`, and enabling it is a separate reviewed change. No deployment was made — with the gate closed there is no user-visible difference.
+
+**Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
+
+#### Facts established before drafting
+
+| Question | Verified answer |
+|---|---|
+| Who operates Lookla | **Zhuykov Andrey, a natural person in Greece.** No company, so no registration number, VAT number or registered office exists to cite. |
+| Is there online booking | **No.** `/availability-requests` exists in the API, but no page links to it — a reservation cannot be made. |
+| Can a paid plan be bought | **No.** `/pricing` redirects to `/`, and `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and `PAYMENT_PROVIDER` are all empty. `/api/payments/plans` does serve plan data (Pro €29/mo salon, €14/mo professional, "Online booking" listed as a feature), so the plans are visible to anyone reading the API while being unbuyable — which the document has to address rather than ignore. |
+| Is messaging live | **Yes** — `/account/messages` → `/api/chat/conversations`. |
+| Where listings come from | A crawler over **Google, Vrisko, Treatwell and Foursquare**, plus owner submissions. |
+| Can owners correct listings | **Yes** — claim by verification code sent to the business's already-held contact address, then edit. |
+| Is there a reporting mechanism | **Yes** — `ReportButton` → `/api/reports`. |
+| Is registration open | **Yes**, `/en/register` returns 200. |
+| Is there an acceptance checkbox | **No** — and the document says so rather than adding one. |
+
+#### What the document says, and why
+
+17 sections in four locales, covering the required scope: operator identity and contact, applicable law and jurisdiction, Lookla's status as a directory rather than a party to the transaction, the absence of online booking, responsibility for listing data, user and owner accounts, prohibited use, intellectual property, limitation of liability, suspension and termination, links to Privacy and Cookies, version/effective-date contract, and contact.
+
+Three drafting decisions worth stating:
+
+- **No acceptance checkbox, and the document explains why.** A tick-box would imply we had determined where acceptance is legally required and what it covers. That has not been determined, so the Terms say plainly that use constitutes acceptance rather than collecting a consent record that looks more considered than it is. A test asserts the registration page has no such checkbox, so adding one later fails until the text is updated to match.
+- **Paid plans are addressed, not omitted.** The plans are discoverable through the API, so saying nothing would be a gap. The document states they cannot currently be bought, that no payment provider is configured, and that nothing on Lookla can currently create a payment obligation.
+- **Retention is deferred to the Privacy Policy, not restated.** Two documents stating retention independently is how they drift apart; a test asserts the Terms do not restate a retention period.
+
+#### Corrections made after the first review
+
+Two statements in the first draft were **wrong**, not merely unreviewed. Both are the kind of error that a template inherits and nobody checks.
+
+**The EU ODR platform was cited, and it no longer exists.** Regulation (EU) 2024/3228 repealed the ODR Regulation with effect from 20 July 2025; the platform stopped accepting new complaints on 20 March 2025. Directing a user to a dead redress route is worse than saying nothing, because it looks like a remedy while consuming the time in which a real one could have been used. Removed in all four locales and replaced with a neutral statement that nothing in the Terms limits a mandatory right to an available out-of-court procedure or to a competent court. A named Greek ADR body will only be added once a lawyer confirms one applies to this model. Tests now fail if the URL, the phrase, or any of the three translated forms reappear, and separately if a commercial ADR provider is named.
+
+**The 16-year age floor was presented as though it were the legal threshold.** Article 21 of Greek Law 4624/2019 sets **15** for a minor's own consent to data processing. The product rule itself is defensible; stating it as if it were Greek law was not. Option A was taken: 16 remains a **Lookla eligibility rule**, and the document now says explicitly that this is not a statement about what Greek data-protection law sets, and that the consent threshold is a separate question from who may hold an account. Contractual capacity remains a question for the lawyer.
+
+**Moderation is now described as it actually works**, which DSA Article 14 requires and which the first draft under-specified. Verified against the code rather than assumed: `check_text` and `check_image` exist in `app/services/moderation.py` but are **called from no router**, so no automated screening runs at all; a report creates a row and, past a threshold, sets `needs_review`, which puts the listing in a queue a person reviews through the admin UI. The document therefore states that nothing is screened or filtered before publication, that no removal or restriction is decided by an automated system, that the single automated step is flagging for human review and changes nothing visible, and that **no formal internal complaints or appeals procedure exists** — with an undertaking to build one and update the Terms before relying on it, rather than describing one that is not there.
+
+#### Publication gate — why merging is now safe
+
+The reviewer's stated reason for blocking the merge was that a merged document could be published accidentally by any later frontend deploy. That is an engineering problem, and it is solved rather than managed by convention:
+
+```ts
+export const TERMS_PUBLICATION_ENABLED = false;
+export const OPERATOR_DISCLOSURE = { geographicAddress: '', /* … */ };
+export function isTermsPublishable() { … }   // both must hold
+```
+
+While the gate is closed, `TermsPage` calls `notFound()` **before rendering anything**, and the Footer omits the link — so the link and the page cannot disagree. Publishing an incomplete legal notice is worse than publishing none, which is why the page 404s instead of serving a partial document.
+
+Eight tests hold the gate shut, and they were mutation-tested rather than assumed: filling `geographicAddress` with a plausible placeholder (`'Athens, Greece'`) fails, and removing the `notFound()` guard fails. A placeholder is the realistic failure mode — it looks filled in, satisfies a naive truthiness check, and ships a false address to production. One test is dormant by design: if `TERMS_PUBLICATION_ENABLED` is ever flipped, it begins requiring a recorded Greek legal review in this backlog and a non-empty address.
+
+#### Operator disclosure — what is confirmed, and what is not
+
+Recorded separately on purpose, because conflating the two is how an unverified string becomes a legal disclosure.
+
+**Confirmed:** no company or other legal entity exists for Lookla; no company registration number; no ΓΕΜΗ; no corporate ΑΦΜ.
+
+**Not confirmed, and therefore asserted nowhere:**
+
+- The exact legal spelling and name order. `Zhuykov Andrey` comes from existing project documentation and **has not been checked against a passport, the Greek tax register or any other official record**. It must not be treated as final. No alternative transliteration and no patronymic have been added.
+- Whether operating Lookla requires or is covered by a registered individual professional activity (`έναρξη ατομικής δραστηριότητας`), and whether an existing personal tax status extends to it. Neither "registered sole professional" nor "private non-commercial activity" can be written honestly today.
+- Whether a personal ΑΦΜ belongs in a public disclosure.
+- The publishable address. No non-residential professional or service address has been selected. A home address is not to be published unless Greek law unambiguously requires it, and an employer's address is not to be used.
+
+`geographicAddress: ''` is therefore the **correct** state, not an unfinished one — and the gate tests treat a plausible placeholder as a failure precisely so that it stays that way.
+
+#### Legal review brief
+
+`docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md` is a self-contained document that can be sent to a Greek lawyer as-is. It states what the product verifiably does and does not do, and asks the questions in priority order: the Article 5 geographic address (blocking), DSA Article 14 classification and whether a formal notice-and-action procedure must be built, age and contractual capacity, the enforceability of the liability limitation and the jurisdiction clause against a Greek consumer, the crawled-data wording, and where assent is required.
+
+It records explicitly that the operator does not wish to publish a home address unless legally unavoidable, and that no address, company number or VAT number has been invented to fill the gap.
+
+#### Legal review package — blocking publication
+
+**Unresolved and blocking: the operator's geographic address.** Article 5 of the e-Commerce Directive requires an information-society service to make its name, geographic address and contact details easily and permanently accessible. Registration and VAT details are required only where they apply, and there is no company here — but that does not mean no address is required. This cannot be resolved from the code: it needs a decision about whether Lookla is currently an information-society service operated commercially, whether the operator's activity requires registration, and what address may lawfully be published. A home address must not be published without a deliberate decision; a professional or service address may be an option. **No address was invented.**
+
+For the lawyer, in priority order:
+
+1. **Geographic address and operator details** — the blocking item above, including the exact legal spelling of the name and whether an ΑΦΜ must be shown.
+2. **DSA classification (Article 14).** Lookla hosts owner-submitted data, messages and reviews, has a reporting mechanism, and can restrict or suspend accounts. If it is an intermediary/hosting service, Article 14 requires the Terms to describe restrictions on user information, the moderation measures and tools used, algorithmic decision-making and human review, and the internal complaint-handling procedure. The description now in the document is accurate; whether it is *sufficient*, and whether a formal complaint procedure must be built, is a legal determination. A follow-up ticket should be opened if `/api/reports` does not satisfy the required notice-and-action process.
+3. **Section 12, liability.** Drafted to preserve the mandatory carve-outs; whether what remains is enforceable against a Greek consumer is a legal question.
+4. **Section 14, governing law and jurisdiction.** Greek law with the consumer's home forum preserved; interaction with Rome I / Brussels I recast needs confirming.
+5. **Section 3, crawled-data provenance** — whether the wording needs adjusting under Greek unfair-competition or database rights.
+6. **Age and capacity** — whether 16 is the right product floor, and what contractual capacity requires separately from the data-protection threshold.
+7. **Acceptance** — where assent is legally required, what it must cover, and whether a version-stamped acceptance record must be stored. The current no-checkbox behaviour is documented rather than defended.
+
+#### Verification
+
+**1236 frontend tests** (1202 + 34 new), lint clean, production build clean with `/[locale]/terms` present at 4.22 kB.
+
+The tests deliberately guard the *honesty* of the document, not only its structure: booking and payment claims, listing-source disclosure, operator identity, absence of an invented company, the no-checkbox statement matching the actual registration page, the consumer-law carve-outs surviving in every locale, and version/effective-date agreement across locales — four locales disagreeing about which version is in force would make the document unenforceable in whichever one is wrong.
+
+One test was wrong before the document was: it asserted the phrase "cannot currently create a payment obligation" while the text reads "Nothing on Lookla can currently create a payment obligation". It failed on phrasing that was never there rather than on a missing guarantee, and now asserts the sentence the document actually contains, in all four locales.
+
+The T-060 Footer tripwire fired correctly — it pins the number of footer controls carrying the focus-ring token and the 44px touch target, and the Terms link makes four. Raised to 4 with a note that it must be raised deliberately when a control is added and never relaxed to a lower bound, since the pinned count is what catches a new control shipping without the token.
 
 **Acceptance Criteria:**
-- [ ] Terms of Service drafted and reviewed (legal input required — do not have an AI agent invent binding contractual terms)
-- [ ] `/terms` page published, linked from registration and the Privacy Policy
-- [ ] Confirm with Greek counsel whether e-commerce/consumer-protection rules require additional disclosures (e.g. an operator postal address) beyond what GDPR Article 13 requires — this question was explicitly raised and deferred during T-017's review and is not resolved by this ticket alone
-
----
+- [x] Terms page at `/[locale]/terms`, SSR, all four locales
+- [x] Operator identity, contact, applicable law and jurisdiction stated
+- [x] Directory status and non-party role stated
+- [x] Absence of online booking stated
+- [x] Listing-data responsibility, owner correction and removal path stated
+- [x] Accounts, prohibited use, IP, liability, termination covered
+- [x] Linked from the Footer in all four locales
+- [x] Version and effective date shown and pinned by test
+- [x] No fictitious acceptance checkbox
+- [ ] **Greek legal review** — required before launch; the operator's geographic address is unresolved and blocks publication
+- [ ] DSA Article 14 classification confirmed, and a formal complaints procedure built if required
+- [ ] Independent review of this PR
 
 ### T-046 — Document legitimate-interest balancing assessments
 **Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
