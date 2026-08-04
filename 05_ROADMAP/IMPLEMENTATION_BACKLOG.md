@@ -2454,7 +2454,7 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-045 — Publish Terms of Service (pre-launch blocker)
 **Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
 **Dependencies:** T-017 ✅
-**Status:** Drafted and shipped as a page. ⚠️ **Not legally reviewed** — see "Legal review required" below. Draft PR; nothing deployed.
+**Status:** Drafted, then corrected after review found two factually wrong legal statements. ⚠️ **Not legally reviewed** — publication is blocked on Greek legal advice, see "Legal review package" below. Draft PR; nothing deployed.
 
 **Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
 
@@ -2482,14 +2482,29 @@ Three drafting decisions worth stating:
 - **Paid plans are addressed, not omitted.** The plans are discoverable through the API, so saying nothing would be a gap. The document states they cannot currently be bought, that no payment provider is configured, and that nothing on Lookla can currently create a payment obligation.
 - **Retention is deferred to the Privacy Policy, not restated.** Two documents stating retention independently is how they drift apart; a test asserts the Terms do not restate a retention period.
 
-#### Legal review required — this is not optional
+#### Corrections made after the first review
 
-This document has **not** been reviewed by a Greek lawyer, and must be before launch. Two areas in particular state positions that mandatory law may narrow:
+Two statements in the first draft were **wrong**, not merely unreviewed. Both are the kind of error that a template inherits and nobody checks.
 
-- **Section 12 (liability).** Drafted to preserve the carve-outs Greek and EU consumer law require — no exclusion for death or personal injury from our negligence, for fraud, or for wilful misconduct and gross negligence, and an explicit statement that mandatory consumer rights are unaffected. Whether the remaining limitation is enforceable against a Greek consumer is a legal question, not a drafting one.
-- **Section 14 (governing law and jurisdiction).** Greek law is stated, with the consumer's home-forum protection preserved and the EU ODR platform referenced. The interaction with Rome I / Brussels I recast for consumers needs confirming.
+**The EU ODR platform was cited, and it no longer exists.** Regulation (EU) 2024/3228 repealed the ODR Regulation with effect from 20 July 2025; the platform stopped accepting new complaints on 20 March 2025. Directing a user to a dead redress route is worse than saying nothing, because it looks like a remedy while consuming the time in which a real one could have been used. Removed in all four locales and replaced with a neutral statement that nothing in the Terms limits a mandatory right to an available out-of-court procedure or to a competent court. A named Greek ADR body will only be added once a lawyer confirms one applies to this model. Tests now fail if the URL, the phrase, or any of the three translated forms reappear, and separately if a commercial ADR provider is named.
 
-Also for the lawyer: whether operating as a natural person changes any disclosure obligation; whether the crawled-data provenance in Section 3 needs different wording under Greek unfair-competition or database rights; and whether the 16-year age floor is right for Greece.
+**The 16-year age floor was presented as though it were the legal threshold.** Article 21 of Greek Law 4624/2019 sets **15** for a minor's own consent to data processing. The product rule itself is defensible; stating it as if it were Greek law was not. Option A was taken: 16 remains a **Lookla eligibility rule**, and the document now says explicitly that this is not a statement about what Greek data-protection law sets, and that the consent threshold is a separate question from who may hold an account. Contractual capacity remains a question for the lawyer.
+
+**Moderation is now described as it actually works**, which DSA Article 14 requires and which the first draft under-specified. Verified against the code rather than assumed: `check_text` and `check_image` exist in `app/services/moderation.py` but are **called from no router**, so no automated screening runs at all; a report creates a row and, past a threshold, sets `needs_review`, which puts the listing in a queue a person reviews through the admin UI. The document therefore states that nothing is screened or filtered before publication, that no removal or restriction is decided by an automated system, that the single automated step is flagging for human review and changes nothing visible, and that **no formal internal complaints or appeals procedure exists** — with an undertaking to build one and update the Terms before relying on it, rather than describing one that is not there.
+
+#### Legal review package — blocking publication
+
+**Unresolved and blocking: the operator's geographic address.** Article 5 of the e-Commerce Directive requires an information-society service to make its name, geographic address and contact details easily and permanently accessible. Registration and VAT details are required only where they apply, and there is no company here — but that does not mean no address is required. This cannot be resolved from the code: it needs a decision about whether Lookla is currently an information-society service operated commercially, whether the operator's activity requires registration, and what address may lawfully be published. A home address must not be published without a deliberate decision; a professional or service address may be an option. **No address was invented.**
+
+For the lawyer, in priority order:
+
+1. **Geographic address and operator details** — the blocking item above, including the exact legal spelling of the name and whether an ΑΦΜ must be shown.
+2. **DSA classification (Article 14).** Lookla hosts owner-submitted data, messages and reviews, has a reporting mechanism, and can restrict or suspend accounts. If it is an intermediary/hosting service, Article 14 requires the Terms to describe restrictions on user information, the moderation measures and tools used, algorithmic decision-making and human review, and the internal complaint-handling procedure. The description now in the document is accurate; whether it is *sufficient*, and whether a formal complaint procedure must be built, is a legal determination. A follow-up ticket should be opened if `/api/reports` does not satisfy the required notice-and-action process.
+3. **Section 12, liability.** Drafted to preserve the mandatory carve-outs; whether what remains is enforceable against a Greek consumer is a legal question.
+4. **Section 14, governing law and jurisdiction.** Greek law with the consumer's home forum preserved; interaction with Rome I / Brussels I recast needs confirming.
+5. **Section 3, crawled-data provenance** — whether the wording needs adjusting under Greek unfair-competition or database rights.
+6. **Age and capacity** — whether 16 is the right product floor, and what contractual capacity requires separately from the data-protection threshold.
+7. **Acceptance** — where assent is legally required, what it must cover, and whether a version-stamped acceptance record must be stored. The current no-checkbox behaviour is documented rather than defended.
 
 #### Verification
 
@@ -2511,7 +2526,8 @@ The T-060 Footer tripwire fired correctly — it pins the number of footer contr
 - [x] Linked from the Footer in all four locales
 - [x] Version and effective date shown and pinned by test
 - [x] No fictitious acceptance checkbox
-- [ ] **Greek legal review** — required before launch
+- [ ] **Greek legal review** — required before launch; the operator's geographic address is unresolved and blocks publication
+- [ ] DSA Article 14 classification confirmed, and a formal complaints procedure built if required
 - [ ] Independent review of this PR
 
 ### T-046 — Document legitimate-interest balancing assessments
