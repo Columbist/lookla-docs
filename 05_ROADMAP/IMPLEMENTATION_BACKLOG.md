@@ -2274,6 +2274,91 @@ Assess provider abuse reports and IP reputation · review log retention (68 MB/d
 
 ---
 
+### T-073 — Open-proxy incident follow-up & IP reputation assessment
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Incident response
+**Dependencies:** T-072 ✅
+**Status:** Technical assessment complete. **One confirmed listing.** Two items need account access this project does not have — see "Requires the operator" below.
+
+Follow-up to T-072, taken before T-047/T-048 because it is time-sensitive: an abuse ticket, a provider restriction or a reputation listing can appear *after* the relay stops.
+
+#### Method note — the negatives had to be earned
+
+A DNSBL answering `NXDOMAIN` looks identical whether the address is clean or the list is not answering at all. Every result below was therefore checked with three controls per list: `127.0.0.1` must come back clean, the standard self-test entry `127.0.0.2` must come back **listed**, and a random address must come back clean. A list whose self-test does not resolve is recorded as **not tested**, never as "not listed".
+
+That distinction changed the outcome. Spamhaus and SORBS both returned `NXDOMAIN` for our address *and* for their own self-test entry — they are not answering through this host's resolver (Google DNS), so their silence means nothing. Reporting them as clean would have been the same vacuous pass that has already appeared twice in this project.
+
+#### Reputation results
+
+| List | Result | Reliability |
+|---|---|---|
+| **b.barracudacentral.org** | **LISTED — `127.0.0.2`** | **reliable** (clean control ✅, self-test ✅, random ✅) |
+| dnsbl.dronebl.org | not listed | reliable — and this is the **open-proxy-specific** list, so the negative is meaningful |
+| bl.spamcop.net | not listed | reliable |
+| all.s5h.net | not listed | reliable |
+| dnsbl-1.uceprotect.net | not listed | reliable |
+| zen / xbl / pbl.spamhaus.org | **not tested** | list not answering via this resolver |
+| dnsbl / socks / http.dnsbl.sorbs.net | **not tested** | list not answering via this resolver |
+
+Barracuda's listing is genuine, not a wildcard responder: its clean control returned `NXDOMAIN`, a random address returned `NXDOMAIN`, and only the self-test entry and our address returned a listing.
+
+#### Other technical checks
+
+- **Outbound SMTP is not restricted.** A connection to a public MX on port 25 completes and returns a `220` banner, so the provider has not applied the egress block that commonly follows an abuse finding. Useful as evidence that no restriction is in force — and also a standing exposure worth its own decision now that the host has been used as a relay once.
+- **No PTR record is published** for the public address. The local answer (`columbxray.`) comes from `systemd-resolved`, not DNS; three public resolvers return nothing. Not an abuse finding, but generic or absent rDNS is itself a reputation factor.
+- **No abuse mail was delivered locally** — there is no mail spool on the host at all, so any provider notice would have gone to the account's registered address, not here.
+
+#### Incident timeline
+
+```text
+2026-04-28 15:07   tinyproxy config last modified (the open configuration)
+2026-07-21 00:00   earliest surviving log entry — already ~1.0 MB/day compressed
+2026-07-22 → 07-27 steady ~0.9–1.0 MB/day
+2026-07-28 06:01   service restarted; volume jumps the same day
+2026-07-29         7.6 MB/day — roughly an eightfold increase
+2026-07-30 → 08-03 3.5–7.5 MB/day sustained
+2026-08-04 07:19   external access to :8888 blocked (T-072)
+2026-08-04 07:24   :443 empty-SNI route to the proxy removed
+2026-08-04 07:25   tinyproxy stopped, disabled and masked
+```
+
+Heavy abuse therefore ran for about **seven days**, on top of lighter use going back at least to 21 July — the earliest surviving log. The open configuration itself dates from 28 April, so the exposure window is materially longer than the evidence retained for it.
+
+#### Requires the operator — this assessment cannot be completed from the host
+
+1. **Provider portal and abuse mailbox.** Check for warnings, complaints, automatic restrictions or rate limits. Nothing can be seen from the server: no notice was delivered locally, and the account's registered email is not readable here.
+2. **Barracuda delisting.** The listing is confirmed. Barracuda operates a self-service removal request, and the condition it checks — that the host is no longer an open relay — is now satisfied. **This was not submitted**: it is an outward-facing action, and the operator should choose when to make it.
+3. **Spamhaus and SORBS** must be checked by hand through their web lookups, since neither answers via this host's resolver. They matter more than the lists that did answer.
+
+**Deliberately not done:** no approach was made to the provider. There is no open ticket to respond to, and volunteering an incident report without one invites a restriction rather than avoiding it. If a ticket exists, the timeline above is the factual basis for a reply.
+
+#### Outcome so far
+
+```text
+Provider abuse reports found:      unknown — requires account access
+Active provider restrictions found: none detectable from the host (SMTP egress open)
+IP reputation findings:            1 confirmed listing (Barracuda); 4 reliable clean; 6 not testable here
+Origin IP rotation required:       Pending — decide after the provider check
+```
+
+**Re-check in several days.** Reputation lists update on a lag, and a listing can still appear after the behaviour stops. The reverse is also true: Barracuda may clear on its own once the relay has been absent long enough.
+
+#### Origin IP rotation
+
+Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost the Cloudflare origin restriction its verified state (T-049 is bound to the current address), and does nothing about the single listing, which has a delisting path. Revisit if the provider check turns up a restriction, or if Spamhaus/SORBS prove to be listing the address too.
+
+**Acceptance Criteria:**
+- [x] Reputation checked across open-proxy, spam, and general-abuse categories, with per-list reliability established rather than assumed
+- [x] SMTP egress and rDNS checked
+- [x] Incident timeline reconstructed from surviving logs
+- [x] Private incident record written
+- [ ] Provider portal and abuse mailbox checked — **operator**
+- [ ] Barracuda delisting submitted — **operator's call**
+- [ ] Spamhaus and SORBS checked manually — **operator**
+- [ ] Re-check after several days
+- [ ] Origin IP rotation decision
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
