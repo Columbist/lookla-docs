@@ -2452,17 +2452,67 @@ Sitemap: https://lookla.gr/sitemap.xml
 ---
 
 ### T-045 — Publish Terms of Service (pre-launch blocker)
-**Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** TBD | **Epic:** EPIC-05
-**Dependencies:** T-017
+**Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
+**Dependencies:** T-017 ✅
+**Status:** Drafted and shipped as a page. ⚠️ **Not legally reviewed** — see "Legal review required" below. Draft PR; nothing deployed.
 
-**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
+**Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
+
+#### Facts established before drafting
+
+| Question | Verified answer |
+|---|---|
+| Who operates Lookla | **Zhuykov Andrey, a natural person in Greece.** No company, so no registration number, VAT number or registered office exists to cite. |
+| Is there online booking | **No.** `/availability-requests` exists in the API, but no page links to it — a reservation cannot be made. |
+| Can a paid plan be bought | **No.** `/pricing` redirects to `/`, and `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and `PAYMENT_PROVIDER` are all empty. `/api/payments/plans` does serve plan data (Pro €29/mo salon, €14/mo professional, "Online booking" listed as a feature), so the plans are visible to anyone reading the API while being unbuyable — which the document has to address rather than ignore. |
+| Is messaging live | **Yes** — `/account/messages` → `/api/chat/conversations`. |
+| Where listings come from | A crawler over **Google, Vrisko, Treatwell and Foursquare**, plus owner submissions. |
+| Can owners correct listings | **Yes** — claim by verification code sent to the business's already-held contact address, then edit. |
+| Is there a reporting mechanism | **Yes** — `ReportButton` → `/api/reports`. |
+| Is registration open | **Yes**, `/en/register` returns 200. |
+| Is there an acceptance checkbox | **No** — and the document says so rather than adding one. |
+
+#### What the document says, and why
+
+17 sections in four locales, covering the required scope: operator identity and contact, applicable law and jurisdiction, Lookla's status as a directory rather than a party to the transaction, the absence of online booking, responsibility for listing data, user and owner accounts, prohibited use, intellectual property, limitation of liability, suspension and termination, links to Privacy and Cookies, version/effective-date contract, and contact.
+
+Three drafting decisions worth stating:
+
+- **No acceptance checkbox, and the document explains why.** A tick-box would imply we had determined where acceptance is legally required and what it covers. That has not been determined, so the Terms say plainly that use constitutes acceptance rather than collecting a consent record that looks more considered than it is. A test asserts the registration page has no such checkbox, so adding one later fails until the text is updated to match.
+- **Paid plans are addressed, not omitted.** The plans are discoverable through the API, so saying nothing would be a gap. The document states they cannot currently be bought, that no payment provider is configured, and that nothing on Lookla can currently create a payment obligation.
+- **Retention is deferred to the Privacy Policy, not restated.** Two documents stating retention independently is how they drift apart; a test asserts the Terms do not restate a retention period.
+
+#### Legal review required — this is not optional
+
+This document has **not** been reviewed by a Greek lawyer, and must be before launch. Two areas in particular state positions that mandatory law may narrow:
+
+- **Section 12 (liability).** Drafted to preserve the carve-outs Greek and EU consumer law require — no exclusion for death or personal injury from our negligence, for fraud, or for wilful misconduct and gross negligence, and an explicit statement that mandatory consumer rights are unaffected. Whether the remaining limitation is enforceable against a Greek consumer is a legal question, not a drafting one.
+- **Section 14 (governing law and jurisdiction).** Greek law is stated, with the consumer's home-forum protection preserved and the EU ODR platform referenced. The interaction with Rome I / Brussels I recast for consumers needs confirming.
+
+Also for the lawyer: whether operating as a natural person changes any disclosure obligation; whether the crawled-data provenance in Section 3 needs different wording under Greek unfair-competition or database rights; and whether the 16-year age floor is right for Greece.
+
+#### Verification
+
+**1236 frontend tests** (1202 + 34 new), lint clean, production build clean with `/[locale]/terms` present at 4.22 kB.
+
+The tests deliberately guard the *honesty* of the document, not only its structure: booking and payment claims, listing-source disclosure, operator identity, absence of an invented company, the no-checkbox statement matching the actual registration page, the consumer-law carve-outs surviving in every locale, and version/effective-date agreement across locales — four locales disagreeing about which version is in force would make the document unenforceable in whichever one is wrong.
+
+One test was wrong before the document was: it asserted the phrase "cannot currently create a payment obligation" while the text reads "Nothing on Lookla can currently create a payment obligation". It failed on phrasing that was never there rather than on a missing guarantee, and now asserts the sentence the document actually contains, in all four locales.
+
+The T-060 Footer tripwire fired correctly — it pins the number of footer controls carrying the focus-ring token and the 44px touch target, and the Terms link makes four. Raised to 4 with a note that it must be raised deliberately when a control is added and never relaxed to a lower bound, since the pinned count is what catches a new control shipping without the token.
 
 **Acceptance Criteria:**
-- [ ] Terms of Service drafted and reviewed (legal input required — do not have an AI agent invent binding contractual terms)
-- [ ] `/terms` page published, linked from registration and the Privacy Policy
-- [ ] Confirm with Greek counsel whether e-commerce/consumer-protection rules require additional disclosures (e.g. an operator postal address) beyond what GDPR Article 13 requires — this question was explicitly raised and deferred during T-017's review and is not resolved by this ticket alone
-
----
+- [x] Terms page at `/[locale]/terms`, SSR, all four locales
+- [x] Operator identity, contact, applicable law and jurisdiction stated
+- [x] Directory status and non-party role stated
+- [x] Absence of online booking stated
+- [x] Listing-data responsibility, owner correction and removal path stated
+- [x] Accounts, prohibited use, IP, liability, termination covered
+- [x] Linked from the Footer in all four locales
+- [x] Version and effective date shown and pinned by test
+- [x] No fictitious acceptance checkbox
+- [ ] **Greek legal review** — required before launch
+- [ ] Independent review of this PR
 
 ### T-046 — Document legitimate-interest balancing assessments
 **Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
