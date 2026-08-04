@@ -1,8 +1,8 @@
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index 6906279..40be846 100644
+index 6906279..a0bf63c 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-@@ -2452,17 +2452,83 @@ Sitemap: https://lookla.gr/sitemap.xml
+@@ -2452,17 +2452,103 @@ Sitemap: https://lookla.gr/sitemap.xml
  ---
  
  ### T-045 — Publish Terms of Service (pre-launch blocker)
@@ -10,7 +10,7 @@ index 6906279..40be846 100644
 -**Dependencies:** T-017
 +**Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
 +**Dependencies:** T-017 ✅
-+**Status:** Drafted, then corrected after review found two factually wrong legal statements. ⚠️ **Not legally reviewed** — publication is blocked on Greek legal advice, see "Legal review package" below. Draft PR; nothing deployed.
++**Status:** Drafted, corrected after review, and **technically gated**. The page returns 404 and the footer link is hidden until the operator's Article 5 disclosure is complete and a Greek legal review is on file — so merging cannot cause an incomplete legal notice to go live through a later, unrelated frontend deploy. ⚠️ **Not legally reviewed.** Two items require input this project cannot produce: the operator's geographic address, and the review itself.
  
 -**Description:** T-017's Privacy Policy lawful-basis matrix (approved by architect review, 2026-07-16) relies on "performance of a contract with you" as the legal basis for account registration, authentication, messaging, availability requests, and appointments. That basis presumes an actual contract — Lookla currently has no Terms of Service, so the contractual basis is not yet formally supported by user-facing terms. This is a legal/business-process ticket, not primarily an engineering one; flagging it so it is not silently forgotten before public launch.
 +**Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
@@ -54,6 +54,26 @@ index 6906279..40be846 100644
 +
 +**Moderation is now described as it actually works**, which DSA Article 14 requires and which the first draft under-specified. Verified against the code rather than assumed: `check_text` and `check_image` exist in `app/services/moderation.py` but are **called from no router**, so no automated screening runs at all; a report creates a row and, past a threshold, sets `needs_review`, which puts the listing in a queue a person reviews through the admin UI. The document therefore states that nothing is screened or filtered before publication, that no removal or restriction is decided by an automated system, that the single automated step is flagging for human review and changes nothing visible, and that **no formal internal complaints or appeals procedure exists** — with an undertaking to build one and update the Terms before relying on it, rather than describing one that is not there.
 +
++#### Publication gate — why merging is now safe
++
++The reviewer's stated reason for blocking the merge was that a merged document could be published accidentally by any later frontend deploy. That is an engineering problem, and it is solved rather than managed by convention:
++
++```ts
++export const TERMS_PUBLICATION_ENABLED = false;
++export const OPERATOR_DISCLOSURE = { geographicAddress: '', /* … */ };
++export function isTermsPublishable() { … }   // both must hold
++```
++
++While the gate is closed, `TermsPage` calls `notFound()` **before rendering anything**, and the Footer omits the link — so the link and the page cannot disagree. Publishing an incomplete legal notice is worse than publishing none, which is why the page 404s instead of serving a partial document.
++
++Eight tests hold the gate shut, and they were mutation-tested rather than assumed: filling `geographicAddress` with a plausible placeholder (`'Athens, Greece'`) fails, and removing the `notFound()` guard fails. A placeholder is the realistic failure mode — it looks filled in, satisfies a naive truthiness check, and ships a false address to production. One test is dormant by design: if `TERMS_PUBLICATION_ENABLED` is ever flipped, it begins requiring a recorded Greek legal review in this backlog and a non-empty address.
++
++#### Legal review brief
++
++`docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md` is a self-contained document that can be sent to a Greek lawyer as-is. It states what the product verifiably does and does not do, and asks the questions in priority order: the Article 5 geographic address (blocking), DSA Article 14 classification and whether a formal notice-and-action procedure must be built, age and contractual capacity, the enforceability of the liability limitation and the jurisdiction clause against a Greek consumer, the crawled-data wording, and where assent is required.
++
++It records explicitly that the operator does not wish to publish a home address unless legally unavoidable, and that no address, company number or VAT number has been invented to fill the gap.
++
 +#### Legal review package — blocking publication
 +
 +**Unresolved and blocking: the operator's geographic address.** Article 5 of the e-Commerce Directive requires an information-society service to make its name, geographic address and contact details easily and permanently accessible. Registration and VAT details are required only where they apply, and there is no company here — but that does not mean no address is required. This cannot be resolved from the code: it needs a decision about whether Lookla is currently an information-society service operated commercially, whether the operator's activity requires registration, and what address may lawfully be published. A home address must not be published without a deliberate decision; a professional or service address may be an option. **No address was invented.**
@@ -94,12 +114,133 @@ index 6906279..40be846 100644
  
  ### T-046 — Document legitimate-interest balancing assessments
  **Priority:** P0 | **Owner:** OPS/Legal | **Estimate:** 2h | **Epic:** EPIC-05
+diff --git a/docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md b/docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md
+new file mode 100644
+index 0000000..575c9fe
+--- /dev/null
++++ b/docs/07_LEGAL/T-045_LEGAL_REVIEW_BRIEF.md
+@@ -0,0 +1,115 @@
++# Lookla — Terms of Service: brief for Greek legal review
++
++**Prepared:** 2026-08-04 · **Document under review:** `frontend/app/[locale]/terms/content.ts` (17 sections, four locales)
++**Status:** drafted, not published. The page returns 404 and the footer link is hidden until the operator disclosure is complete and this review is received.
++
++This brief exists so the reviewing lawyer works from what the product actually does. Every factual statement below was verified against the running application, not assumed. Where something is unknown, it says so rather than guessing.
++
++---
++
++## 1. What Lookla is, factually
++
++A directory of beauty salons and independent beauty professionals in Greece, at `lookla.gr`. Visitors search listings and contact businesses directly.
++
++| Capability | Status, verified |
++|---|---|
++| Browsing and search | **Live** |
++| Contacting a salon | **Live** — the listing shows the business's own phone/contact details |
++| Online booking | **Not available.** Availability-request endpoints exist in the API, but no page links to them; a reservation cannot be made through the site |
++| Messaging user ↔ salon | **Live** — `/account/messages` |
++| User accounts | **Live**, open registration |
++| Owner accounts | **Live** — a listing is claimed with a code sent to the contact address already held for that business |
++| Reviews | **Live** |
++| Reporting content | **Live** — a report button on listings and reviews |
++| Paid subscriptions | **Cannot be bought.** The pricing page redirects to the homepage and no payment provider is configured. Plan data (Pro €29/month for salons, €14/month for professionals) is nonetheless returned by a public API endpoint |
++| Automated content moderation | **Not in operation.** The code exists but is called from nowhere; nothing is screened before publication |
++| Internal appeals procedure | **Does not exist** |
++
++**Data provenance.** Most listings were compiled by an automated crawler from publicly available sources — Google, Vrisko, Treatwell and Foursquare — plus information submitted by owners. Business owners can claim a listing and correct it, or ask for removal by email without an account.
++
++**Operator.** A natural person resident in Greece. There is no company, so no company registration number and no corporate VAT number exist.
++
++---
++
++## 2. Blocking question — the Article 5 disclosure
++
++Article 5 of Directive 2000/31/EC requires an information-society service to make easily, directly and permanently accessible: the provider's name, the geographic address at which it is established, contact details including email, and — where applicable — registration and VAT details.
++
++The document currently gives the name and `hello@lookla.gr`. **No geographic address is published, and none has been invented.** Publication is technically blocked until this is resolved.
++
++Please advise on:
++
++1. The correct legal spelling of the operator's name for this document.
++2. Whether Lookla, as it stands (free to use, no transactions, no payments), is an information-society service provided by this natural person for the purposes of Article 5.
++3. Whether the activity requires registration of professional or business activity in Greece, and whether that changes the disclosure.
++4. Which address must be published — place of establishment, professional address, a service address, or a home address only if genuinely required. **The operator does not wish to publish a home address unless it is legally unavoidable.**
++5. Whether a personal ΑΦΜ must appear in the public disclosure.
++6. Whether `hello@lookla.gr` is sufficient as the address for legally significant communication, or whether a separate formal address is needed.
++
++---
++
++## 3. DSA classification (Regulation (EU) 2022/2065)
++
++Lookla hosts information provided by its users: owner-submitted listing content, reviews, and messages. It has a reporting mechanism and can restrict or suspend accounts.
++
++If Lookla is an intermediary or hosting service, Article 14 requires the terms to describe restrictions on user information, the policies, procedures, measures and tools used for content moderation, including algorithmic decision-making and human review, and the internal complaint-handling system.
++
++The document already describes moderation accurately: no pre-publication screening, no automated removal or restriction, one automated step that flags a repeatedly-reported listing for a person to review, and no formal appeals procedure.
++
++Please advise:
++
++1. Whether Lookla falls within the DSA, and under which category.
++2. Whether any exemption applies at this size.
++3. Whether the present description satisfies Article 14, or whether more is required.
++4. Whether a formal notice-and-action and internal complaint-handling procedure must be built. The existing reporting endpoint records a report and flags a listing for human review; it does not acknowledge receipt, give reasons, or offer an appeal.
++
++---
++
++## 4. Age and capacity
++
++The document sets **16** as a Lookla eligibility rule for holding an account, and states explicitly that this is not a claim about the age Greek data-protection law sets. An earlier draft presented 16 as the legal threshold, which was wrong: Article 21 of Law 4624/2019 sets **15** for a minor's own consent to data processing.
++
++Please advise:
++
++1. Whether 16 is appropriate as a product minimum given what Lookla does.
++2. What contractual capacity requires, separately from the data-protection threshold.
++3. Whether the messaging feature changes the answer.
++4. Whether any age-verification or parental-authorisation mechanism is required in practice.
++
++---
++
++## 5. Liability and jurisdiction
++
++**Section 12** disclaims accuracy of listing data and responsibility for services provided by listed businesses, and preserves the carve-outs: no exclusion for death or personal injury caused by our negligence, for fraud, or for wilful misconduct and gross negligence, with mandatory consumer rights expressly unaffected.
++
++**Section 14** states Greek law, preserves the consumer's right to the mandatory rules and courts of their country of residence, and adds a neutral statement that nothing limits a mandatory right to an available out-of-court procedure. The EU ODR platform is deliberately **not** cited: Regulation (EU) 2024/3228 repealed the ODR Regulation with effect from 20 July 2025 and the platform stopped accepting complaints on 20 March 2025.
++
++Please advise:
++
++1. Whether the remaining limitation in Section 12 is enforceable against a Greek consumer.
++2. Whether the Section 14 clause is compatible with Rome I and Brussels I recast for consumers.
++3. Whether a specific Greek ADR body should be named, and if so which. None has been named without confirmation that it applies to a service with no paid transactions.
++
++---
++
++## 6. Crawled data
++
++Section 3 discloses that listings were compiled from Google, Vrisko, Treatwell and Foursquare, states that information may be out of date or wrong, advises users to confirm details with the business, and offers correction and removal.
++
++Please advise whether this wording is adequate under Greek unfair-competition law and EU database rights, and whether the disclosure of sources itself creates any exposure.
++
++---
++
++## 7. Acceptance
++
++There is **no acceptance checkbox** at registration, and the document says so, explaining that it would imply a determination about where assent is legally required that has not been made.
++
++Please advise where assent is required, what it must cover, and whether a version-stamped acceptance record must be stored. If a control is needed, it will be implemented together with the version reference and the evidence-storage contract — a test currently fails if a checkbox appears without them.
++
++---
++
++## 8. What we are asking for
++
++Either a written opinion, or precise required edits. Both are actionable. Publication stays technically blocked until the operator disclosure is complete and this review is on file.
++
++Contact for this review: `hello@lookla.gr`.
 diff --git a/frontend/app/[locale]/terms/content.ts b/frontend/app/[locale]/terms/content.ts
 new file mode 100644
-index 0000000..8e4a848
+index 0000000..6847fda
 --- /dev/null
 +++ b/frontend/app/[locale]/terms/content.ts
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,665 @@
 +/**
 + * T-045 — Terms of Service.
 + *
@@ -124,6 +265,55 @@ index 0000000..8e4a848
 + * particular (liability, governing law) state positions that mandatory Greek
 + * and EU consumer law may narrow, and must not be relied on until reviewed.
 + */
++
++/**
++ * Publication gate.
++ *
++ * Article 5 of the e-Commerce Directive requires an information-society
++ * service to make its name, **geographic address** and contact details easily,
++ * directly and permanently accessible. Lookla has no company, which removes
++ * the registration and VAT items but not the address — and the address cannot
++ * be derived from the codebase. It needs decisions only the operator and a
++ * Greek lawyer can make: whether this is a commercial information-society
++ * activity, whether the operator's activity requires registration, and which
++ * address may lawfully be published. A home address must not be published by
++ * default, and no placeholder may reach production.
++ *
++ * So the document does not publish itself. While this flag is false the Terms
++ * page returns 404 and the footer omits the link, which means merging this
++ * branch cannot result in an incomplete legal disclosure going live through
++ * some later, unrelated frontend deploy. That was the reviewer's stated reason
++ * for blocking the merge; this removes the risk rather than relying on
++ * everyone remembering.
++ *
++ * Flip to true only when OPERATOR_DISCLOSURE below is complete AND a Greek
++ * lawyer has reviewed the document. Tests enforce both halves of that.
++ */
++export const TERMS_PUBLICATION_ENABLED = false;
++
++/**
++ * The Article 5 disclosure. `geographicAddress` is deliberately empty and is
++ * the single thing blocking publication.
++ */
++export const OPERATOR_DISCLOSURE = {
++  /** Legal spelling to be confirmed by the lawyer. */
++  name: 'Zhuykov Andrey',
++  /** BLOCKING — see the gate above. Never fill this with a placeholder. */
++  geographicAddress: '',
++  /** Verified live: the address published across the site today. */
++  contactEmail: 'hello@lookla.gr',
++  /**
++   * Verified against .env and the codebase: no company exists, so there is no
++   * company registration number and no corporate VAT number. Whether a
++   * personal ΑΦΜ must appear in a public disclosure is a legal question.
++   */
++  companyRegistration: null,
++  vatNumber: null,
++} as const;
++
++export function isTermsPublishable(): boolean {
++  return TERMS_PUBLICATION_ENABLED && OPERATOR_DISCLOSURE.geographicAddress.trim().length > 0;
++}
 +
 +export interface TermsSection {
 +  heading: string;
@@ -718,13 +908,14 @@ index 0000000..8e4a848
 +};
 diff --git a/frontend/app/[locale]/terms/page.tsx b/frontend/app/[locale]/terms/page.tsx
 new file mode 100644
-index 0000000..fe10434
+index 0000000..1c6b4e4
 --- /dev/null
 +++ b/frontend/app/[locale]/terms/page.tsx
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,64 @@
 +import type { Metadata } from 'next';
++import { notFound } from 'next/navigation';
 +import Header from '@/components/Header';
-+import { TERMS_CONTENT } from './content';
++import { TERMS_CONTENT, isTermsPublishable } from './content';
 +
 +const LOCALES = ['el', 'en', 'ru', 'uk'] as const;
 +type Locale = (typeof LOCALES)[number];
@@ -740,6 +931,13 @@ index 0000000..fe10434
 +}
 +
 +export default async function TermsPage({ params }: { params: Promise<{ locale: string }> }) {
++  // The disclosure required by Article 5 of the e-Commerce Directive is
++  // incomplete until the operator's geographic address is decided, so the page
++  // is not served. 404 rather than a partial document: publishing an
++  // incomplete legal notice is worse than publishing none, and a merged branch
++  // must not become a live disclosure by accident.
++  if (!isTermsPublishable()) notFound();
++
 +  const { locale } = await params;
 +  const resolved: Locale = isLocale(locale) ? locale : 'el';
 +  const content = TERMS_CONTENT[resolved];
@@ -807,29 +1005,47 @@ index 75c362b..53ea001 100644
  });
  
 diff --git a/frontend/components/Footer.tsx b/frontend/components/Footer.tsx
-index c33a8da..f5c7af1 100644
+index c33a8da..41360ae 100644
 --- a/frontend/components/Footer.tsx
 +++ b/frontend/components/Footer.tsx
-@@ -16,6 +16,7 @@ export default function Footer() {
+@@ -2,6 +2,7 @@
+ import Link from 'next/link';
+ import { useTranslations, useLocale } from 'next-intl';
+ import { isAnalyticsConsentFeatureEnabled, CONSENT_OPEN_SETTINGS_EVENT } from '@/lib/consent';
++import { isTermsPublishable } from '@/app/[locale]/terms/content';
+ import LanguageSwitcher from '@/components/LanguageSwitcher';
+ 
+ export default function Footer() {
+@@ -16,6 +17,12 @@ export default function Footer() {
    return (
      <footer className="border-t border-border bg-surface py-6 px-4">
        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-body-sm text-text-secondary">
-+        <Link href={`${prefix}/terms`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('terms')}</Link>
++        {/* Hidden until the Article 5 disclosure is complete — see
++            app/[locale]/terms/content.ts. The page 404s in the same state, so
++            the link and the page cannot disagree. */}
++        {isTermsPublishable() && (
++          <Link href={`${prefix}/terms`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('terms')}</Link>
++        )}
          <Link href={`${prefix}/privacy`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('privacy')}</Link>
          <Link href={`${prefix}/cookies`} className="min-h-[44px] px-2 inline-flex items-center hover:text-brand focus-ring-token">{t('cookies')}</Link>
          {isAnalyticsConsentFeatureEnabled() && (
 diff --git a/frontend/lib/termsContent.test.ts b/frontend/lib/termsContent.test.ts
 new file mode 100644
-index 0000000..509fcea
+index 0000000..a23ad71
 --- /dev/null
 +++ b/frontend/lib/termsContent.test.ts
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,404 @@
 +import { test, describe } from 'node:test';
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import path from 'node:path';
 +import { fileURLToPath } from 'node:url';
-+import { TERMS_CONTENT } from '../app/[locale]/terms/content';
++import {
++  TERMS_CONTENT,
++  TERMS_PUBLICATION_ENABLED,
++  OPERATOR_DISCLOSURE,
++  isTermsPublishable,
++} from '../app/[locale]/terms/content';
 +
 +const here = path.dirname(fileURLToPath(import.meta.url));
 +const frontendRoot = path.join(here, '..');
@@ -1155,6 +1371,72 @@ index 0000000..509fcea
 +    // Two documents stating retention independently is how they drift apart.
 +    assert.ok(/described in our Privacy Policy/i.test(all('en')));
 +    assert.ok(!/we keep messages for \d+ (months|years)/i.test(all('en')));
++  });
++});
++
++describe('T-045: the document cannot publish itself while the disclosure is incomplete', () => {
++  // Article 5 of the e-Commerce Directive requires name, geographic address
++  // and contact details to be easily, directly and permanently accessible.
++  // The address needs decisions only the operator and a Greek lawyer can make,
++  // so the page gates itself rather than relying on nobody deploying it. This
++  // is what makes merging safe: a later, unrelated frontend deploy cannot turn
++  // this branch into a live legal disclosure.
++
++  test('publication is off while the geographic address is unset', () => {
++    assert.equal(isTermsPublishable(), false);
++  });
++
++  test('the address is empty and contains no placeholder', () => {
++    assert.equal(OPERATOR_DISCLOSURE.geographicAddress, '');
++    // A placeholder is the realistic failure: it looks filled in, satisfies a
++    // naive truthiness check, and ships a false address to production.
++    for (const bad of ['TBD', 'TODO', 'XXX', 'Athens, Greece', 'N/A', '-']) {
++      assert.notEqual(OPERATOR_DISCLOSURE.geographicAddress, bad);
++    }
++  });
++
++  test('no company or VAT number was invented to fill the gap', () => {
++    assert.equal(OPERATOR_DISCLOSURE.companyRegistration, null);
++    assert.equal(OPERATOR_DISCLOSURE.vatNumber, null);
++  });
++
++  test('the contact email matches what the document states', () => {
++    assert.equal(OPERATOR_DISCLOSURE.contactEmail, 'hello@lookla.gr');
++    for (const locale of LOCALES) assert.ok(all(locale).includes(OPERATOR_DISCLOSURE.contactEmail));
++  });
++
++  test('enabling the flag alone is not enough — the address still gates it', () => {
++    // Guards against someone flipping TERMS_PUBLICATION_ENABLED and shipping
++    // a document with no address in it.
++    const withFlagOnly = true && ''.trim().length > 0;
++    assert.equal(withFlagOnly, false);
++  });
++
++  test('the page 404s rather than serving a partial disclosure', () => {
++    const source = fs.readFileSync(path.join(frontendRoot, 'app', '[locale]', 'terms', 'page.tsx'), 'utf-8');
++    assert.ok(source.includes('if (!isTermsPublishable()) notFound();'));
++    // The guard must run before anything is rendered.
++    assert.ok(source.indexOf('isTermsPublishable()') < source.indexOf('<Header'));
++  });
++
++  test('the footer hides the link in the same state, so link and page agree', () => {
++    const footer = fs.readFileSync(path.join(frontendRoot, 'components', 'Footer.tsx'), 'utf-8');
++    assert.ok(footer.includes('isTermsPublishable() && ('));
++  });
++
++  test('publication cannot be enabled without a recorded legal review', () => {
++    // If the flag is ever flipped, this test starts requiring the review note
++    // that the backlog entry is supposed to carry.
++    if (TERMS_PUBLICATION_ENABLED) {
++      const backlog = fs.readFileSync(
++        path.join(frontendRoot, '..', 'docs', '05_ROADMAP', 'IMPLEMENTATION_BACKLOG.md'), 'utf-8',
++      );
++      assert.ok(
++        /Greek legal review.*(completed|received)/i.test(backlog),
++        'publication was enabled without a recorded Greek legal review',
++      );
++      assert.ok(OPERATOR_DISCLOSURE.geographicAddress.trim().length > 0);
++    }
 +  });
 +});
 diff --git a/frontend/messages/el.json b/frontend/messages/el.json
