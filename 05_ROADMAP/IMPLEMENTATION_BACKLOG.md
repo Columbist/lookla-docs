@@ -2387,7 +2387,7 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost 
 ### T-074 — Restrict unnecessary outbound SMTP
 **Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Post-incident hardening
 **Dependencies:** T-072 ✅, T-073 (assessment) ✅
-**Status:** Open — consumer audit already done, nothing applied.
+**Status:** Implemented, draft PR, CI green. **Nothing applied to production** — awaiting APPROVE.
 
 Outbound TCP/25 is unrestricted: a connection to a public MX completes and returns a `220` banner. That was useful evidence in T-073 (the provider has not applied the egress block that usually follows an abuse finding), but it is also a capability this host does not appear to need — and it is the classic second act after an open relay, since a compromised process could send mail directly with the host's address attached.
 
@@ -2405,6 +2405,34 @@ Run before proposing any rule, because closing a port with an unknown consumer i
 | How Lookla actually sends email | Resend **HTTPS API** (`api.resend.com`), not SMTP |
 
 No legitimate consumer of outbound SMTP was found. Separately, **no PTR record is published** for the address, so direct mail from this host would be penalised or rejected by many receivers anyway — an additional argument that this origin should not be an SMTP sender.
+
+#### Two chains, because one would be a false assurance
+
+The obvious implementation — a rule in `OUTPUT` — is wrong here, and wrong in the direction that looks right. `FORWARD` jumps to `DOCKER-USER` before anything else, so a container's traffic to the internet **never traverses `OUTPUT`**. A single-chain rule would apply cleanly, report success, and cover none of the six containers — which is exactly the scenario the control exists for, since a compromised container is the realistic sender.
+
+```text
+OUTPUT       -o eth0                   -p tcp --dport 25   → reject   (host processes)
+DOCKER-USER  -i br-… -o eth0           -p tcp --dport 25   → reject   (containers)
+```
+
+This does not contradict T-049's finding that `DOCKER-USER` was the wrong layer there. That concerned *inbound* 80/443, which host nginx owns and which never enters Docker's forwarding path. For *outbound from containers* it is the documented hook, and unlike `DOCKER` or `DOCKER-FORWARD` it is the chain Docker leaves to the operator.
+
+**WireGuard is deliberately excluded.** wg0 peer traffic also passes through `DOCKER-USER`, so an unscoped rule there would silently change what the operator's own VPN clients may do. That is a VPN policy decision, not this ticket's, so the container jump is scoped to the compose bridge — resolved from `docker network inspect` at apply time rather than hardcoded, because the bridge name contains the network id and a stale one would produce a rule matching nothing while the run still reported success.
+
+**`REJECT`, not `DROP`.** This is egress from our own software: a drop leaves a process hanging until its timeout, turning a policy decision into an intermittent stall that is hard to attribute. A rejection fails immediately and legibly.
+
+#### Verification
+
+**405 backend tests** (367 + 38 new), ruff clean. The guards were mutation-tested:
+
+| Mutation | Result |
+|---|---|
+| drop the `DOCKER-USER` jump (OUTPUT only) | **4 tests fail** |
+| `DROP` instead of `REJECT` | **3 fail** |
+| hardcode the bridge instead of resolving it | **1 fails** |
+| widen the port check to allow 587 | **survived — equivalent mutant** |
+
+The surviving mutant was investigated rather than waved away: `FORBIDDEN_PORTS` catches 587 independently, so behaviour is unchanged and the suite is right to stay green. Removing *both* guards does fail the test. That is defence in depth working, not a gap.
 
 #### Proposed rule
 
