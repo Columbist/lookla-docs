@@ -2131,33 +2131,146 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
 
 ---
 
-### T-072 — Audit and restrict unexpected public listeners
-**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Pre-launch security hardening
+### T-072 — Emergency containment of a public proxy and orphaned Next servers
+**Priority:** P0 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Incident response
 **Dependencies:** T-049 ✅
-**Status:** Open.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #74 (`96e054f`) and applied to production in the approved staged order. Tinyproxy was **dismantled entirely** rather than kept on loopback, per the owner's decision that the service is not needed.
 
-**Found during the T-049 inventory**, and deliberately not touched by it: services unrelated to Lookla are listening on public interfaces on this host.
+Raised from P1 to P0 once the inventory showed this is not a theoretical exposure but abuse already in progress.
 
-| Listener | Bound to | Owner |
+#### Finding 1 — `tinyproxy` is an open, unauthenticated HTTP relay
+
+```text
+Listener       0.0.0.0:8888 and [::]:8888   (no `Listen` directive → wildcard bind)
+Authentication none                          (no BasicAuth configured)
+Source policy  Allow 0.0.0.0/0
+Second path    public :443 + empty SNI → 127.0.0.1:8888
+```
+
+Measured over **4 h 07 min** of log:
+
+| | |
+|---|---|
+| CONNECT requests | **65,965** |
+| "Maximum number of connections reached" | **15,884** |
+| distinct clients | **94** — 93 external public, 0 WireGuard, 1 loopback |
+| top destination ports | 443 (16,204), 80 (2,274), 7227 (1,118), 8080 (394), **5432** (362), **21** (351) |
+| top individual clients | ~2,300–2,800 requests each |
+
+The whole log is 68 MB / 727k lines for a single day. The connection ceiling being hit ~15,900 times in four hours means the relay is saturated, not incidentally used.
+
+**No legitimate consumer exists.** No reference to a proxy in `.env`, the crawler, `docker-compose.yml` or the environment; zero requests from WireGuard. The only non-external client is `127.0.0.1` (88 requests), which is unidentified and is why the service is retained on loopback rather than removed.
+
+**Internal-target audit (Phase 2): clean.** Of **90,977** parsed requests, **zero** targeted loopback, RFC1918, the Docker bridges, WireGuard, link-local, cloud metadata (`169.254.169.254`) or the host's own public address. This is outbound relay abuse, not a pivot into internal systems — but the host's IP is the one attributed to it.
+
+#### Finding 2 — three orphaned `next-server` processes serving Lookla publicly
+
+```text
+*:3997, *:3998, *:3999   next-server v14.2.35, running as root
+cwd /root/beauty-gr/frontend, ppid 1, cgroup session-882.scope
+started Jul 20 09:11, Jul 21 15:26, Jul 22 10:44
+serving HTTP 200, title "Lookla — Κομμωτήρια & Σαλόνια"
+```
+
+They bind every interface (Next.js defaults to `0.0.0.0` unless a hostname is given), so they served Lookla **around Cloudflare and around the T-049 gate** — which is why T-049's result was narrower than it appeared.
+
+**Startup mechanism (Phase 8): none.** No systemd unit, no cron, no PM2 (which manages only `tiktok-bot`). Their environment carries `npm_lifecycle_event=npx`, `npm_lifecycle_script=next`, and `CLAUDECODE` / `AI_AGENT` / `CLAUDE_CODE_SESSION_ID` — they are leftover `npx next` invocations from **earlier agent sessions in this repository**, orphaned to PID 1 when SSH session 882 ended. They cannot respawn.
+
+**Stale-build secret audit (Phase 9): clean.** `.next` is 152 MB, `BUILD_ID hQyZPK84_x5VeTVnfj1oK` built 2026-07-31 10:46 — different from the container's `thRta0ps07erbSYJm27AP`, confirming the exposed copy is not current. No match for `sk_live`/`sk_test`, Resend keys, `SECRET_KEY`, `DB_PASSWORD`, `REDIS_PASSWORD`, `LOG_PII_HMAC_KEY`, private-key headers, `whsec_` or AWS key IDs in `.next/static` or `.next/server`. Two `.map` files exist and are noted.
+
+#### Evidence preserved before any change (Phase 1)
+
+`/var/backups/t072-incident/20260803T151052Z/` — 75 MB, mode `0700`, 9 files with SHA-256 sums: tinyproxy config and unit, the pre-change `port443.conf`, the full 727k-line log plus yesterday's rotated archive, listener inventory, and per-process forensic metadata (pid, ppid, start time, exe, cwd, cgroup, **environment variable names only**). No client IPs, destinations or secret values are recorded here or in public docs.
+
+#### Containment design
+
+Both external paths must close together. A firewall rule alone leaves the service listening; binding to loopback alone still leaves it reachable **through nginx**, which connects from loopback. Neither is sufficient by itself, which is why they ship as one change.
+
+| Layer | Change |
+|---|---|
+| `ops/t072/containment.py` | `LOOKLA-T072-DENY` chain, one jump per contained port on `eth0` only: 8888, 3997–3999. Loopback untouched — that is what keeps the local consumer investigable. |
+| `ops/nginx/stream.d/port443.conf` | `nosni:0` and `nosni:1` now select the existing reject listener instead of `127.0.0.1:8888`. Not the VPN: handing unclassified traffic to Xray would change the VPN contract rather than contain anything. |
+| `ops/t072/tinyproxy.conf` | explicit `Listen 127.0.0.1`, `Allow 127.0.0.1`, `Allow 0.0.0.0/0` removed, **no BasicAuth** — credentials on a reachable relay make it an authenticated open relay, not a contained one. |
+| orphans | stopped last, `TERM` then `KILL` after 10 s, with a post-check that no listener remains. |
+
+`FORBIDDEN_PORTS` refuses 22, 80, 443, 4443, 8443 and the Docker-published ports in code, not only in review — filtering 443 here would disconnect the VPN, the exact mistake T-049 was redesigned to avoid.
+
+#### Rollback — deliberately not all-or-nothing
+
+The thing being removed is active abuse, so an unrelated smoke failure must not hand the internet back an open relay. The **timed** guard covers **only nginx and the firewall** — the layers that can take Lookla or the VPN down. Tinyproxy and the orphaned processes get manual scripts:
+
+```text
+rollback-network.sh    armed on a timer, restores nginx + firewall
+rollback-tinyproxy.sh  manual only, warns that it restores a measured open relay
+rollback-orphans.sh    refuses by design — production is the beauty_web container
+```
+
+Order of application puts the firewall first: it closes the abuse in milliseconds and is trivially reversible, before any service is reconfigured. nginx is reloaded, never restarted, so established VPN connections survive. A failed `nginx -t` restores the previous file; a tinyproxy that fails to start restores its previous config.
+
+#### Verification
+
+**367 backend tests** (327 + 40 new), ruff clean. The full source/SNI matrix was re-run against a real nginx with the new routing:
+
+| case | expected | observed |
 |---|---|---|
-| `tinyproxy` | `0.0.0.0:8888` and `[::]:8888` | HTTP proxy, systemd |
-| `next-server` ×3 | `*:3997`, `*:3998`, `*:3999` | unrelated Node projects |
-| empty-SNI branch of the `:443` stream router | → `127.0.0.1:8888` | routes SNI-less TLS to tinyproxy |
+| Cloudflare + `lookla.gr` / `www` | web | web ✅ |
+| ordinary + `lookla.gr` / `www` | reject | reject ✅ |
+| ordinary + VPN SNI | Xray | Xray ✅ |
+| Cloudflare + non-Lookla SNI | Xray | Xray ✅ |
+| ordinary + unknown SNI | Xray | Xray ✅ |
+| **ordinary + empty SNI** | **reject** | **reject** ✅ |
+| **Cloudflare + empty SNI** | **reject** | **reject** ✅ |
 
-T-049 preserved the empty-SNI → `:8888` route **only as an unchanged pre-existing contract**. That is not an endorsement: it was left alone because changing it was outside the reviewed scope, not because it was assessed as safe.
+Two of the new tests were wrong before the config was: they matched `Allow 0.0.0.0/0` and `BasicAuth` as raw substrings, which the file's own comments contain in order to explain their absence. They now parse directives, and additionally assert the explanation still survives in the comments.
 
-`tinyproxy` reachable from the whole internet is the sharpest item. An open HTTP proxy can be used to relay arbitrary traffic through this host, which is an abuse and attribution problem regardless of what else it protects. The `:443` no-SNI branch means it is reachable on **two** public ports.
+**Safety checklist:** Tinyproxy classified as active incident **Yes** · External 8888 blocked **Yes** · Empty-SNI proxy route removed **Yes** · Tinyproxy bound to loopback **Yes** · Public BasicAuth proxy introduced **No** · Localhost consumer investigated after containment **Deferred to follow-up, by design** · 3997–3999 blocked **Yes** · Orphans stopped **Yes (in the rollout script)** · Startup mechanism investigated **Yes — none exists** · Stale builds checked for secrets **Yes — clean** · Cloudflare Lookla path changed **No** · Xray route changed **No** · Docker production changed **No** · Containers restarted **No** · Evidence preserved before cleanup **Yes** · Automatic rollback prepared **Yes, network layer only** · Abuse restored automatically on unrelated failure **No** · Production touched before review **No**
 
-**This ticket must inventory before it restricts** — these listeners may have consumers this project does not know about, and silently closing them is the same class of mistake T-049 avoided with the VPN.
+#### Production rollout — staged, in the approved order
 
-For each listener establish: the owning process and unit; whether it is reachable externally (verified, not assumed); whether it requires authentication; whether access is logged; who actually consumes it; whether a source allowlist or a `127.0.0.1` bind would suffice; and whether it can simply be switched off.
+Executed as separate stages rather than one script run, so the verification gate between the nginx change and the service changes was real.
 
-**Acceptance Criteria:**
-- [ ] Every public listener has a named owner and a documented consumer, or is switched off
-- [ ] `tinyproxy` is authenticated, source-restricted, bound to loopback, or removed — with evidence it is not an open relay
-- [ ] The `:443` empty-SNI route is re-decided explicitly rather than inherited
-- [ ] The three `next-server` processes are bound to loopback or firewalled
-- [ ] No restriction is applied before its consumers are identified
+```text
+Public relay network containment boundary:
+2026-08-04 10:24:44 Europe/Athens (EEST)   — firewall deny + nginx reload
+
+Tinyproxy dismantled:
+2026-08-04 10:25:23 Europe/Athens (EEST)   — stopped, disabled, masked
+```
+
+The firewall deny landed first at 10:19; nginx followed at 10:24:44 once the drop counters confirmed ingress was closed.
+
+**The abuse counter did not stop when the firewall rule landed — and that was the expected result, not a failure.** `ss` showed `LISTEN 868 1024` on `0.0.0.0:8888`: 868 connections the kernel had already accepted before the rule, queued behind a proxy saturated at `MaxClients 100`. Each one tinyproxy drained produced a fresh log line carrying the original client address, which reads exactly like continuing abuse. The distinguishing measurement is that the queue drained monotonically while the drop counter climbed:
+
+```text
+t+30s  accept-queue=847  dropped=2300
+t+60s  accept-queue=813  dropped=2641
+t+90s  accept-queue=806  dropped=4018
+```
+
+Reading the log alone would have suggested the containment had failed.
+
+| Check | Result |
+|---|---|
+| External TCP 8888 / 3997 / 3998 / 3999 | **blocked** from every external node tested (2 nodes each, 8 checks) |
+| Public `:443` + empty SNI | **reject** — no new tinyproxy entry |
+| Lookla SNI from non-Cloudflare source (T-049) | still `no peer certificate available` |
+| Xray / REALITY | intact — `CN = *.peg.a2z.com` |
+| Cloudflare path | 200 for `/`, `/en`, `/ru`, `/uk`, search, map, `/privacy`, `/cookies`, API, and a real hashed static asset |
+| Firewall scope | 1 × T-049 jump (port 80), 4 × T-072 jumps; Docker chains untouched; loopback untouched |
+| Orphaned servers | all three stopped on `TERM`; **no respawn** after a further 2 minutes |
+| Remaining `next-server` | exactly one, and it is `beauty_web`'s container process (docker cgroup, `cwd=/app`, PID matches `docker inspect`) |
+| Containers | untouched — api/web `Up 21 hours`, crawler `Up 13 days`, db/redis `Up 3 weeks` |
+| SSH | unaffected |
+
+`systemd` reported tinyproxy had **consumed 18 h 39 min of CPU** before being stopped, which is an independent measure of the relay's scale.
+
+**Deviation from the merged plan, and why.** The merged PR reconfigured tinyproxy to loopback pending investigation of the 88 local requests. The owner decided the service is not needed at all, so it was stopped, disabled and **masked** instead — strictly stronger than the reviewed change, and the outcome this ticket's own follow-up section anticipated. `ops/t072/tinyproxy.conf` is therefore no longer the applied state; it remains in the repository as the reviewed fallback if the service is ever reinstated.
+
+**T-072 regressions: 0.**
+
+#### Follow-ups
+
+Assess provider abuse reports and IP reputation · review log retention (68 MB/day) · migrate any confirmed personal proxy use to WireGuard with authentication.
 
 ---
 
