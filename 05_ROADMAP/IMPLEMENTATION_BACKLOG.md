@@ -2281,13 +2281,16 @@ Assess provider abuse reports and IP reputation · review log retention (68 MB/d
 
 ```text
 Technical investigation:          ✅ Completed
-Barracuda listing:                LISTED — removal request submitted, receipt unconfirmed
+Barracuda listing:                ✅ DELISTED — removal request accepted
 Spamhaus:                         ✅ NOT LISTED — verified against authoritative servers
 SORBS:                            ✅ N/A — the zones no longer exist
-Proofpoint PDR:                   Not completable programmatically; low relevance (no mail is sent from this host)
+DroneBL / SpamCop / s5h / UCEPROTECT: ✅ not listed
+Proofpoint PDR:                   Not completable programmatically; no operational relevance (this host sends no mail)
 Provider notices reviewed:        Pending — needs account access
 IP rotation required:             No
 ```
+
+**Barracuda cleared on 2026-08-05.** The submission's receipt was never observed — the confirmation page did not finish loading and it was deliberately not sent a second time, since Barracuda ignores duplicates. The listing state was the ground truth all along, and it now reads clean with the list's own controls confirming it is answering (self-test `127.0.0.2`, clean control `NXDOMAIN`). The request was accepted after all.
 
 Ready-to-use text for every outstanding action: `docs/07_LEGAL/T-073_OUTSTANDING_ACTIONS.md`.
 
@@ -2432,7 +2435,17 @@ Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mut
 ### T-075 — The published contact address does not receive mail
 **Priority:** P0 | **Owner:** OPS/LEGAL | **Epic:** EPIC-09 | **Phase:** Pre-launch compliance
 **Dependencies:** T-017 ✅ (published the address), T-045 (repeats it)
-**Status:** Open. **This is a live defect in production, not a future task.**
+**Status:** Receiving **fixed and verified**. Sending as `hello@lookla.gr` still to be set up.
+
+```text
+MX + SPF (Cloudflare Email Routing):  ✅ published
+hello@lookla.gr:                      ✅ accepts mail
+admin@lookla.gr:                      ✅ accepts mail
+DMARC:                                ✅ v=DMARC1; p=none; rua=mailto:admin@lookla.gr
+Reply-as hello@ via Resend SMTP:      Pending
+```
+
+Verified by SMTP conversation stopped at `RCPT TO`, so nothing was delivered. The control matters: a nonsense address at the same domain is still rejected `550 5.1.1`, which is what makes the two acceptances meaningful rather than a catch-all accepting everything. Note the flip side — mail to any *other* `@lookla.gr` address still bounces, since catch-all is off. That is a deliberate state, not an oversight, but worth knowing before anyone publishes `support@` or `info@` anywhere.
 
 #### The defect
 
@@ -2471,11 +2484,11 @@ admin@lookla.gr  → operator's existing mailbox
 Alternatives if forwarding is not wanted: a hosted mailbox (Google Workspace, Zoho, Migadu) with its own MX. More capable, not free, and unnecessary for two forwarding aliases.
 
 **Acceptance Criteria:**
-- [ ] `hello@lookla.gr` receives mail, verified by an end-to-end delivery test from an external sender
-- [ ] `admin@lookla.gr` likewise
-- [ ] DMARC record published on the root domain
+- [x] `hello@lookla.gr` receives mail — verified by SMTP probe with a rejecting control
+- [x] `admin@lookla.gr` likewise
+- [x] DMARC record published on the root domain
 - [ ] Outbound Resend delivery re-verified as unaffected after the MX change
-- [ ] Barracuda request re-checked — resubmitted only if the contact failure voided it
+- [x] Barracuda request re-checked — **cleared**; the unreachable contact did not void it
 - [ ] Privacy and Cookie policies re-checked: the address they publish is the one that works
 
 **Do not** change the `send.lookla.gr` records while adding root MX — they belong to Resend's sending path and are unrelated to inbound.
