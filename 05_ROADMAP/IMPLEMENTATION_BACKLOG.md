@@ -2429,6 +2429,59 @@ Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mut
 
 ---
 
+### T-075 — The published contact address does not receive mail
+**Priority:** P0 | **Owner:** OPS/LEGAL | **Epic:** EPIC-09 | **Phase:** Pre-launch compliance
+**Dependencies:** T-017 ✅ (published the address), T-045 (repeats it)
+**Status:** Open. **This is a live defect in production, not a future task.**
+
+#### The defect
+
+`lookla.gr` has **no MX record**. Mail to `hello@lookla.gr` and `admin@lookla.gr` is undeliverable — a sender with no MX falls back to the A record, which is Cloudflare's edge, and nothing accepts SMTP there. Neither mailbox has ever existed.
+
+The Privacy Policy and the Cookie Policy are **live in all four locales** and both publish `hello@lookla.gr` as the contact for data-protection enquiries. The Privacy Policy also names it as the route for exercising access, deletion and objection rights, and the Terms draft makes it the channel for listing corrections and removals.
+
+So the site currently tells people to write to an address that silently discards their mail. GDPR Article 12(2) requires the controller to *facilitate* the exercise of data-subject rights; publishing a black-holed address does the opposite, and does it while looking compliant. A missing contact address is an obvious gap that someone notices; a dead one is not.
+
+Confirmed live: `hello@lookla.gr` appears once on each of `/privacy`, `/en/privacy`, `/cookies`, `/en/cookies` (and their `ru`/`uk` equivalents).
+
+#### Consequences already incurred
+
+- **Data-subject requests** sent since T-017 went live have been lost with no bounce visible to us. There is no way to know how many.
+- **Listing correction and removal requests** from salon owners — the route the Terms rely on — likewise.
+- **The Barracuda delisting request** (T-073) gives `admin@lookla.gr` as the contact. Any reply, or any attempt to validate the contact, fails. Barracuda states that requests with invalid information are ignored, so the request may already be void.
+
+#### What is NOT broken — stated precisely, to avoid a false alarm
+
+Outbound mail is correctly configured and works. Resend's standard split is in place: SPF on `send.lookla.gr` (`v=spf1 include:amazonses.com ~all`) with a bounce MX to `feedback-smtp.eu-west-1.amazonses.com`, and DKIM at `resend._domainkey.lookla.gr`. The application sends as `noreply@lookla.gr`, which DKIM signs with `d=lookla.gr`. Verification and password-reset mail is unaffected.
+
+Two real but lesser gaps: **no DMARC record** on the root domain, and no MX for the root — which together mean anyone can spoof mail *from* `@lookla.gr` and nobody can reply *to* it.
+
+#### Fix
+
+Cloudflare Email Routing is the proportionate answer: the zone is already on Cloudflare, it is free, it needs no mail server, and it forwards to a mailbox the operator already reads. It installs the MX and SPF records itself.
+
+```text
+hello@lookla.gr  → operator's existing mailbox
+admin@lookla.gr  → operator's existing mailbox
++ DMARC record on the root (p=none to start, then tighten)
+```
+
+**Cannot be done from here.** There are no Cloudflare API credentials on the host and no CLI installed, and DNS changes require explicit approval in any case. This needs either the operator acting in the Cloudflare dashboard, or a zone-scoped API token.
+
+Alternatives if forwarding is not wanted: a hosted mailbox (Google Workspace, Zoho, Migadu) with its own MX. More capable, not free, and unnecessary for two forwarding aliases.
+
+**Acceptance Criteria:**
+- [ ] `hello@lookla.gr` receives mail, verified by an end-to-end delivery test from an external sender
+- [ ] `admin@lookla.gr` likewise
+- [ ] DMARC record published on the root domain
+- [ ] Outbound Resend delivery re-verified as unaffected after the MX change
+- [ ] Barracuda request re-checked — resubmitted only if the contact failure voided it
+- [ ] Privacy and Cookie policies re-checked: the address they publish is the one that works
+
+**Do not** change the `send.lookla.gr` records while adding root MX — they belong to Resend's sending path and are unrelated to inbound.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
