@@ -2134,7 +2134,7 @@ T-030 remains **open**: its four named test files (`test_is_bot`, `test_open_now
 ### T-072 — Emergency containment of a public proxy and orphaned Next servers
 **Priority:** P0 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Incident response
 **Dependencies:** T-049 ✅
-**Status:** Implemented, draft PR. **Nothing applied to production** — awaiting independent APPROVE.
+**Status:** ✅ Completed. Reviewed, **APPROVE**, merged via PR #74 (`96e054f`) and applied to production in the approved staged order. Tinyproxy was **dismantled entirely** rather than kept on loopback, per the owner's decision that the service is not needed.
 
 Raised from P1 to P0 once the inventory showed this is not a theoretical exposure but abuse already in progress.
 
@@ -2225,9 +2225,52 @@ Two of the new tests were wrong before the config was: they matched `Allow 0.0.0
 
 **Safety checklist:** Tinyproxy classified as active incident **Yes** · External 8888 blocked **Yes** · Empty-SNI proxy route removed **Yes** · Tinyproxy bound to loopback **Yes** · Public BasicAuth proxy introduced **No** · Localhost consumer investigated after containment **Deferred to follow-up, by design** · 3997–3999 blocked **Yes** · Orphans stopped **Yes (in the rollout script)** · Startup mechanism investigated **Yes — none exists** · Stale builds checked for secrets **Yes — clean** · Cloudflare Lookla path changed **No** · Xray route changed **No** · Docker production changed **No** · Containers restarted **No** · Evidence preserved before cleanup **Yes** · Automatic rollback prepared **Yes, network layer only** · Abuse restored automatically on unrelated failure **No** · Production touched before review **No**
 
+#### Production rollout — staged, in the approved order
+
+Executed as separate stages rather than one script run, so the verification gate between the nginx change and the service changes was real.
+
+```text
+Public relay network containment boundary:
+2026-08-04 10:24:44 Europe/Athens (EEST)   — firewall deny + nginx reload
+
+Tinyproxy dismantled:
+2026-08-04 10:25:23 Europe/Athens (EEST)   — stopped, disabled, masked
+```
+
+The firewall deny landed first at 10:19; nginx followed at 10:24:44 once the drop counters confirmed ingress was closed.
+
+**The abuse counter did not stop when the firewall rule landed — and that was the expected result, not a failure.** `ss` showed `LISTEN 868 1024` on `0.0.0.0:8888`: 868 connections the kernel had already accepted before the rule, queued behind a proxy saturated at `MaxClients 100`. Each one tinyproxy drained produced a fresh log line carrying the original client address, which reads exactly like continuing abuse. The distinguishing measurement is that the queue drained monotonically while the drop counter climbed:
+
+```text
+t+30s  accept-queue=847  dropped=2300
+t+60s  accept-queue=813  dropped=2641
+t+90s  accept-queue=806  dropped=4018
+```
+
+Reading the log alone would have suggested the containment had failed.
+
+| Check | Result |
+|---|---|
+| External TCP 8888 / 3997 / 3998 / 3999 | **blocked** from every external node tested (2 nodes each, 8 checks) |
+| Public `:443` + empty SNI | **reject** — no new tinyproxy entry |
+| Lookla SNI from non-Cloudflare source (T-049) | still `no peer certificate available` |
+| Xray / REALITY | intact — `CN = *.peg.a2z.com` |
+| Cloudflare path | 200 for `/`, `/en`, `/ru`, `/uk`, search, map, `/privacy`, `/cookies`, API, and a real hashed static asset |
+| Firewall scope | 1 × T-049 jump (port 80), 4 × T-072 jumps; Docker chains untouched; loopback untouched |
+| Orphaned servers | all three stopped on `TERM`; **no respawn** after a further 2 minutes |
+| Remaining `next-server` | exactly one, and it is `beauty_web`'s container process (docker cgroup, `cwd=/app`, PID matches `docker inspect`) |
+| Containers | untouched — api/web `Up 21 hours`, crawler `Up 13 days`, db/redis `Up 3 weeks` |
+| SSH | unaffected |
+
+`systemd` reported tinyproxy had **consumed 18 h 39 min of CPU** before being stopped, which is an independent measure of the relay's scale.
+
+**Deviation from the merged plan, and why.** The merged PR reconfigured tinyproxy to loopback pending investigation of the 88 local requests. The owner decided the service is not needed at all, so it was stopped, disabled and **masked** instead — strictly stronger than the reviewed change, and the outcome this ticket's own follow-up section anticipated. `ops/t072/tinyproxy.conf` is therefore no longer the applied state; it remains in the repository as the reviewed fallback if the service is ever reinstated.
+
+**T-072 regressions: 0.**
+
 #### Follow-ups
 
-Identify the `127.0.0.1` consumer (88 requests) by local tracing after containment · assess provider abuse reports and IP reputation · decide whether to disable and mask tinyproxy if no local consumer is found · review log retention (68 MB/day) · migrate any confirmed personal proxy use to WireGuard with authentication.
+Assess provider abuse reports and IP reputation · review log retention (68 MB/day) · migrate any confirmed personal proxy use to WireGuard with authentication.
 
 ---
 
