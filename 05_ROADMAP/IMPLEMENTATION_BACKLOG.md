@@ -2454,7 +2454,16 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-045 — Publish Terms of Service (pre-launch blocker)
 **Priority:** P1 | **Owner:** PRODUCT/FE | **Epic:** EPIC-09 | **Phase:** Pre-launch
 **Dependencies:** T-017 ✅
-**Status:** Drafted, corrected after review, and **technically gated**. The page returns 404 and the footer link is hidden until the operator's Article 5 disclosure is complete and a Greek legal review is on file — so merging cannot cause an incomplete legal notice to go live through a later, unrelated frontend deploy. ⚠️ **Not legally reviewed.** Two items require input this project cannot produce: the operator's geographic address, and the review itself.
+**Status:**
+
+```text
+Implementation and publication gate: ✅ Completed
+Legal review:                        Pending
+Operator disclosure:                 Pending
+Terms publication:                   Disabled
+```
+
+Merged via PR #75. **The ticket is deliberately not marked fully complete**: the page exists and is correct as far as the facts go, but the Article 5 disclosure is incomplete and no Greek legal review is on file. `TERMS_PUBLICATION_ENABLED` stays `false`, and enabling it is a separate reviewed change. No deployment was made — with the gate closed there is no user-visible difference.
 
 **Approach:** written the same way T-017's Privacy Policy was — every factual statement checked against the running application rather than taken from a template. That is the whole reason this is worth doing before a lawyer sees it: a lawyer reviewing an accurate description of the product gives useful advice; a lawyer reviewing a generic template gives generic advice, and the gap between the template and the product is exactly where the risk lives.
 
@@ -2505,6 +2514,21 @@ export function isTermsPublishable() { … }   // both must hold
 While the gate is closed, `TermsPage` calls `notFound()` **before rendering anything**, and the Footer omits the link — so the link and the page cannot disagree. Publishing an incomplete legal notice is worse than publishing none, which is why the page 404s instead of serving a partial document.
 
 Eight tests hold the gate shut, and they were mutation-tested rather than assumed: filling `geographicAddress` with a plausible placeholder (`'Athens, Greece'`) fails, and removing the `notFound()` guard fails. A placeholder is the realistic failure mode — it looks filled in, satisfies a naive truthiness check, and ships a false address to production. One test is dormant by design: if `TERMS_PUBLICATION_ENABLED` is ever flipped, it begins requiring a recorded Greek legal review in this backlog and a non-empty address.
+
+#### Operator disclosure — what is confirmed, and what is not
+
+Recorded separately on purpose, because conflating the two is how an unverified string becomes a legal disclosure.
+
+**Confirmed:** no company or other legal entity exists for Lookla; no company registration number; no ΓΕΜΗ; no corporate ΑΦΜ.
+
+**Not confirmed, and therefore asserted nowhere:**
+
+- The exact legal spelling and name order. `Zhuykov Andrey` comes from existing project documentation and **has not been checked against a passport, the Greek tax register or any other official record**. It must not be treated as final. No alternative transliteration and no patronymic have been added.
+- Whether operating Lookla requires or is covered by a registered individual professional activity (`έναρξη ατομικής δραστηριότητας`), and whether an existing personal tax status extends to it. Neither "registered sole professional" nor "private non-commercial activity" can be written honestly today.
+- Whether a personal ΑΦΜ belongs in a public disclosure.
+- The publishable address. No non-residential professional or service address has been selected. A home address is not to be published unless Greek law unambiguously requires it, and an employer's address is not to be used.
+
+`geographicAddress: ''` is therefore the **correct** state, not an unfinished one — and the gate tests treat a plausible placeholder as a failure precisely so that it stays that way.
 
 #### Legal review brief
 

@@ -27,7 +27,21 @@ A directory of beauty salons and independent beauty professionals in Greece, at 
 
 **Data provenance.** Most listings were compiled by an automated crawler from publicly available sources — Google, Vrisko, Treatwell and Foursquare — plus information submitted by owners. Business owners can claim a listing and correct it, or ask for removal by email without an account.
 
-**Operator.** A natural person resident in Greece. There is no company, so no company registration number and no corporate VAT number exist.
+**Operator — confirmed and unconfirmed, stated separately on purpose.**
+
+Confirmed:
+
+- No company or other legal entity has been formed for Lookla.
+- No company registration number and no ΓΕΜΗ number exist.
+- No corporate ΑΦΜ exists.
+
+Not confirmed, and therefore not asserted anywhere in the document:
+
+- The exact legal spelling and name order. The wording currently used is *"Zhuykov Andrey, an individual based in Greece"*, taken from existing project documentation. **It has not been checked against a passport, the Greek tax register or any other official record**, and must not be treated as a final legal disclosure until it is. No alternative transliteration and no patronymic have been added.
+- Whether operating Lookla requires, or is covered by, a registered individual professional activity in Greece (`έναρξη ατομικής δραστηριότητας`), and whether any existing personal tax status extends to it. Neither "registered sole professional" nor "private non-commercial activity" can be stated honestly today.
+- Whether a personal ΑΦΜ must appear in a public disclosure.
+
+No non-residential professional or service address has been selected. **The operator does not wish to publish a home address unless Greek law unambiguously requires it**, and no employer address is to be used.
 
 ---
 
