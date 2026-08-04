@@ -2281,12 +2281,12 @@ Assess provider abuse reports and IP reputation · review log retention (68 MB/d
 
 ```text
 Technical investigation:          ✅ Completed
-Barracuda listing confirmed:      Yes
-Barracuda removal request:        Attempted — blocked on a required phone number
+Barracuda listing:                LISTED — removal request submitted, receipt unconfirmed
+Spamhaus:                         ✅ NOT LISTED — verified against authoritative servers
+SORBS:                            ✅ N/A — the zones no longer exist
+Proofpoint PDR:                   Not completable programmatically; low relevance (no mail is sent from this host)
 Provider notices reviewed:        Pending — needs account access
-Spamhaus official check:          Pending — DNS path unusable from this host
-Proofpoint/SORBS official check:  Pending — DNS path unusable from this host
-IP rotation required:             No, subject to the manual checks
+IP rotation required:             No
 ```
 
 Ready-to-use text for every outstanding action: `docs/07_LEGAL/T-073_OUTSTANDING_ACTIONS.md`.
@@ -2313,6 +2313,16 @@ That distinction changed the outcome. Spamhaus and SORBS both returned `NXDOMAIN
 
 Barracuda's listing is genuine, not a wildcard responder: its clean control returned `NXDOMAIN`, a random address returned `NXDOMAIN`, and only the self-test entry and our address returned a listing.
 
+#### The two "not tested" lists, resolved
+
+Both gaps were closed by attacking the cause rather than reporting the symptom.
+
+**Spamhaus — genuinely not listed.** The DNS path failed because Spamhaus refuses queries arriving via public resolvers, and this host resolves through Google DNS. Querying Spamhaus's own authoritative servers directly (`d/b/e.gns.spamhaus.org`) restores a usable channel, and the self-test control proves it: `2.0.0.127.zen.spamhaus.org` returns `127.0.0.2` from all three, while the origin address returns `NXDOMAIN` from all three. `sbl.spamhaus.org` gives the same answer with a working control. This is a real negative, not an absence of data.
+
+**SORBS — nothing to check.** `dnsbl.sorbs.net`, `socks.dnsbl.sorbs.net` and `http.dnsbl.sorbs.net` have no NS and no SOA record, and neither does `sorbs.net` itself. The service is gone. The correct status is **not applicable**, not "pending" — there is no list to be listed on.
+
+**Proofpoint PDR — attempted, not completable here.** The lookup form accepts the address and the POST returns 200, but no verdict renders in a headless session. Worth keeping in proportion: PDR governs *email delivery* reputation, and this host sends no mail — no MTA, no SMTP client code, delivery goes through Resend's HTTPS API. A PDR listing would have no operational effect on Lookla. It is left for a manual check rather than treated as a blocker.
+
 #### Other technical checks
 
 - **Outbound SMTP is not restricted.** A connection to a public MX on port 25 completes and returns a `220` banner, so the provider has not applied the egress block that commonly follows an abuse finding. Useful as evidence that no restriction is in force — and also a standing exposure worth its own decision now that the host has been used as a relay once.
@@ -2338,7 +2348,7 @@ Heavy abuse therefore ran for about **seven days**, on top of lighter use going 
 #### Requires the operator — this assessment cannot be completed from the host
 
 1. **Provider portal and abuse mailbox.** Check for warnings, complaints, automatic restrictions or rate limits. Nothing can be seen from the server: no notice was delivered locally, and the account's registered email is not readable here.
-2. **Barracuda delisting — attempted, and blocked on one field.** The removal form was completed with the approved wording and rejected server-side: *"Please enter a phone number we can contact you at."* The field is not marked `required` in the HTML but is enforced on submission. **No number was invented, and nothing was recorded on Barracuda's side** — the listing still reads `127.0.0.2`. Barracuda states that requests with invalid information are ignored and that multiple requests are also ignored, so a fabricated number would have guaranteed rejection while consuming the single attempt that actually gets read. Needs a real, reachable number.
+2. **Barracuda delisting — submitted, receipt unconfirmed.** The first attempt was rejected server-side for a missing phone number, a field the HTML does not mark as required. With a number supplied the form was submitted again and the click completed, but the confirmation page did not finish loading within the wait, so **receipt was never observed**. It was deliberately not sent a third time: Barracuda ignores duplicate requests, and a third submission risks all of them being discarded. The listing still reads `127.0.0.2`, which is expected — they quote roughly 12 hours. The listing state itself is the ground truth and will be re-checked.
 3. **Spamhaus and SORBS** must be checked by hand through their web lookups, since neither answers via this host's resolver. They matter more than the lists that did answer.
 
 **Deliberately not done:** no approach was made to the provider. There is no open ticket to respond to, and volunteering an incident report without one invites a restriction rather than avoiding it. If a ticket exists, the timeline above is the factual basis for a reply.
