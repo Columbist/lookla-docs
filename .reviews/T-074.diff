@@ -1,0 +1,502 @@
+diff --git a/backend/tests/test_t074_smtp_egress.py b/backend/tests/test_t074_smtp_egress.py
+new file mode 100644
+index 0000000..ab88868
+--- /dev/null
++++ b/backend/tests/test_t074_smtp_egress.py
+@@ -0,0 +1,226 @@
++"""
++T-074: outbound SMTP egress must be denied on exactly one port, in exactly two
++chains, and nowhere else.
++
++The two failure modes worth guarding are opposite in shape. Widening — a rule
++that catches 443 or 53 takes the site off the internet, and one that catches
++465/587 forecloses a legitimate mail setup later. Narrowing — a rule placed
++only in OUTPUT looks correct and covers nothing that runs in a container,
++which is the scenario the control exists for. Both are asserted against the
++generated rules rather than against intent.
++"""
++import importlib.util
++from pathlib import Path
++
++import pytest
++
++_ROOT = Path(__file__).resolve().parents[2]
++_spec = importlib.util.spec_from_file_location(
++    "smtp_egress_t074", _ROOT / "ops" / "t074" / "smtp_egress.py"
++)
++eg = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(eg)
++
++IFACE = "eth0"
++BRIDGE = "br-7ee6b79d9884"
++
++
++def _jumps():
++    return eg.build_jump_rules(IFACE, BRIDGE)
++
++
++def _text():
++    return eg.build_restore_document() + " " + " ".join(" ".join(j) for j in _jumps()) + " "
++
++
++# ────────────────────────────── scope: the port ──────────────────────────────
++
++
++def test_tcp_25_is_denied():
++    assert "--dport 25 " in _text()
++
++
++@pytest.mark.parametrize("port", [22, 53, 80, 443, 465, 587, 3997, 3998, 3999, 4443, 8443, 8888])
++def test_no_other_port_is_ever_touched(port):
++    # 443 and 53 would break Resend and DNS; 465/587 are the submission ports a
++    # legitimate sender would use and are left open on purpose.
++    assert f"--dport {port} " not in _text()
++
++
++@pytest.mark.parametrize("port", [465, 587, 443, 53])
++def test_building_a_rule_for_another_port_is_refused(port):
++    with pytest.raises(eg.EgressScopeError):
++        eg.build_jump_rules(IFACE, BRIDGE, port=port)
++
++
++def test_the_chain_itself_matches_no_port():
++    # The chain is entered by the jumps; a port match inside it would be a
++    # second, unreviewed place for scope to drift.
++    assert "--dport" not in eg.build_restore_document()
++
++
++# ───────────────────────── scope: which chains, and why ──────────────────────
++
++
++def test_both_chains_are_covered():
++    chains = [j[0] for j in _jumps()]
++    assert chains == ["OUTPUT", "DOCKER-USER"]
++
++
++def test_output_alone_would_not_be_enough():
++    # FORWARD jumps to DOCKER-USER before anything else, so container traffic
++    # never traverses OUTPUT. A single-chain rule would report success while
++    # covering none of the containers.
++    assert any(j[0] == "DOCKER-USER" for j in _jumps()), (
++        "containers would be uncovered — this is the scenario the rule exists for"
++    )
++
++
++def test_docker_generated_chains_are_never_written_to():
++    text = _text()
++    for generated in ("-A DOCKER ", "-A DOCKER-FORWARD", "-A DOCKER-INGRESS"):
++        assert generated not in text
++    with pytest.raises(eg.EgressScopeError):
++        eg.assert_scope(eg.build_restore_document(), [["DOCKER-FORWARD", "-j", eg.CHAIN]])
++
++
++def test_wireguard_is_out_of_scope():
++    # wg0 peer traffic also traverses DOCKER-USER. An unscoped rule there would
++    # silently change what the operator's own VPN clients may do, which is a
++    # VPN policy decision and not this ticket's.
++    assert "wg0" not in _text()
++    # The probe must be a rule that is otherwise valid, or assert_scope stops
++    # at the earlier "no rule denies TCP/25" check and never reaches the wg0
++    # one — which is how an earlier version of this test passed without
++    # exercising the guarantee it names.
++    wg_jump = ["DOCKER-USER", "-i", "wg0", "-o", IFACE,
++               "-p", "tcp", "--dport", "25", "-j", eg.CHAIN]
++    with pytest.raises(eg.EgressScopeError, match="WireGuard"):
++        eg.assert_scope(eg.build_restore_document(), [wg_jump])
++
++
++def test_the_container_jump_is_scoped_to_the_compose_bridge():
++    container = next(j for j in _jumps() if j[0] == "DOCKER-USER")
++    assert "-i" in container and BRIDGE in container
++
++
++def test_both_jumps_are_scoped_to_the_external_interface():
++    # Keeps loopback and container-to-container traffic untouched.
++    for jump in _jumps():
++        assert "-o" in jump and IFACE in jump
++
++
++def test_only_the_owned_chain_is_populated():
++    doc = eg.build_restore_document()
++    assert "-A INPUT" not in doc and "-A FORWARD" not in doc and "-A OUTPUT" not in doc
++
++
++# ───────────────────────────── behaviour of the rule ─────────────────────────
++
++
++def test_the_verdict_is_reject_not_drop():
++    # Egress from our own software: a drop leaves a process hanging until its
++    # timeout, turning a policy decision into an intermittent stall that is
++    # hard to attribute. A rejection fails immediately and legibly.
++    doc = eg.build_restore_document()
++    assert "-j REJECT" in doc
++    assert "--reject-with icmp-port-unreachable" in doc
++    assert "-j DROP" not in doc
++
++
++def test_scope_check_catches_a_removed_verdict():
++    doc = eg.build_restore_document().replace("-j REJECT", "-j RETURN")
++    with pytest.raises(eg.EgressScopeError, match="control would be absent"):
++        eg.assert_scope(doc, _jumps())
++
++
++def test_scope_check_catches_a_missing_smtp_rule():
++    with pytest.raises(eg.EgressScopeError, match="control would be absent"):
++        eg.assert_scope(eg.build_restore_document(), [["OUTPUT", "-o", IFACE, "-j", eg.CHAIN]])
++
++
++# ──────────────────────────── atomicity and identity ─────────────────────────
++
++
++def test_the_transaction_is_a_single_atomic_restore_document():
++    doc = eg.build_restore_document()
++    assert doc.startswith("*filter\n")
++    assert f":{eg.CHAIN} - [0:0]" in doc
++    assert doc.rstrip().endswith("COMMIT")
++    assert doc.count("COMMIT") == 1
++
++
++def test_reapplying_produces_an_identical_document():
++    assert eg.build_restore_document() == eg.build_restore_document()
++
++
++def test_jumps_are_checked_before_insertion(monkeypatch, capsys):
++    class R:
++        returncode = 0
++        stdout = ""
++        stderr = ""
++
++    monkeypatch.setattr(eg, "_run", lambda *a, **k: R())
++    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE, "--apply"]) == 0
++    assert capsys.readouterr().out.count("already present") == 2
++
++
++def test_dry_run_executes_nothing(monkeypatch, capsys):
++    def explode(*a, **k):
++        raise AssertionError("dry run must not execute firewall commands")
++
++    monkeypatch.setattr(eg, "_run", explode)
++    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE]) == 0
++    assert "dry run — nothing applied" in capsys.readouterr().out
++
++
++# ─────────────────────────── bridge detection safety ─────────────────────────
++
++
++def test_the_bridge_is_resolved_at_apply_time_not_hardcoded():
++    calls = []
++
++    class R:
++        returncode = 0
++        stdout = "br-abc123def456\n"
++        stderr = ""
++
++    def runner(argv, **kw):
++        calls.append(argv)
++        return R()
++
++    assert eg.detect_bridge("beauty-gr_default", runner=runner) == "br-abc123def456"
++    assert calls[0][:3] == ["docker", "network", "inspect"]
++
++
++def test_bridge_detection_falls_back_to_the_network_id():
++    class Empty:
++        returncode = 0
++        stdout = "<no value>\n"
++        stderr = ""
++
++    class WithId:
++        returncode = 0
++        stdout = "7ee6b79d9884abcdef0123456789\n"
++        stderr = ""
++
++    answers = iter([Empty(), WithId()])
++    assert eg.detect_bridge("net", runner=lambda *a, **k: next(answers)) == "br-7ee6b79d9884"
++
++
++def test_an_unresolvable_bridge_stops_the_run():
++    # A stale or missing bridge name would silently produce a rule matching
++    # nothing, leaving containers able to send while the run reports success.
++    class Fail:
++        returncode = 1
++        stdout = ""
++        stderr = "no such network"
++
++    with pytest.raises(eg.EgressScopeError, match="cannot resolve the bridge"):
++        eg.detect_bridge("nope", runner=lambda *a, **k: Fail())
++
++
++@pytest.mark.parametrize("bad", ["", "br 0", None])
++def test_an_implausible_bridge_name_is_refused(bad):
++    with pytest.raises(eg.EgressScopeError):
++        eg.build_jump_rules(IFACE, bad)
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index a18d935..bab1841 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2387,7 +2387,7 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost
+ ### T-074 — Restrict unnecessary outbound SMTP
+ **Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Post-incident hardening
+ **Dependencies:** T-072 ✅, T-073 (assessment) ✅
+-**Status:** Open — consumer audit already done, nothing applied.
++**Status:** Implemented, draft PR, CI green. **Nothing applied to production** — awaiting APPROVE.
+ 
+ Outbound TCP/25 is unrestricted: a connection to a public MX completes and returns a `220` banner. That was useful evidence in T-073 (the provider has not applied the egress block that usually follows an abuse finding), but it is also a capability this host does not appear to need — and it is the classic second act after an open relay, since a compromised process could send mail directly with the host's address attached.
+ 
+@@ -2406,6 +2406,34 @@ Run before proposing any rule, because closing a port with an unknown consumer i
+ 
+ No legitimate consumer of outbound SMTP was found. Separately, **no PTR record is published** for the address, so direct mail from this host would be penalised or rejected by many receivers anyway — an additional argument that this origin should not be an SMTP sender.
+ 
++#### Two chains, because one would be a false assurance
++
++The obvious implementation — a rule in `OUTPUT` — is wrong here, and wrong in the direction that looks right. `FORWARD` jumps to `DOCKER-USER` before anything else, so a container's traffic to the internet **never traverses `OUTPUT`**. A single-chain rule would apply cleanly, report success, and cover none of the six containers — which is exactly the scenario the control exists for, since a compromised container is the realistic sender.
++
++```text
++OUTPUT       -o eth0                   -p tcp --dport 25   → reject   (host processes)
++DOCKER-USER  -i br-… -o eth0           -p tcp --dport 25   → reject   (containers)
++```
++
++This does not contradict T-049's finding that `DOCKER-USER` was the wrong layer there. That concerned *inbound* 80/443, which host nginx owns and which never enters Docker's forwarding path. For *outbound from containers* it is the documented hook, and unlike `DOCKER` or `DOCKER-FORWARD` it is the chain Docker leaves to the operator.
++
++**WireGuard is deliberately excluded.** wg0 peer traffic also passes through `DOCKER-USER`, so an unscoped rule there would silently change what the operator's own VPN clients may do. That is a VPN policy decision, not this ticket's, so the container jump is scoped to the compose bridge — resolved from `docker network inspect` at apply time rather than hardcoded, because the bridge name contains the network id and a stale one would produce a rule matching nothing while the run still reported success.
++
++**`REJECT`, not `DROP`.** This is egress from our own software: a drop leaves a process hanging until its timeout, turning a policy decision into an intermittent stall that is hard to attribute. A rejection fails immediately and legibly.
++
++#### Verification
++
++**405 backend tests** (367 + 38 new), ruff clean. The guards were mutation-tested:
++
++| Mutation | Result |
++|---|---|
++| drop the `DOCKER-USER` jump (OUTPUT only) | **4 tests fail** |
++| `DROP` instead of `REJECT` | **3 fail** |
++| hardcode the bridge instead of resolving it | **1 fails** |
++| widen the port check to allow 587 | **survived — equivalent mutant** |
++
++The surviving mutant was investigated rather than waved away: `FORBIDDEN_PORTS` catches 587 independently, so behaviour is unchanged and the suite is right to stay green. Removing *both* guards does fail the test. That is defence in depth working, not a gap.
++
+ #### Proposed rule
+ 
+ ```text
+diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
+new file mode 100644
+index 0000000..ef1fea8
+--- /dev/null
++++ b/ops/t074/smtp_egress.py
+@@ -0,0 +1,216 @@
++#!/usr/bin/env python3
++"""
++T-074 — deny outbound direct-to-MX SMTP from this host and its containers.
++
++Port 25 is the port a compromised process uses to deliver mail itself, without
++any provider's authentication or rate limiting in the way. Nothing here needs
++it: the consumer audit found no local MTA, no listener on 25/465/587, no
++established connection to any mail port, no SMTP client code in the backend,
++crawler or frontend, and no mail-related cron entry. The application sends
++through Resend's **HTTPS** API. The host also publishes no PTR record, so
++direct-to-MX delivery from it would be penalised or refused by most receivers
++anyway.
++
++This matters more than it would on a clean host: this address spent seven days
++as an open HTTP relay (T-072) and was listed by Barracuda for it (T-073).
++Outbound mail is the obvious second act, and the point of closing it now is
++that no legitimate sender loses anything.
++
++**Two chains, because one would be a false assurance.** `FORWARD` jumps to
++`DOCKER-USER` before anything else, so a container's traffic to the internet
++never traverses `OUTPUT`. A rule placed only in `OUTPUT` would cover host
++processes and quietly miss all six containers — which is precisely the
++scenario the rule exists for. So:
++
++    OUTPUT       host processes leaving via the external interface
++    DOCKER-USER  container processes, scoped to the compose bridge
++
++Note this does not contradict T-049's conclusion that `DOCKER-USER` was the
++wrong layer there. That was about *inbound* 80/443, which host nginx owns and
++which never reaches Docker's forwarding path. For *outbound from containers*,
++`DOCKER-USER` is exactly the documented hook, and unlike `DOCKER` or
++`DOCKER-FORWARD` it is the one Docker leaves to the operator.
++
++**WireGuard is deliberately out of scope.** `FORWARD` also carries wg0 peer
++traffic through `DOCKER-USER`, so an unscoped rule there would silently change
++what the operator's own VPN clients may do. That is a VPN policy decision, not
++this ticket's, so the container rule is scoped to the compose bridge and wg0 is
++left alone.
++
++**465 and 587 are deliberately left open.** They are authenticated submission
++ports — what a legitimate sender would use through a provider. Blocking 25
++removes the abuse path without foreclosing a proper mail setup later. There is
++also no evidence they are unused in the same strong sense: the audit shows no
++current consumer, but leaving them open costs nothing and closing them would
++be a guess.
++"""
++
++from __future__ import annotations
++
++import argparse
++import subprocess
++import sys
++
++CHAIN = "LOOKLA-T074-DENY"
++COMMENT = "T-074 deny outbound SMTP"
++
++#: The only port this ticket may touch.
++SMTP_PORT = 25
++
++#: Ports that must never appear in a T-074 rule. 465/587 are submission ports
++#: (see the module docstring); 53 and 443 would break DNS and every outbound
++#: API call including Resend's; the rest belong to other tickets.
++FORBIDDEN_PORTS = (22, 53, 80, 443, 465, 587, 3997, 3998, 3999, 4443, 8443, 8888)
++
++
++class EgressScopeError(ValueError):
++    """Raised when a generated rule would exceed T-074's approved scope."""
++
++
++def build_chain_rules() -> list[str]:
++    """
++    Return the `iptables-restore` lines for T-074's chain.
++
++    `REJECT` rather than `DROP`, deliberately: this is egress from our own
++    software. A dropped connection leaves a process hanging until its timeout,
++    which turns a policy decision into an intermittent stall that is hard to
++    attribute. A rejection fails immediately and legibly, which is what an
++    operator wants when something unexpected tries to send mail.
++    """
++    return [
++        f'-A {CHAIN} -p tcp -m comment --comment "{COMMENT}" '
++        f"-j REJECT --reject-with icmp-port-unreachable",
++    ]
++
++
++def build_jump_rules(interface: str, bridge: str, port: int = SMTP_PORT) -> list[list[str]]:
++    """
++    Return the two jumps: host egress, and container egress.
++
++    Both are scoped to leaving via `interface`, so loopback and
++    container-to-container traffic are untouched.
++    """
++    if port != SMTP_PORT:
++        raise EgressScopeError(
++            f"port {port} is outside T-074's scope — only TCP/{SMTP_PORT} may be denied"
++        )
++    if port in FORBIDDEN_PORTS:
++        raise EgressScopeError(f"port {port} must never be denied by T-074")
++    if not interface or " " in interface:
++        raise EgressScopeError(f"implausible interface name: {interface!r}")
++    if not bridge or " " in bridge:
++        raise EgressScopeError(f"implausible bridge name: {bridge!r}")
++
++    common = [
++        "-p", "tcp",
++        "--dport", str(port),
++        "-m", "comment", "--comment",
++    ]
++    return [
++        # Host processes.
++        ["OUTPUT", "-o", interface, *common, f"{COMMENT} host", "-j", CHAIN],
++        # Container processes. Scoped by the compose bridge so wg0 peer traffic,
++        # which also traverses DOCKER-USER, keeps its current policy.
++        ["DOCKER-USER", "-i", bridge, "-o", interface, *common, f"{COMMENT} containers", "-j", CHAIN],
++    ]
++
++
++def build_restore_document() -> str:
++    """One atomic `iptables-restore --noflush` transaction for the chain."""
++    body = "\n".join(build_chain_rules())
++    return f"*filter\n:{CHAIN} - [0:0]\n{body}\nCOMMIT\n"
++
++
++def assert_scope(document: str, jumps: list[list[str]]) -> None:
++    """Fail before anything is applied if the generated rules drifted."""
++    joined = document + " " + " ".join(" ".join(j) for j in jumps) + " "
++    for port in FORBIDDEN_PORTS:
++        if f"--dport {port} " in joined:
++            raise EgressScopeError(f"generated rules reference forbidden port {port}")
++    if f"--dport {SMTP_PORT} " not in joined:
++        raise EgressScopeError("no rule denies TCP/25 — the control would be absent")
++    for generated in ("-A DOCKER ", "-A DOCKER-FORWARD", "-A DOCKER-INGRESS"):
++        if generated in joined:
++            raise EgressScopeError("must not write into Docker-generated chains")
++    if "-A INPUT" in document or "-A FORWARD" in document or "-A OUTPUT" in document:
++        raise EgressScopeError("only T-074's own chain may be populated here")
++    if "wg0" in joined:
++        raise EgressScopeError("WireGuard is deliberately out of scope")
++    if "-j REJECT" not in document:
++        raise EgressScopeError("no reject rule present — the control would be absent")
++
++
++def _run(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
++    return subprocess.run(  # noqa: S603
++        argv, input=input_text, capture_output=True, text=True, check=False
++    )
++
++
++def detect_bridge(network: str = "beauty-gr_default", runner=_run) -> str:
++    """
++    Resolve the compose network's bridge interface at apply time.
++
++    Not hardcoded: the name contains the network id and changes if the compose
++    network is recreated. A stale name would silently produce a rule that
++    matches nothing, leaving containers able to send while the run reports
++    success.
++    """
++    result = runner([
++        "docker", "network", "inspect", network,
++        "--format", '{{index .Options "com.docker.network.bridge.name"}}',
++    ])
++    name = (result.stdout or "").strip()
++    if result.returncode == 0 and name and name != "<no value>":
++        return name
++    result = runner(["docker", "network", "inspect", network, "--format", "{{.Id}}"])
++    if result.returncode != 0 or not result.stdout.strip():
++        raise EgressScopeError(f"cannot resolve the bridge for network {network!r}")
++    return "br-" + result.stdout.strip()[:12]
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--interface", required=True)
++    parser.add_argument("--network", default="beauty-gr_default")
++    parser.add_argument("--bridge", help="override bridge detection")
++    parser.add_argument("--apply", action="store_true")
++    args = parser.parse_args(argv)
++
++    try:
++        bridge = args.bridge or detect_bridge(args.network)
++        document = build_restore_document()
++        jumps = build_jump_rules(args.interface, bridge)
++        assert_scope(document, jumps)
++    except EgressScopeError as exc:
++        print(f"FAIL: {exc}", file=sys.stderr)
++        return 1
++
++    print(f"# deny outbound TCP/{SMTP_PORT} via {args.interface}; container bridge {bridge}")
++    if not args.apply:
++        print(document, end="")
++        for chain, *rule in jumps:
++            print(f"# jump: iptables -I {chain} 1 {' '.join(rule)}")
++        print("# dry run — nothing applied")
++        return 0
++
++    restore = _run(["iptables-restore", "--noflush"], input_text=document)
++    if restore.returncode != 0:
++        print(f"FAIL: iptables-restore: {restore.stderr.strip()}", file=sys.stderr)
++        return 1
++
++    for chain, *rule in jumps:
++        if _run(["iptables", "-C", chain, *rule]).returncode == 0:
++            print(f"jump in {chain} already present — not duplicated")
++            continue
++        inserted = _run(["iptables", "-I", chain, "1", *rule])
++        if inserted.returncode != 0:
++            print(f"FAIL: could not install jump in {chain}: {inserted.stderr.strip()}", file=sys.stderr)
++            return 1
++        print(f"jump installed in {chain}")
++
++    print("applied")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
