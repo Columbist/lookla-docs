@@ -1,3 +1,373 @@
+diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
+new file mode 100644
+index 0000000..f3461fe
+--- /dev/null
++++ b/backend/tests/test_t074_apply.py
+@@ -0,0 +1,364 @@
++"""
++T-074: the apply script, the rollback it generates, and the systemd unit.
++
++Text inspection of a script that mutates a production firewall is not enough,
++so `docker`, `ip`, `iptables`, `iptables-save`, `iptables-restore`,
++`systemd-run` and `systemctl` are replaced by stub executables on a temporary
++`PATH`. Each stub appends its argv to a log, so the tests assert on the actual
++sequence of calls — in particular that the rollback timer is armed *before* the
++first firewall mutation, which no amount of reading the source proves.
++
++The four failure modes that motivated this file, all of which look fine until
++the day they do not:
++
++  1. the unattended systemd path arming a rollback timer nobody will cancel;
++  2. an old timer firing after a newer apply and deleting current protection;
++  3. a rollback that half-succeeds because a rule it expected is already gone;
++  4. an unresolvable bridge producing a rule that matches nothing while the
++     run still reports success.
++"""
++import os
++import re
++import shutil
++import stat
++import subprocess
++from pathlib import Path
++
++import pytest
++
++_ROOT = Path(__file__).resolve().parents[2]
++APPLY = _ROOT / "ops" / "t074" / "apply_t074.sh"
++UNIT = _ROOT / "ops" / "t074" / "t074-smtp-egress.service"
++UNIT_TEXT = UNIT.read_text(encoding="utf-8")
++
++BRIDGE = "br-7ee6b79d9884"
++IFACE = "eth0"
++
++# Stub behaviour per command. `{log}` is substituted with the call-log path.
++_STUB = """#!/usr/bin/env bash
++printf '%s\\n' "$0 $*" >> "{log}"
++{body}
++"""
++
++
++def _make_env(tmp_path: Path, *, bridge_ok=True, iptables_c_rc=1, extra=None):
++    """Build a PATH of stubs and return (env, log_path)."""
++    bindir = tmp_path / "bin"
++    bindir.mkdir(parents=True, exist_ok=True)
++    log = tmp_path / "calls.log"
++    log.touch()
++
++    bodies = {
++        # `docker network inspect` returns the bridge name, or fails.
++        "docker": (
++            f'echo "{BRIDGE}"' if bridge_ok
++            else "exit 1"
++        ),
++        # `ip link show <bridge>` succeeds only when the bridge exists.
++        "ip": "exit 0" if bridge_ok else "exit 1",
++        # -C is the "does this rule exist" probe; default: it does not.
++        "iptables": f'case " $* " in *" -C "*) exit {iptables_c_rc};; esac; exit 0',
++        "iptables-save": 'echo "*filter"; echo "COMMIT"',
++        "iptables-restore": "exit 0",
++        "systemd-run": "exit 0",
++        "systemctl": "exit 0",
++        "python3": "exit 0",  # the rule generator is covered by its own tests
++    }
++    bodies.update(extra or {})
++
++    for name, body in bodies.items():
++        path = bindir / name
++        path.write_text(_STUB.format(log=log, body=body))
++        path.chmod(path.stat().st_mode | stat.S_IEXEC)
++
++    env = dict(os.environ)
++    env["PATH"] = f"{bindir}:{env['PATH']}"
++    env["EUID"] = "0"
++    # Never touch the host's /run or /var/backups from a test.
++    env["T074_STATE_DIR"] = str(tmp_path / "state")
++    env["T074_BACKUP_DIR"] = str(tmp_path / "backups")
++    return env, log
++
++
++def _run(tmp_path, args, env, expect_rc=None):
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(APPLY), *args],
++        env=env, capture_output=True, text=True, cwd=tmp_path,
++    )
++    if expect_rc is not None:
++        assert result.returncode == expect_rc, result.stderr[-800:]
++    return result
++
++
++def _calls(log: Path) -> list[str]:
++    return [ln for ln in log.read_text().splitlines() if ln.strip()]
++
++
++pytestmark = pytest.mark.skipif(
++    shutil.which("bash") is None, reason="bash required"
++)
++
++
++# ───────────────────────── mode separation (failure mode 1) ──────────────────
++
++
++def test_a_mode_must_be_chosen_explicitly(tmp_path):
++    env, _ = _make_env(tmp_path)
++    r = _run(tmp_path, ["--interface", IFACE], env, expect_rc=2)
++    assert "--rollout or --ensure" in r.stderr
++
++
++def test_ensure_mode_never_arms_a_rollback_timer(tmp_path):
++    # The failure this whole split exists to prevent: Docker restarts, systemd
++    # re-applies, a timer is armed that nobody will cancel, and the protection
++    # deletes itself.
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--ensure"], env)
++    assert not any("systemd-run" in c for c in _calls(log)), (
++        "unattended mode armed a rollback timer"
++    )
++
++
++def test_rollout_mode_does_arm_a_timer(tmp_path):
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env)
++    assert any("systemd-run" in c for c in _calls(log))
++
++
++def test_the_systemd_unit_uses_ensure_and_never_rollout():
++    assert "--ensure" in UNIT_TEXT
++    assert "--rollout" not in re.sub(r"^#.*$", "", UNIT_TEXT, flags=re.M), (
++        "the unit references --rollout outside comments"
++    )
++
++
++# ─────────────────────── ordering: timer before mutation ─────────────────────
++
++
++def test_the_timer_is_armed_before_the_first_firewall_mutation(tmp_path):
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env)
++    calls = _calls(log)
++    timer = next(i for i, c in enumerate(calls) if "systemd-run" in c)
++    mutation = next(
++        (i for i, c in enumerate(calls)
++         if "python3" in c and "--apply" in c), None,
++    )
++    assert mutation is not None, "no apply call was made"
++    assert timer < mutation, "the firewall was mutated before the rollback was armed"
++
++
++def test_a_failed_timer_stops_the_run_before_any_mutation(tmp_path):
++    env, log = _make_env(tmp_path, extra={"systemd-run": "exit 1"})
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++    assert not any("--apply" in c for c in _calls(log)), (
++        "the firewall was mutated even though the rollback could not be armed"
++    )
++
++
++# ───────────────────── bridge resolution (failure mode 4) ────────────────────
++
++
++def test_an_unresolvable_bridge_stops_rollout_before_any_mutation(tmp_path):
++    env, log = _make_env(tmp_path, bridge_ok=False)
++    r = _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++    assert "cannot resolve the bridge" in r.stderr
++    calls = _calls(log)
++    assert not any("iptables-save" in c for c in calls), "backups began despite no bridge"
++    assert not any("systemd-run" in c for c in calls)
++    assert not any("--apply" in c for c in calls)
++
++
++def test_a_bridge_missing_from_ip_link_also_blocks(tmp_path):
++    # `docker network inspect` can name a bridge that no longer exists on the
++    # host. Trusting the metadata alone would produce a rule matching nothing.
++    env, _ = _make_env(tmp_path, extra={"ip": "exit 1"})
++    r = _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++    assert "cannot resolve the bridge" in r.stderr
++
++
++def test_ensure_waits_and_retries_rather_than_failing_immediately(tmp_path):
++    # After=docker.service orders us after the daemon, not after the network it
++    # then recreates. A single attempt would lose that race.
++    assert "BRIDGE_WAIT_SECONDS" in APPLY.read_text(encoding="utf-8")
++    body = APPLY.read_text(encoding="utf-8")
++    ensure_block = body[body.index('if [[ "$MODE" == "ensure" ]]; then'):]
++    assert "until BRIDGE=" in ensure_block and "sleep 2" in ensure_block
++
++
++def test_the_unit_retries_on_failure():
++    assert "Restart=on-failure" in UNIT_TEXT
++    assert re.search(r"RestartSec=\S+", UNIT_TEXT)
++    assert "StartLimitBurst=" in UNIT_TEXT
++
++
++def test_start_limit_keys_are_in_the_unit_section_not_service():
++    # systemd has ignored StartLimitIntervalSec/StartLimitBurst under [Service]
++    # since v229, so putting them there silently disables the restart limit —
++    # the unit looks rate-limited and is not. `systemd-analyze verify` reported
++    # it as an unknown key, which is the only visible symptom.
++    # Parse by section headers at line starts, not by substring index: the
++    # explanatory comment above these keys contains the literal "[Service]",
++    # and an index() search finds the comment rather than the header — which
++    # is exactly how the first version of this test failed against a correct
++    # unit file.
++    sections, current = {}, None
++    for line in UNIT_TEXT.splitlines():
++        stripped = line.strip()
++        if stripped.startswith("[") and stripped.endswith("]"):
++            current = stripped
++            sections[current] = []
++        elif current and stripped and not stripped.startswith("#"):
++            sections[current].append(stripped)
++
++    unit_keys = {ln.split("=", 1)[0] for ln in sections.get("[Unit]", [])}
++    service_keys = {ln.split("=", 1)[0] for ln in sections.get("[Service]", [])}
++    for key in ("StartLimitIntervalSec", "StartLimitBurst"):
++        assert key in unit_keys, f"{key} must be in [Unit]"
++        assert key not in service_keys, f"{key} is ignored in [Service]"
++
++
++def test_the_unit_does_not_report_active_without_live_rules():
++    # ExecStart verifies before exiting 0, so a unit that is "active" means the
++    # rules are really there.
++    body = APPLY.read_text(encoding="utf-8")
++    assert "verify_live || fail \"ensure:" in body
++
++
++# ───────────────── generation scoping (failure mode 2) ───────────────────────
++
++
++def _generated_rollback(tmp_path, env):
++    _run(tmp_path, ["--interface", IFACE, "--rollout", "--dry-run"], env)
++    found = sorted(Path(env["T074_STATE_DIR"]).glob("*/rollback.sh"))
++    assert found, "no rollback script was generated"
++    return found[-1]
++
++
++def test_each_rollout_gets_its_own_rollback_artifact(tmp_path):
++    env, _ = _make_env(tmp_path)
++    first = _generated_rollback(tmp_path, env)
++    second = _generated_rollback(tmp_path, env)
++    assert first != second, (
++        "a later rollout overwrote the earlier rollback — an old timer would "
++        "then execute the newer transaction's rollback"
++    )
++
++
++def test_the_rollback_refuses_to_run_when_superseded(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env).read_text()
++    assert "superseded" in script
++    assert "CURRENT_FILE" in script
++
++
++def test_the_timer_unit_name_carries_the_generation(tmp_path):
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env)
++    armed = next(c for c in _calls(log) if "systemd-run" in c)
++    assert "lookla-t074-rollback-" in armed
++    assert "--unit=lookla-t074-rollback\n" not in armed  # not a bare, shared name
++
++
++def test_stale_timers_are_stopped_explicitly_before_a_new_rollout(tmp_path):
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env)
++    assert any("list-units" in c for c in _calls(log)), (
++        "a previous rollout's timer would be left to coexist silently"
++    )
++
++
++# ────────────────── rollback content and idempotence (mode 3) ────────────────
++
++
++def test_the_rollback_removes_both_jumps_and_the_chain(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env).read_text()
++    assert "drop_rule OUTPUT" in script
++    assert "drop_rule DOCKER-USER" in script
++    assert "-F LOOKLA-T074-DENY" in script
++    assert "-X LOOKLA-T074-DENY" in script
++
++
++def test_the_rollback_guards_every_removal_with_an_existence_test(tmp_path):
++    # A missing rule must not turn the rollback into a partial failure.
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env).read_text()
++    assert 'iptables -w -C "$chain" "$@"' in script
++    assert "already absent" in script
++
++
++def test_the_rollback_removes_by_full_match_not_line_number(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env).read_text()
++    assert not re.search(r"iptables\s+(-w\s+)?-D\s+\w+\s+\d+\b", script), (
++        "removal by line number shifts when other rules change"
++    )
++
++
++@pytest.mark.parametrize(
++    "forbidden",
++    ["LOOKLA-CLOUDFLARE", "LOOKLA-T072-DENY", "iptables-restore", "-F OUTPUT", "-F DOCKER-USER"],
++)
++def test_the_rollback_never_touches_neighbouring_or_builtin_chains(tmp_path, forbidden):
++    env, _ = _make_env(tmp_path)
++    assert forbidden not in _generated_rollback(tmp_path, env).read_text()
++
++
++def test_the_apply_refuses_to_arm_a_rollback_that_names_a_neighbour(tmp_path):
++    # The check is in the script, not only in this test file, so a future edit
++    # to the heredoc cannot quietly arm a destructive rollback.
++    assert 'fail "generated rollback references' in APPLY.read_text(encoding="utf-8")
++
++
++def test_the_generated_rollback_is_valid_shell_and_runs_twice(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603
++
++    # Behavioural: first run removes, second run finds nothing and still exits 0.
++    # The generation guard is satisfied by construction — this rollback belongs
++    # to the only generation in its own state dir.
++    env2, _ = _make_env(tmp_path / "second", iptables_c_rc=0)
++    env2["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    first = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=env2, capture_output=True, text=True,
++    )
++    assert first.returncode == 0, first.stderr
++    assert "removed jump" in first.stdout
++
++    env3, _ = _make_env(tmp_path / "third", iptables_c_rc=1)
++    env3["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    second = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=env3, capture_output=True, text=True,
++    )
++    assert second.returncode == 0, second.stderr
++    assert "already absent" in second.stdout
++
++
++# ───────────────────────────── shared defaults ───────────────────────────────
++
++
++def test_the_rollback_window_is_a_single_named_default_of_900(tmp_path):
++    body = APPLY.read_text(encoding="utf-8")
++    assert "DEFAULT_ROLLBACK_AFTER=900" in body, (
++        "unified with T-049 and T-072; the smoke covers host, six containers, "
++        "WireGuard, 465/587 and the neighbouring chains"
++    )
++    assert "default: $DEFAULT_ROLLBACK_AFTER" in body, "the help must show it"
++
++
++def test_the_window_is_overridable(tmp_path):
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout", "--rollback-after", "120"], env)
++    armed = next(c for c in _calls(log) if "systemd-run" in c)
++    assert "--on-active=120" in armed
++
++
++def test_dry_run_mutates_nothing_in_either_mode(tmp_path):
++    for mode in ("--rollout", "--ensure"):
++        env, log = _make_env(tmp_path / mode.strip("-"))
++        _run(tmp_path, ["--interface", IFACE, mode, "--dry-run"], env)
++        calls = _calls(log)
++        assert not any("--apply" in c for c in calls), mode
++        assert not any("systemd-run" in c for c in calls), mode
 diff --git a/backend/tests/test_t074_smtp_egress.py b/backend/tests/test_t074_smtp_egress.py
 new file mode 100644
 index 0000000..ab88868
@@ -280,119 +650,272 @@ index a18d935..bab1841 100644
  ```text
 diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
 new file mode 100755
-index 0000000..67e1674
+index 0000000..45f728d
 --- /dev/null
 +++ b/ops/t074/apply_t074.sh
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,263 @@
 +#!/usr/bin/env bash
 +# T-074 — apply the outbound SMTP restriction.
 +#
-+# The rule itself is small; the ordering is what makes it safe. A mistake here
-+# does not take the site down — the rule only touches TCP/25, which nothing
-+# uses — but "nothing uses it" is a conclusion from an audit, and an audit can
-+# be wrong. So the rollback is armed before the first mutation, as with T-049
-+# and T-072, and the bridge is resolved rather than assumed: a stale bridge
-+# name produces a rule that matches nothing while the run still reports
-+# success, which is the failure that would leave containers able to send.
++# Two modes, and the distinction is the whole point of this script.
 +#
-+# Usage: ./apply_t074.sh --interface eth0 [--rollback-after 600] [--dry-run]
++#   --rollout   An operator is present. Takes backups, arms a timed rollback
++#               BEFORE the first mutation, applies, and then waits for that
++#               operator to smoke-test and cancel the timer.
++#
++#   --ensure    Nobody is present. Used by the systemd unit after a boot or a
++#               Docker restart. Resolves the bridge from current state, applies
++#               idempotently, verifies the live rule, and arms NO timer.
++#
++# Running --rollout from systemd would be the worst failure this script could
++# have: Docker restarts, the unit re-applies, a ten-minute rollback timer is
++# armed, nobody is there to cancel it, and the protection deletes itself.
++# `--ensure` exists so that cannot happen, and a test asserts the unit uses it.
++#
++# Rollback artifacts are generation-scoped. Each rollout gets its own directory
++# and its own transient timer, and records itself as the current generation. A
++# timer whose generation is no longer current exits without touching anything —
++# otherwise an old timer could fire after a newer apply and delete protection
++# that a different transaction installed.
 +
 +set -euo pipefail
 +
 +HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-+BACKUP_DIR="/var/backups/t074"
++# Overridable so tests can exercise the real script without writing to the
++# host's /run and /var/backups. Production never sets these.
++STATE_DIR="${T074_STATE_DIR:-/run/lookla-t074}"
++BACKUP_DIR="${T074_BACKUP_DIR:-/var/backups/t074}"
 +NETWORK="beauty-gr_default"
-+ROLLBACK_AFTER=600
++CHAIN="LOOKLA-T074-DENY"
++COMMENT="T-074 deny outbound SMTP"
++
++#: Single named default, shared with T-049 and T-072. The smoke that follows a
++#: rollout covers the host, six containers, WireGuard, 465/587 and the
++#: neighbouring chains; ten minutes is not enough to do that unhurried.
++DEFAULT_ROLLBACK_AFTER=900
++
++#: How long --ensure waits for Docker to finish restoring the compose network.
++#: `After=docker.service` orders us after the daemon, not after the network and
++#: containers it then recreates, so a bounded wait is required or the unit
++#: races the very thing it depends on.
++BRIDGE_WAIT_SECONDS=60
++
++MODE=""
 +INTERFACE=""
++ROLLBACK_AFTER="$DEFAULT_ROLLBACK_AFTER"
 +DRY_RUN=0
++
++usage() {
++  cat <<USAGE
++usage: apply_t074.sh --interface IFACE (--rollout | --ensure) [options]
++
++  --rollout                 attended: backups, timed rollback, manual cancel
++  --ensure                  unattended: idempotent, verified, NO timer
++  --interface IFACE         external interface (required)
++  --network NAME            compose network (default: $NETWORK)
++  --rollback-after SECONDS  rollout only (default: $DEFAULT_ROLLBACK_AFTER)
++  --dry-run                 print what would happen, mutate nothing
++USAGE
++}
 +
 +while [[ $# -gt 0 ]]; do
 +  case "$1" in
++    --rollout)        MODE="rollout"; shift ;;
++    --ensure)         MODE="ensure"; shift ;;
 +    --interface)      INTERFACE="$2"; shift 2 ;;
 +    --network)        NETWORK="$2"; shift 2 ;;
 +    --rollback-after) ROLLBACK_AFTER="$2"; shift 2 ;;
 +    --dry-run)        DRY_RUN=1; shift ;;
-+    *) echo "unknown argument: $1" >&2; exit 2 ;;
++    -h|--help)        usage; exit 0 ;;
++    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
 +  esac
 +done
 +
 +[[ -n "$INTERFACE" ]] || { echo "--interface is required" >&2; exit 2; }
++[[ -n "$MODE" ]] || { echo "one of --rollout or --ensure is required" >&2; exit 2; }
 +[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 2; }
 +
 +log()  { printf '[t074] %s\n' "$*"; }
 +fail() { printf '[t074] FAIL: %s\n' "$*" >&2; exit 1; }
 +
-+# ── resolve the bridge first: no bridge, no run ──────────────────────────────
-+BRIDGE="$(docker network inspect "$NETWORK" \
-+  --format '{{index .Options "com.docker.network.bridge.name"}}' 2>/dev/null || true)"
-+if [[ -z "$BRIDGE" || "$BRIDGE" == "<no value>" ]]; then
-+  NETID="$(docker network inspect "$NETWORK" --format '{{.Id}}' 2>/dev/null || true)"
-+  [[ -n "$NETID" ]] || fail "cannot resolve the bridge for network $NETWORK — refusing to apply a rule that would match nothing"
-+  BRIDGE="br-${NETID:0:12}"
++# ── bridge resolution, with a bounded wait in --ensure ───────────────────────
++# A stale or unresolvable bridge produces a rule that matches nothing while the
++# run still reports success — the failure that would leave containers able to
++# send. So resolution failing is fatal, never a warning.
++resolve_bridge() {
++  local name id
++  name="$(docker network inspect "$NETWORK" \
++    --format '{{index .Options "com.docker.network.bridge.name"}}' 2>/dev/null || true)"
++  if [[ -z "$name" || "$name" == "<no value>" ]]; then
++    id="$(docker network inspect "$NETWORK" --format '{{.Id}}' 2>/dev/null || true)"
++    [[ -n "$id" ]] || return 1
++    name="br-${id:0:12}"
++  fi
++  ip link show "$name" >/dev/null 2>&1 || return 1
++  printf '%s' "$name"
++}
++
++BRIDGE=""
++if [[ "$MODE" == "ensure" ]]; then
++  deadline=$(( SECONDS + BRIDGE_WAIT_SECONDS ))
++  until BRIDGE="$(resolve_bridge)"; do
++    (( SECONDS < deadline )) || fail "compose network $NETWORK did not appear within ${BRIDGE_WAIT_SECONDS}s"
++    sleep 2
++  done
++else
++  BRIDGE="$(resolve_bridge)" \
++    || fail "cannot resolve the bridge for network $NETWORK — refusing to apply a rule that would match nothing"
 +fi
-+ip link show "$BRIDGE" >/dev/null 2>&1 || fail "bridge $BRIDGE does not exist on this host"
 +log "compose bridge: $BRIDGE"
 +
-+# ── every container on that bridge, for the smoke list ───────────────────────
-+log "containers on $NETWORK: $(docker network inspect "$NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null)"
++apply_rules() {
++  python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE" --apply
++}
 +
-+# ── backups ──────────────────────────────────────────────────────────────────
-+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-+BACKUP="$BACKUP_DIR/$STAMP"
-+mkdir -p "$BACKUP"
++# Assert the live rules exist. `--ensure` must not report success while the
++# firewall is unprotected, or systemd will show the unit active and green with
++# no rule in place.
++verify_live() {
++  iptables -w -C OUTPUT -o "$INTERFACE" -p tcp --dport 25 \
++    -m comment --comment "$COMMENT host" -j "$CHAIN" 2>/dev/null \
++    || return 1
++  iptables -w -C DOCKER-USER -i "$BRIDGE" -o "$INTERFACE" -p tcp --dport 25 \
++    -m comment --comment "$COMMENT containers" -j "$CHAIN" 2>/dev/null \
++    || return 1
++}
++
++# ── unattended path ──────────────────────────────────────────────────────────
++if [[ "$MODE" == "ensure" ]]; then
++  if [[ $DRY_RUN -eq 1 ]]; then
++    log "dry run (ensure)"
++    python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE"
++    exit 0
++  fi
++  apply_rules || fail "ensure: apply failed"
++  verify_live || fail "ensure: rules are not present after apply — refusing to report success"
++  log "ensure: rules verified live (no rollback timer armed, by design)"
++  exit 0
++fi
++
++# ── attended rollout ─────────────────────────────────────────────────────────
++GENERATION="$(date -u +%Y%m%dT%H%M%SZ)-$$"
++GEN_DIR="$STATE_DIR/$GENERATION"
++BACKUP="$BACKUP_DIR/$GENERATION"
++mkdir -p "$GEN_DIR" "$BACKUP"
++chmod 700 "$STATE_DIR"
++
 +iptables-save > "$BACKUP/iptables.rules"
 +[[ -s "$BACKUP/iptables.rules" ]] || fail "iptables backup is empty — refusing to continue"
-+# Kept separately so a reviewer can diff the neighbouring tickets' chains
-+# afterwards and see they were untouched.
++# Captured separately so the neighbouring tickets can be diffed afterwards and
++# shown untouched.
 +iptables -S LOOKLA-CLOUDFLARE > "$BACKUP/t049-chain.txt" 2>/dev/null || true
 +iptables -S LOOKLA-T072-DENY  > "$BACKUP/t072-chain.txt" 2>/dev/null || true
 +ln -sfn "$BACKUP" "$BACKUP_DIR/latest"
 +log "backup: $BACKUP"
++log "generation: $GENERATION"
 +
-+cat > "$BACKUP/rollback.sh" <<ROLLBACK
++ROLLBACK="$GEN_DIR/rollback.sh"
++cat > "$ROLLBACK" <<ROLLBACK_EOF
 +#!/usr/bin/env bash
-+# Removes exactly what T-074 added, and nothing else. Needs no network and no
-+# repository — everything it refers to is named here.
++# T-074 rollback for generation $GENERATION.
++#
++# Removes exactly what this transaction added and nothing else. Needs no
++# network and no repository. Idempotent: every removal is guarded by a -C test,
++# so running it twice succeeds and changes nothing the second time.
 +set -euo pipefail
-+iptables -D OUTPUT -o ${INTERFACE} -p tcp --dport 25 -m comment --comment "T-074 deny outbound SMTP host" -j LOOKLA-T074-DENY 2>/dev/null || true
-+iptables -D DOCKER-USER -i ${BRIDGE} -o ${INTERFACE} -p tcp --dport 25 -m comment --comment "T-074 deny outbound SMTP containers" -j LOOKLA-T074-DENY 2>/dev/null || true
-+iptables -F LOOKLA-T074-DENY 2>/dev/null || true
-+iptables -X LOOKLA-T074-DENY 2>/dev/null || true
-+echo "[t074] rolled back from $BACKUP"
-+ROLLBACK
-+chmod +x "$BACKUP/rollback.sh"
-+bash -n "$BACKUP/rollback.sh" || fail "generated rollback script is not valid shell"
-+log "rollback script: $BACKUP/rollback.sh"
++
++GENERATION="$GENERATION"
++CURRENT_FILE="$STATE_DIR/current"
++
++# Generation guard. A timer from an earlier rollout must not fire after a later
++# apply and delete protection that a different transaction installed.
++if [[ -r "\$CURRENT_FILE" ]]; then
++  current="\$(cat "\$CURRENT_FILE")"
++  if [[ "\$current" != "\$GENERATION" ]]; then
++    echo "[t074] rollback \$GENERATION superseded by \$current — doing nothing"
++    exit 0
++  fi
++fi
++
++drop_rule() {
++  local chain="\$1"; shift
++  if iptables -w -C "\$chain" "\$@" 2>/dev/null; then
++    iptables -w -D "\$chain" "\$@"
++    echo "[t074] removed jump from \$chain"
++  else
++    echo "[t074] jump already absent from \$chain"
++  fi
++}
++
++# 1. exact jumps, by full match — never by line number, which shifts.
++drop_rule OUTPUT -o $INTERFACE -p tcp --dport 25 -m comment --comment "$COMMENT host" -j $CHAIN
++drop_rule DOCKER-USER -i $BRIDGE -o $INTERFACE -p tcp --dport 25 -m comment --comment "$COMMENT containers" -j $CHAIN
++
++# 2 & 3. our own chain, flushed then removed, and only if it exists.
++if iptables -w -S $CHAIN >/dev/null 2>&1; then
++  iptables -w -F $CHAIN
++  iptables -w -X $CHAIN
++  echo "[t074] removed chain $CHAIN"
++else
++  echo "[t074] chain $CHAIN already absent"
++fi
++
++# 4. Nothing else is touched. This script flushes no built-in chain, restores
++#    no whole ruleset, and names no other ticket's chain — the generator
++#    refuses to arm a rollback that does, so the guarantee is enforced rather
++#    than merely intended. (Naming the forbidden strings here would trip that
++#    check, which is why they are described instead of listed.)
++rm -f "\$CURRENT_FILE"
++echo "[t074] rolled back generation \$GENERATION"
++ROLLBACK_EOF
++chmod +x "$ROLLBACK"
++bash -n "$ROLLBACK" || fail "generated rollback script is not valid shell"
++for forbidden in "LOOKLA-CLOUDFLARE" "LOOKLA-T072-DENY" "iptables-restore" "-F OUTPUT" "-F DOCKER-USER"; do
++  grep -q -- "$forbidden" "$ROLLBACK" && fail "generated rollback references '$forbidden' — refusing to arm it"
++done
++log "rollback: $ROLLBACK"
 +
 +if [[ $DRY_RUN -eq 1 ]]; then
-+  log "dry run"
++  log "dry run (rollout) — rollback generated and validated, nothing applied"
 +  python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE"
 +  exit 0
 +fi
 +
-+# ── arm the rollback BEFORE the first mutation ───────────────────────────────
-+systemd-run --on-active="${ROLLBACK_AFTER}" --unit=t074-rollback \
-+  --description="T-074 automatic rollback" "$BACKUP/rollback.sh" >/dev/null
-+log "automatic rollback armed: ${ROLLBACK_AFTER}s (systemctl stop t074-rollback.timer to cancel)"
++# Any timer left armed by an earlier rollout is dealt with explicitly rather
++# than left to coexist silently.
++for unit in $(systemctl list-units --all --no-legend 'lookla-t074-rollback-*.timer' 2>/dev/null | awk '{print $1}'); do
++  log "stopping stale rollback timer: $unit"
++  systemctl stop "$unit" 2>/dev/null || true
++done
 +
-+python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE" --apply \
-+  || fail "apply failed — rollback is armed and will restore automatically"
++printf '%s' "$GENERATION" > "$STATE_DIR/current"
++
++TIMER_UNIT="lookla-t074-rollback-$GENERATION"
++systemd-run --on-active="$ROLLBACK_AFTER" --unit="$TIMER_UNIT" \
++  --description="T-074 automatic rollback ($GENERATION)" "$ROLLBACK" >/dev/null \
++  || fail "could not arm the rollback timer — nothing has been applied"
++log "rollback armed: ${ROLLBACK_AFTER}s as $TIMER_UNIT.timer"
++
++# Only now is the firewall touched.
++apply_rules || fail "apply failed — the armed rollback will restore automatically"
++verify_live || fail "rules are not present after apply — the armed rollback will restore automatically"
 +
 +cat <<NEXT
 +
-+[t074] Applied. Verify before cancelling the rollback:
++[t074] Applied, generation $GENERATION. Verify, then cancel:
 +
-+    1. host:        a TCP connect to a public MX on 25 is refused IMMEDIATELY
-+    2. containers:  the same from each container on the bridge
-+    3. positive:    443 and 53 still work; 465/587 are not blocked
++    1. host:        TCP connect to a public MX on 25 refused IMMEDIATELY
++    2. containers:  the same from each of the six on $BRIDGE
++    3. positive:    443 and 53 work; 465/587 not blocked
 +    4. wg0:         VPN egress policy unchanged
-+    5. app:         lookla.gr in all locales, API, Resend HTTPS path
++    5. neighbours:  T-049 and T-072 chains byte-identical to the backup
++    6. app:         lookla.gr in all locales, API, Resend HTTPS path
 +
-+  systemctl stop t074-rollback.timer
++  systemctl stop $TIMER_UNIT.timer
 +
-+Roll back at any point:
++Roll back now:
 +
-+  $(readlink -f /var/backups/t074/latest)/rollback.sh
++  $ROLLBACK
 +NEXT
 diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
 new file mode 100644
@@ -618,46 +1141,65 @@ index 0000000..ef1fea8
 +    raise SystemExit(main())
 diff --git a/ops/t074/t074-smtp-egress.service b/ops/t074/t074-smtp-egress.service
 new file mode 100644
-index 0000000..c71ad9f
+index 0000000..5d84126
 --- /dev/null
 +++ b/ops/t074/t074-smtp-egress.service
-@@ -0,0 +1,41 @@
-+# T-074 — reinstate the outbound SMTP denial after a reboot or a Docker restart.
+@@ -0,0 +1,60 @@
++# T-074 — reinstate the outbound SMTP denial after boot or a Docker restart.
 +#
-+# `PartOf=docker.service` is the load-bearing line here, and for a reason
-+# specific to this ticket. Docker rebuilds its own chains when it starts, and
-+# recreating the compose network changes the bridge name. This unit re-runs the
-+# apply, which resolves the bridge from the current state rather than from a
-+# stored value — so a network recreated under a new id gets a correct rule
-+# instead of a stale one that silently matches nothing.
++# Runs the apply script in ensure mode, never rollout mode. Rollout arms a
++# timed rollback and waits for an operator to smoke-test and cancel it; running
++# that from systemd would mean a Docker restart re-applies the rule, arms a
++# timer nobody is watching, and the protection deletes itself minutes later. A
++# test asserts this unit never names the rollout mode.
 +#
-+# It does not fetch anything and needs no network of its own.
++# PartOf=docker.service re-runs this when Docker restarts, which matters
++# because recreating the compose network changes the bridge name: ensure mode
++# re-resolves it from current state instead of reusing a stored value.
++#
++# Restart=on-failure exists for a race that ordering alone does not fix.
++# After=docker.service orders this after the daemon, not after the network and
++# containers the daemon then recreates, so the first attempt can find no
++# bridge. Ensure mode already waits up to 60s internally; the restart is the
++# second line of defence. The unit fails loudly rather than sitting active with
++# no rule, because the script verifies the live rules before exiting 0.
 +#
 +# Install:
 +#   cp t074-smtp-egress.service /etc/systemd/system/
 +#   systemctl daemon-reload && systemctl enable t074-smtp-egress.service
 +#
-+# Known limitation, deliberately not automated: if the compose network is
-+# removed and recreated *without* restarting Docker, systemd sees no event and
-+# this unit does not re-run. Re-run it by hand after such a change —
-+# `systemctl restart t074-smtp-egress` — or the container half of the rule will
-+# point at a bridge that no longer exists. The apply refuses to run at all when
-+# the bridge cannot be resolved, so the failure is loud rather than silent.
++# Documented limitation: recreating the compose network *without* restarting
++# Docker produces no systemd event, so this unit does not re-run and the
++# container jump will name a bridge that no longer exists.
++#
++#   detect:   iptables -S DOCKER-USER | grep -q "$(docker network inspect \
++#               beauty-gr_default \
++#               --format '{{index .Options "com.docker.network.bridge.name"}}')" \
++#               || echo "T-074 rule points at a stale bridge"
++#   recover:  systemctl restart t074-smtp-egress.service
 +
 +[Unit]
 +Description=T-074 outbound SMTP restriction (TCP/25)
-+After=network-online.target docker.service
++Documentation=file:/opt/t074/apply_t074.sh
 +Wants=network-online.target
++After=network-online.target docker.service
 +Requires=docker.service
 +PartOf=docker.service
++# These two belong here, not in the service section. systemd has ignored them
++# there since v229, so putting them below would silently disable the restart
++# limit — the unit looks rate-limited and is not. `systemd-analyze verify`
++# reports it only as an unknown key, which is easy to miss.
++StartLimitIntervalSec=300
++StartLimitBurst=5
 +
 +[Service]
 +Type=oneshot
 +RemainAfterExit=yes
-+# Idempotent by construction: the chain is rebuilt in one atomic transaction
-+# and each jump is inserted only when absent, so repeated starts cannot stack
-+# duplicates.
-+ExecStart=/usr/bin/python3 /opt/t074/smtp_egress.py --interface eth0 --apply
++# Idempotent: the chain is rebuilt in one atomic transaction and each jump is
++# inserted only when absent, so repeated starts cannot stack duplicates.
++ExecStart=/opt/t074/apply_t074.sh --interface eth0 --ensure
++Restart=on-failure
++RestartSec=10s
 +StandardOutput=journal
 +StandardError=journal
 +
