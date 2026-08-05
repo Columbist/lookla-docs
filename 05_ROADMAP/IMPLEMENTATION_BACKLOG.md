@@ -2423,7 +2423,7 @@ This does not contradict T-049's finding that `DOCKER-USER` was the wrong layer 
 
 #### Verification
 
-**405 backend tests** (367 + 38 new), ruff clean. The guards were mutation-tested:
+**474 backend tests** (367 + 107 new), ruff clean. The guards were mutation-tested:
 
 | Mutation | Result |
 |---|---|
@@ -2445,6 +2445,24 @@ inbound rules     → untouched (T-049 and T-072 keep their chains)
 ```
 
 Ports 465 and 587 are deliberately **not** included: they are submission ports for authenticated relay through a provider, which is what a legitimate future sender would use. Blocking 25 removes direct-to-MX delivery, which is the abuse path, without foreclosing a proper setup later.
+
+#### Reconciliation, not accretion
+
+The first implementation only ever *added* a missing jump. Recreating the compose network changes the bridge name, so a fresh jump was installed and the stale one stayed; `--verify` then reported it as unexpected forever, and `Restart=on-failure` could not help because every retry rebuilt the same state. A changing bridge is the entire reason the systemd unit exists, so that was the one scenario it could not survive.
+
+Every apply now reads the live `iptables-save`, derives a deletion for **each** existing rule jumping to `LOOKLA-T074-DENY` — stale, duplicated or current — and reinstalls exactly two, all in one `iptables-restore --noflush` transaction. Deletions come from the live ruleset rather than being guessed, because deleting a rule that does not exist aborts the whole transaction. Ownership is decided solely by the jump target, so neighbouring chains are never candidates.
+
+The jumps use `-I <chain> 1` rather than `-A`: Docker may leave a `RETURN` at the end of `DOCKER-USER`, and a rule appended after it would never be evaluated.
+
+This also makes the atomicity claim true. Previously the chain was one transaction and both parent jumps were separate `iptables -I` calls, so a failure between them left a half-applied policy. The test that asserted atomicity only covered the chain; it now covers the whole document, and a post-apply `--verify` proves the result rather than assuming it.
+
+#### One lock for three paths
+
+The generation marker does not close every race, because stopping a `.timer` does not stop a `.service` that has already started. A rollback that had passed its guard could still be running while a newer rollout applied, and would then delete the newer generation's protection.
+
+`--rollout`, `--ensure` and the generated rollback now share one `flock`, taken before bridge resolution, before the marker is read or written, before stale timers are stopped, and before any mutation. `--ensure` takes it non-blocking and exits non-zero on conflict, since `Restart=on-failure` will retry and a conflicting run is already converging the same state. `--rollout` and the rollback wait: an attended operator should queue rather than abort, and a rollback that gave up on a busy lock would silently protect nothing. The rollback re-reads the marker **after** acquiring the lock, so the exact race above ends in a no-op.
+
+Concurrency is tested with real parallel processes holding the same lock, not by reading the source.
 
 #### Boundaries
 
