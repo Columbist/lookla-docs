@@ -1,9 +1,9 @@
 diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
 new file mode 100644
-index 0000000..eaa8663
+index 0000000..f361554
 --- /dev/null
 +++ b/backend/tests/test_t074_apply.py
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,705 @@
 +"""
 +T-074: the apply script, the rollback it generates, and the systemd unit.
 +
@@ -66,7 +66,9 @@ index 0000000..eaa8663
 +        # -C is the "does this rule exist" probe; default: it does not.
 +        "iptables": f'case " $* " in *" -C "*) exit {iptables_c_rc};; esac; exit 0',
 +        "iptables-save": 'echo "*filter"; echo "COMMIT"',
-+        "iptables-restore": "exit 0",
++        # Records the document it was given, so tests can assert on what would
++        # actually reach the kernel rather than on log lines.
++        "iptables-restore": f'cat > "{tmp_path}/restore-input"; exit 0',
 +        "systemd-run": "exit 0",
 +        "systemctl": "exit 0",
 +        "python3": "exit 0",  # the rule generator is covered by its own tests
@@ -280,89 +282,19 @@ index 0000000..eaa8663
 +# ────────────────── rollback content and idempotence (mode 3) ────────────────
 +
 +
-+def test_the_rollback_removes_both_jumps_and_the_chain(tmp_path):
-+    env, _ = _make_env(tmp_path)
-+    script = _generated_rollback(tmp_path, env).read_text()
-+    assert "drop_rule OUTPUT" in script
-+    assert "drop_rule DOCKER-USER" in script
-+    assert "-F LOOKLA-T074-DENY" in script
-+    assert "-X LOOKLA-T074-DENY" in script
-+
-+
-+def test_the_rollback_guards_every_removal_with_an_existence_test(tmp_path):
-+    # A missing rule must not turn the rollback into a partial failure.
-+    env, _ = _make_env(tmp_path)
-+    script = _generated_rollback(tmp_path, env).read_text()
-+    assert 'iptables -w -C "$chain" "$@"' in script
-+    assert "already absent" in script
-+
-+
-+def test_the_rollback_removes_by_full_match_not_line_number(tmp_path):
-+    env, _ = _make_env(tmp_path)
-+    script = _generated_rollback(tmp_path, env).read_text()
-+    assert not re.search(r"iptables\s+(-w\s+)?-D\s+\w+\s+\d+\b", script), (
-+        "removal by line number shifts when other rules change"
-+    )
-+
-+
 +@pytest.mark.parametrize(
 +    "forbidden",
-+    ["LOOKLA-CLOUDFLARE", "LOOKLA-T072-DENY", "iptables-restore", "-F OUTPUT", "-F DOCKER-USER"],
++    ["LOOKLA-CLOUDFLARE", "LOOKLA-T072-DENY", "-F OUTPUT", "-F DOCKER-USER"],
 +)
 +def test_the_rollback_never_touches_neighbouring_or_builtin_chains(tmp_path, forbidden):
 +    env, _ = _make_env(tmp_path)
-+    assert forbidden not in _generated_rollback(tmp_path, env).read_text()
++    assert forbidden not in _generated_rollback(tmp_path, _with_lock(env, tmp_path)).read_text()
 +
 +
 +def test_the_apply_refuses_to_arm_a_rollback_that_names_a_neighbour(tmp_path):
 +    # The check is in the script, not only in this test file, so a future edit
 +    # to the heredoc cannot quietly arm a destructive rollback.
 +    assert 'fail "generated rollback references' in APPLY.read_text(encoding="utf-8")
-+
-+
-+def test_the_generated_rollback_is_valid_shell_and_is_idempotent(tmp_path):
-+    env, _ = _make_env(tmp_path)
-+    script = _generated_rollback(tmp_path, env)
-+    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603
-+
-+    marker = Path(env["T074_STATE_DIR"]) / "current"
-+    generation = script.parent.name
-+
-+    def run(iptables_c_rc, tag):
-+        # The guard is fail-closed and the rollback clears the marker when it
-+        # completes, so it is rewritten before each run. Idempotence here means
-+        # the *removal* logic tolerates rules that are already gone — which is
-+        # modelled by what `iptables -C` answers, not by the guard.
-+        marker.write_text(generation)
-+        run_env, _ = _make_env(tmp_path / tag, iptables_c_rc=iptables_c_rc)
-+        run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
-+        result = subprocess.run(  # noqa: S603
-+            ["bash", str(script)], env=run_env, capture_output=True, text=True,
-+        )
-+        assert result.returncode == 0, result.stderr
-+        return result.stdout
-+
-+    # Rules present: they are removed.
-+    assert "removed jump" in run(0, "present")
-+    # Rules already gone: reported, still exit 0, nothing left half-done.
-+    absent = run(1, "absent")
-+    assert "already absent" in absent
-+    assert "removed jump" not in absent
-+
-+
-+def test_a_completed_rollback_clears_the_current_marker(tmp_path):
-+    # Otherwise the generation would still look current afterwards, and a
-+    # second timer for it could fire against a ruleset it no longer owns.
-+    env, _ = _make_env(tmp_path)
-+    script = _generated_rollback(tmp_path, env)
-+    marker = Path(env["T074_STATE_DIR"]) / "current"
-+    marker.write_text(script.parent.name)
-+
-+    run_env, _ = _make_env(tmp_path / "clear", iptables_c_rc=0)
-+    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
-+    subprocess.run(["bash", str(script)], env=run_env, check=True,  # noqa: S603
-+                   capture_output=True, text=True)
-+    assert not marker.exists()
 +
 +
 +# ───────────────────────────── shared defaults ───────────────────────────────
@@ -423,13 +355,14 @@ index 0000000..eaa8663
 +
 +def test_rollback_runs_when_the_marker_matches(tmp_path):
 +    out = _rollback_with_marker(tmp_path, "<self>")
-+    assert "removed jump" in out
++    assert "rolled back generation" in out
++    assert "not current" not in out
 +
 +
 +def test_rollback_is_a_noop_for_a_different_generation(tmp_path):
 +    out = _rollback_with_marker(tmp_path, "20200101T000000Z-1")
 +    assert "not current" in out
-+    assert "removed jump" not in out
++    assert "rolled back generation" not in out
 +
 +
 +def test_rollback_refuses_when_the_marker_is_absent(tmp_path):
@@ -437,12 +370,12 @@ index 0000000..eaa8663
 +    # destructive operation.
 +    out = _rollback_with_marker(tmp_path, None)
 +    assert "no current-generation marker" in out
-+    assert "removed jump" not in out
++    assert "rolled back generation" not in out
 +
 +
 +def test_rollback_refuses_when_the_marker_is_empty(tmp_path):
 +    out = _rollback_with_marker(tmp_path, "")
-+    assert "removed jump" not in out
++    assert "rolled back generation" not in out
 +    assert "not current" in out or "no current-generation marker" in out
 +
 +
@@ -459,7 +392,7 @@ index 0000000..eaa8663
 +            ["bash", str(script)], env=run_env, capture_output=True, text=True,
 +        )
 +        assert result.returncode == 0, result.stderr
-+        assert "removed jump" not in result.stdout
++        assert "rolled back generation" not in result.stdout
 +    finally:
 +        current.chmod(0o600)
 +
@@ -626,14 +559,162 @@ index 0000000..eaa8663
 +    out, _err = proc.communicate(timeout=30)
 +
 +    assert proc.returncode == 0, _err
-+    assert "removed jump" not in out, "a stale rollback deleted a newer generation's rules"
++    assert "rolled back generation" not in out, "a stale rollback acted on a newer generation"
 +    assert "not current" in out
++
++
++# ───────── rollback derives teardown from the live ruleset (review #2) ───────
++# Pinning the teardown to the bridge recorded at rollout time produced the
++# worst outcome in this whole ticket: after --ensure reconciled onto a new
++# bridge, rollback removed the host jump, could not find the old container
++# jump, flushed the chain, then failed to delete it because the live jump still
++# referenced it — aborting under set -e with an empty chain and TCP/25 open.
++
++
++def test_the_rollback_reads_the_live_ruleset_not_the_recorded_bridge(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, _with_lock(env, tmp_path)).read_text()
++    assert "iptables -w -S" in script, "teardown must be derived from the live ruleset"
++    assert "-j LOOKLA-T074-DENY$" in script or "-j $CHAIN" in script or "LOOKLA-T074-DENY" in script
++    assert BRIDGE not in script, (
++        "the rollout-time bridge must not be baked into the teardown"
++    )
++
++
++def test_the_rollback_is_one_transaction(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, _with_lock(env, tmp_path)).read_text()
++    assert "iptables-restore --noflush" in script
++    assert script.count("iptables-restore") == 1, (
++        "a multi-step teardown can land half-removed"
++    )
++
++
++def test_the_rollback_selector_is_anchored_so_foreign_rules_never_qualify(tmp_path):
++    """
++    The protective property is the selector, not the guard behind it.
++
++    An earlier test asserted the guard's error string appeared in the script,
++    which passed even with the ownership condition deleted — the other branch
++    contained the same word. Trying to make it behavioural then showed why:
++    the selector is anchored to `-j CHAIN` at end of line, so a foreign rule
++    can never reach the guard at all. The guard is belt-and-braces and
++    unreachable by construction; what actually protects neighbouring rules is
++    the anchor, so that is what is tested.
++    """
++    env, _ = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    assert 'grep -- "-j LOOKLA-T074-DENY$"' in script.read_text(), (
++        "an unanchored selector would sweep in rules merely mentioning the chain"
++    )
++    (Path(env["T074_STATE_DIR"]) / "current").write_text(script.parent.name)
++
++    # A neighbouring rule that names our chain in a comment but jumps
++    # elsewhere. It must be ignored, and the rollback must finish cleanly.
++    live = (
++        '-A INPUT -m comment --comment "see LOOKLA-T074-DENY" -j LOOKLA-CLOUDFLARE\n'
++    )
++    run_env, log = _make_env(tmp_path / "neighbour", extra={
++        "iptables": (
++            'case "$*" in '
++            '*"-S LOOKLA-T074-DENY"*) exit 1;; '
++            f'*"-S"*) printf %s {live!r}; exit 0;; '
++            'esac; exit 0'
++        ),
++    })
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    _with_lock(run_env, tmp_path)
++
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=run_env, capture_output=True, text=True,
++    )
++    assert result.returncode == 0, result.stderr
++    assert "nothing to roll back" in result.stdout
++    assert not any("iptables-restore" in c for c in _calls(log)), (
++        "a neighbouring rule was swept into the teardown"
++    )
++
++def test_the_rollback_survives_a_bridge_change_between_rollout_and_fire(tmp_path):
++    # The scenario end to end: rollout on br-A, ensure reconciles to br-B, then
++    # timer A fires. The teardown must remove the *current* jumps.
++    env, _ = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    (Path(env["T074_STATE_DIR"]) / "current").write_text(script.parent.name)
++
++    live = (
++        "-P OUTPUT ACCEPT\n"
++        "-N LOOKLA-T074-DENY\n"
++        '-A OUTPUT -o eth0 -p tcp -m tcp --dport 25 -m comment '
++        '--comment "T-074 deny outbound SMTP host" -j LOOKLA-T074-DENY\n'
++        '-A DOCKER-USER -i br-BBBBBBBBBBBB -o eth0 -p tcp -m tcp --dport 25 -m comment '
++        '--comment "T-074 deny outbound SMTP containers" -j LOOKLA-T074-DENY\n'
++        "-A INPUT -i eth0 -p tcp -m tcp --dport 80 -j LOOKLA-CLOUDFLARE\n"
++    )
++    # The ruleset goes in a file and the stub cats it: embedding it in the stub
++    # via printf %s collapses the newlines into literal backslash-n, so the
++    # rollback's grep finds nothing and the test silently exercises the empty
++    # case instead of the one it names.
++    live_file = tmp_path / "live-ruleset"
++    live_file.write_text(live)
++    run_env, log = _make_env(tmp_path / "fire", extra={
++        "iptables": f'case "$*" in *"-S"*) cat "{live_file}"; exit 0;; esac; exit 0',
++    })
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    _with_lock(run_env, tmp_path)
++
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=run_env, capture_output=True, text=True,
++    )
++    assert result.returncode == 0, result.stderr
++
++    restored = [c for c in _calls(log) if "iptables-restore" in c]
++    assert restored, "no teardown transaction was issued"
++
++    # Assert on the document itself. The previous version checked
++    # `"removed" in result.stdout`, which is printed unconditionally — so it
++    # passed whether or not the current bridge was actually torn down.
++    doc = (tmp_path / "fire" / "restore-input").read_text()
++    assert "-D DOCKER-USER -i br-BBBBBBBBBBBB" in doc, (
++        "the live container jump was not removed — the teardown used a stale bridge"
++    )
++    assert "-D OUTPUT -o eth0" in doc
++    assert "-F LOOKLA-T074-DENY" in doc and "-X LOOKLA-T074-DENY" in doc
++    assert "LOOKLA-CLOUDFLARE" not in doc, "a neighbouring rule was swept in"
++
++
++def test_the_rollback_is_a_noop_when_nothing_is_installed(tmp_path):
++    env, _ = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    (Path(env["T074_STATE_DIR"]) / "current").write_text(script.parent.name)
++
++    # The stub must distinguish `-S` (whole ruleset) from `-S <chain>` (does
++    # this chain exist), or the script concludes the chain is present and the
++    # test proves the opposite of what it claims.
++    run_env, _ = _make_env(tmp_path / "empty", extra={
++        "iptables": (
++            'case "$*" in '
++            '*"-S LOOKLA-T074-DENY"*) exit 1;; '
++            '*"-S"*) echo "-P OUTPUT ACCEPT"; exit 0;; '
++            'esac; exit 0'
++        ),
++    })
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    _with_lock(run_env, tmp_path)
++
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=run_env, capture_output=True, text=True,
++    )
++    assert result.returncode == 0, result.stderr
++    assert "nothing to roll back" in result.stdout
 diff --git a/backend/tests/test_t074_smtp_egress.py b/backend/tests/test_t074_smtp_egress.py
 new file mode 100644
-index 0000000..db2ddb8
+index 0000000..f727546
 --- /dev/null
 +++ b/backend/tests/test_t074_smtp_egress.py
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,598 @@
 +"""
 +T-074: outbound SMTP egress must be denied on exactly one port, in exactly two
 +chains, and nowhere else.
@@ -725,14 +806,17 @@ index 0000000..db2ddb8
 +    # silently change what the operator's own VPN clients may do, which is a
 +    # VPN policy decision and not this ticket's.
 +    assert "wg0" not in _text()
-+    # The probe must be a rule that is otherwise valid, or assert_scope stops
-+    # at the earlier "no rule denies TCP/25" check and never reaches the wg0
-+    # one — which is how an earlier version of this test passed without
-+    # exercising the guarantee it names.
-+    wg_jump = ["DOCKER-USER", "-i", "wg0", "-o", IFACE,
-+               "-p", "tcp", "--dport", "25", "-j", eg.CHAIN]
++    # Probe the document, because the document is what gets applied. An earlier
++    # version passed a wg0 rule in the `jumps` argument instead, which
++    # assert_scope now only uses for a coverage check — so it proved nothing
++    # about what would reach the kernel.
++    doc = eg.build_reconciliation_document(
++        _save(f":{eg.CHAIN} - [0:0]"), IFACE, BRIDGE
++    )
++    tampered = doc.replace(f"-I DOCKER-USER 1 -i {BRIDGE}", "-I DOCKER-USER 1 -i wg0")
++    assert tampered != doc, "the tamper did not apply"
 +    with pytest.raises(eg.EgressScopeError, match="WireGuard"):
-+        eg.assert_scope(eg.build_restore_document(), [wg_jump])
++        eg.assert_scope(tampered, eg.build_jump_rules(IFACE, BRIDGE))
 +
 +
 +def test_the_container_jump_is_scoped_to_the_compose_bridge():
@@ -1135,8 +1219,102 @@ index 0000000..db2ddb8
 +    assert tampered != doc, "the tamper did not apply"
 +    with pytest.raises(eg.EgressScopeError, match="does not target"):
 +        eg.assert_scope(tampered, eg.build_jump_rules(IFACE, BRIDGE))
++
++
++# ─────────────────── teardown: removing T-074 entirely ───────────────────────
++# These were missing entirely: build_teardown_document had no direct tests, so
++# three mutations against it survived — deleting the chain removal, dropping
++# the ownership check on -D, and loosening assert_scope's -D branch.
++
++
++def test_teardown_removes_every_owned_jump_whatever_its_shape():
++    live = _save(
++        f":{eg.CHAIN} - [0:0]",
++        _HOST_JUMP,
++        f'-A DOCKER-USER -i br-ANCIENT -o eth9 -p tcp -m tcp --dport 587 -j {eg.CHAIN}',
++        f'-A FORWARD -i wg0 -j {eg.CHAIN}',
++        "-A INPUT -i eth0 -p tcp --dport 80 -j LOOKLA-CLOUDFLARE",
++    )
++    doc = eg.build_teardown_document(live)
++    assert doc.count("-D ") == 3, "every owned jump must go, regardless of shape"
++    assert "br-ANCIENT" in doc and "wg0" in doc and "--dport 587" in doc
++    assert "LOOKLA-CLOUDFLARE" not in doc
++
++
++def test_teardown_flushes_and_deletes_the_chain():
++    doc = eg.build_teardown_document(_save(f":{eg.CHAIN} - [0:0]", _HOST_JUMP))
++    assert f"-F {eg.CHAIN}" in doc, "leaving the chain behind orphans it"
++    assert f"-X {eg.CHAIN}" in doc
++
++
++def test_teardown_is_one_transaction():
++    doc = eg.build_teardown_document(_save(f":{eg.CHAIN} - [0:0]", _HOST_JUMP))
++    assert doc.startswith("*filter\n") and doc.rstrip().endswith("COMMIT")
++    assert doc.count("COMMIT") == 1
++
++
++def test_teardown_of_an_absent_installation_is_empty():
++    assert eg.build_teardown_document(_save("-A INPUT -j ACCEPT")) == ""
++
++
++def test_teardown_scope_refuses_a_foreign_deletion():
++    doc = "*filter\n-D INPUT -i eth0 -j LOOKLA-CLOUDFLARE\nCOMMIT\n"
++    with pytest.raises(eg.EgressScopeError, match="do not own"):
++        eg.assert_scope_teardown(doc)
++
++
++def test_teardown_scope_refuses_flushing_another_chain():
++    doc = f"*filter\n-F LOOKLA-T072-DENY\n-X {eg.CHAIN}\nCOMMIT\n"
++    with pytest.raises(eg.EgressScopeError, match="another chain"):
++        eg.assert_scope_teardown(doc)
++
++
++def test_teardown_scope_refuses_anything_that_is_not_a_removal():
++    doc = f"*filter\n-A {eg.CHAIN} -j ACCEPT\nCOMMIT\n"
++    with pytest.raises(eg.EgressScopeError, match="may not contain"):
++        eg.assert_scope_teardown(doc)
++
++
++def test_reconciliation_scope_refuses_a_foreign_deletion():
++    # The -D branch of assert_scope must still prove ownership; a mutation that
++    # let any deletion through survived until this test existed.
++    doc = eg.build_reconciliation_document(_save(f":{eg.CHAIN} - [0:0]"), IFACE, BRIDGE)
++    tampered = doc.replace("*filter\n", "*filter\n-D INPUT -i eth0 -j LOOKLA-CLOUDFLARE\n")
++    with pytest.raises(eg.EgressScopeError, match="do not own"):
++        eg.assert_scope(tampered, eg.build_jump_rules(IFACE, BRIDGE))
++
++
++def test_reconciliation_scope_still_permits_owned_malformed_deletions():
++    # The point of splitting the check: a malformed owned rule is exactly what
++    # reconciliation must be able to remove.
++    live = _save(
++        f":{eg.CHAIN} - [0:0]",
++        f'-A DOCKER-USER -i wg0 -o eth0 -p tcp -m tcp --dport 587 -j {eg.CHAIN}',
++    )
++    doc = eg.build_reconciliation_document(live, IFACE, BRIDGE)
++    assert "wg0" in doc and "--dport 587" in doc
++    eg.assert_scope(doc, eg.build_jump_rules(IFACE, BRIDGE))  # must not raise
++
++
++def test_reconciliation_scope_also_guards_flush_and_drop_lines():
++    # Reconciliation does not emit -F/-X today — it declares the chain with
++    # ":CHAIN - [0:0]" instead — so this branch of assert_scope is unreachable
++    # from the current generator, and a mutation against it survived until this
++    # test existed. It is kept as defence against a future change that starts
++    # emitting them, and asserted directly rather than left as dead code.
++    doc = eg.build_reconciliation_document(_save(f":{eg.CHAIN} - [0:0]"), IFACE, BRIDGE)
++    with pytest.raises(eg.EgressScopeError, match="another chain"):
++        eg.assert_scope(
++            doc.replace("*filter\n", "*filter\n-F LOOKLA-CLOUDFLARE\n"),
++            eg.build_jump_rules(IFACE, BRIDGE),
++        )
++    with pytest.raises(eg.EgressScopeError, match="another chain"):
++        eg.assert_scope(
++            doc.replace("*filter\n", "*filter\n-X LOOKLA-T072-DENY\n"),
++            eg.build_jump_rules(IFACE, BRIDGE),
++        )
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index a18d935..8473aa5 100644
+index a18d935..97630b7 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 @@ -2387,7 +2387,7 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost
@@ -1169,7 +1347,7 @@ index a18d935..8473aa5 100644
 +
 +#### Verification
 +
-+**474 backend tests** (367 + 107 new), ruff clean. The guards were mutation-tested:
++**483 backend tests** (367 + 116 new), ruff clean. The guards were mutation-tested:
 +
 +| Mutation | Result |
 +|---|---|
@@ -1183,7 +1361,7 @@ index a18d935..8473aa5 100644
  #### Proposed rule
  
  ```text
-@@ -2418,6 +2446,24 @@ inbound rules     → untouched (T-049 and T-072 keep their chains)
+@@ -2418,6 +2446,36 @@ inbound rules     → untouched (T-049 and T-072 keep their chains)
  
  Ports 465 and 587 are deliberately **not** included: they are submission ports for authenticated relay through a provider, which is what a legitimate future sender would use. Blocking 25 removes direct-to-MX delivery, which is the abuse path, without foreclosing a proper setup later.
  
@@ -1196,6 +1374,18 @@ index a18d935..8473aa5 100644
 +The jumps use `-I <chain> 1` rather than `-A`: Docker may leave a `RETURN` at the end of `DOCKER-USER`, and a rule appended after it would never be evaluated.
 +
 +This also makes the atomicity claim true. Previously the chain was one transaction and both parent jumps were separate `iptables -I` calls, so a failure between them left a half-applied policy. The test that asserted atomicity only covered the chain; it now covers the whole document, and a post-apply `--verify` proves the result rather than assuming it.
++
++#### Teardown reads the live ruleset
++
++Pinning the rollback's teardown to the bridge recorded at rollout time produced the worst outcome in this ticket. After a Docker restart, `--ensure` reconciles onto a new bridge without touching the marker or the armed timer; when that timer fired, the rollback removed the host jump, failed to find the old container jump, flushed the chain, and then could not delete it because the live jump still referenced it — aborting under `set -e` with an empty chain, no protection, and TCP/25 open in both directions.
++
++The teardown is now derived from a live `iptables-save` under the same lock, removes every rule jumping to our chain whatever its shape, and flushes and drops the chain in **one** transaction, so there is no half-removed state to land in. The selector is anchored to `-j CHAIN` at end of line, which is what keeps a neighbouring rule that merely *mentions* the chain in a comment out of it.
++
++#### Additions and deletions are validated differently
++
++A single strict scope check rejected the very documents that would have cleaned up a malformed owned rule. A jump naming `wg0`, or port 587, or another interface, is exactly what reconciliation exists to remove — but the validator saw the forbidden token in the `-D` line and refused the transaction, so `--ensure` looped without ever fixing anything.
++
++Deleting a rule that jumps to our chain always *narrows* T-074's effect, so a deletion now needs only to prove ownership. Adding one widens it, so an addition still faces the full contract.
 +
 +#### One lock for three paths
 +
@@ -1210,10 +1400,10 @@ index a18d935..8473aa5 100644
  Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mutation and persistence through the existing mechanism. No container restart. T-049's and T-072's chains untouched. If a consumer is discovered later, it goes through an authenticated submission port rather than reopening 25.
 diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
 new file mode 100755
-index 0000000..62f931a
+index 0000000..5a9f466
 --- /dev/null
 +++ b/ops/t074/apply_t074.sh
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,314 @@
 +#!/usr/bin/env bash
 +# T-074 — apply the outbound SMTP restriction.
 +#
@@ -1437,42 +1627,53 @@ index 0000000..62f931a
 +  exit 0
 +fi
 +
-+drop_rule() {
-+  local chain="\$1"; shift
-+  if iptables -w -C "\$chain" "\$@" 2>/dev/null; then
-+    iptables -w -D "\$chain" "\$@"
-+    echo "[t074] removed jump from \$chain"
-+  else
-+    echo "[t074] jump already absent from \$chain"
++# Teardown is derived from the LIVE ruleset, never from the bridge recorded
++# when this rollout ran. After a Docker restart `--ensure` reconciles onto a
++# new bridge without touching the marker or this timer, so a rollback pinned to
++# the old bridge would remove the host jump, fail to find the container one,
++# flush the chain, and then fail to delete it because the live jump still
++# referenced it — aborting under set -e with an empty chain, no protection and
++# TCP/25 open both ways. Reading the ruleset makes the teardown correct
++# whatever has changed underneath, and one transaction means there is no
++# half-removed state to land in.
++DOC="\$(
++  echo "*filter"
++  iptables -w -S 2>/dev/null | grep -- "-j $CHAIN\$" | sed 's/^-A /-D /' || true
++  if iptables -w -S $CHAIN >/dev/null 2>&1; then
++    echo "-F $CHAIN"
++    echo "-X $CHAIN"
 +  fi
-+}
++  echo "COMMIT"
++)"
 +
-+# 1. exact jumps, by full match — never by line number, which shifts.
-+drop_rule OUTPUT -o $INTERFACE -p tcp --dport 25 -m comment --comment "$COMMENT host" -j $CHAIN
-+drop_rule DOCKER-USER -i $BRIDGE -o $INTERFACE -p tcp --dport 25 -m comment --comment "$COMMENT containers" -j $CHAIN
-+
-+# 2 & 3. our own chain, flushed then removed, and only if it exists.
-+if iptables -w -S $CHAIN >/dev/null 2>&1; then
-+  iptables -w -F $CHAIN
-+  iptables -w -X $CHAIN
-+  echo "[t074] removed chain $CHAIN"
++if [[ "\$(printf '%s' "\$DOC" | grep -c '^-')" -eq 0 ]]; then
++  echo "[t074] nothing owned by T-074 is present — nothing to roll back"
 +else
-+  echo "[t074] chain $CHAIN already absent"
++  # Refuse to delete anything that does not jump to our chain.
++  while IFS= read -r line; do
++    case "\$line" in
++      -D*) [[ "\$line" == *"-j $CHAIN" ]] || { echo "[t074] refusing: \$line" >&2; exit 1; } ;;
++      -F*|-X*) [[ "\$line" == *" $CHAIN" ]] || { echo "[t074] refusing: \$line" >&2; exit 1; } ;;
++    esac
++  done <<< "\$DOC"
++
++  printf '%s\\n' "\$DOC" | iptables-restore --noflush
++  echo "[t074] removed \$(printf '%s' "\$DOC" | grep -c '^-D') owned jump(s) and the chain"
 +fi
 +
-+# 4. Nothing else is touched. This script flushes no built-in chain, restores
-+#    no whole ruleset, and names no other ticket's chain — the generator
-+#    refuses to arm a rollback that does, so the guarantee is enforced rather
-+#    than merely intended. (Naming the forbidden strings here would trip that
-+#    check, which is why they are described instead of listed.)
 +rm -f "\$CURRENT_FILE"
 +echo "[t074] rolled back generation \$GENERATION"
 +ROLLBACK_EOF
 +chmod +x "$ROLLBACK"
 +bash -n "$ROLLBACK" || fail "generated rollback script is not valid shell"
-+for forbidden in "LOOKLA-CLOUDFLARE" "LOOKLA-T072-DENY" "iptables-restore" "-F OUTPUT" "-F DOCKER-USER"; do
++# The teardown legitimately uses iptables-restore now, so the ban is on what it
++# must never do rather than on the tool: name another ticket's chain, or flush a
++# builtin. It must also use --noflush, since restoring a whole ruleset would
++# discard everything else on the host.
++for forbidden in "LOOKLA-CLOUDFLARE" "LOOKLA-T072-DENY" "-F OUTPUT" "-F DOCKER-USER" "-F INPUT" "-F FORWARD"; do
 +  grep -q -- "$forbidden" "$ROLLBACK" && fail "generated rollback references '$forbidden' — refusing to arm it"
 +done
++grep -q -- "iptables-restore --noflush" "$ROLLBACK" || fail "generated rollback does not use --noflush"
 +log "rollback: $ROLLBACK"
 +
 +if [[ $DRY_RUN -eq 1 ]]; then
@@ -1519,10 +1720,10 @@ index 0000000..62f931a
 +NEXT
 diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
 new file mode 100644
-index 0000000..487e241
+index 0000000..73ef03a
 --- /dev/null
 +++ b/ops/t074/smtp_egress.py
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,466 @@
 +#!/usr/bin/env python3
 +"""
 +T-074 — deny outbound direct-to-MX SMTP from this host and its containers.
@@ -1694,38 +1895,102 @@ index 0000000..487e241
 +
 +
 +def assert_scope(document: str, jumps: list[list[str]]) -> None:
-+    """Fail before anything is applied if the generated rules drifted."""
++    """
++    Validate a transaction before it is applied.
++
++    Additions and deletions are judged by different rules, and conflating them
++    was a real defect: a malformed owned jump — one naming wg0, or port 587,
++    or some other interface — is exactly what reconciliation exists to clean
++    up, but a single strict check rejected the document that would have removed
++    it, so `--ensure` looped forever without ever fixing anything.
++
++    Removing a rule that jumps to our chain always *narrows* T-074's effect, so
++    a deletion needs only to prove ownership. Adding one widens it, so an
++    addition must satisfy the full contract.
++    """
++    for raw in document.splitlines():
++        line = raw.strip()
++        if not line or line.startswith(("*", "COMMIT", ":")):
++            continue
++
++        if line.startswith("-D "):
++            # Ownership is the only question. The text came from a live
++            # `iptables-save`, and its target decides whether it is ours.
++            if not line.endswith(f"-j {CHAIN}"):
++                raise EgressScopeError(f"refusing to delete a rule we do not own: {line}")
++            continue
++
++        if line.startswith(("-F ", "-X ")):
++            if line.split()[1] != CHAIN:
++                raise EgressScopeError(f"refusing to flush or drop another chain: {line}")
++            continue
++
++        if line.startswith("-A ") and not line.startswith(f"-A {CHAIN} "):
++            raise EgressScopeError(f"unexpected append to another chain: {line}")
++
++        if line.startswith("-I ") and not line.endswith(f"-j {CHAIN}"):
++            raise EgressScopeError(f"rule does not target {CHAIN}: {line}")
++
++        # Everything that survives to here is an addition, and must satisfy the
++        # full contract.
++        for port in FORBIDDEN_PORTS:
++            if f"--dport {port} " in line + " ":
++                raise EgressScopeError(f"addition references forbidden port {port}: {line}")
++        if "wg0" in line:
++            raise EgressScopeError(f"WireGuard is deliberately out of scope: {line}")
++        if "DOCKER-FORWARD" in line or "DOCKER-INGRESS" in line or "-A DOCKER " in line:
++            raise EgressScopeError("must not write into Docker-generated chains")
++
 +    joined = document + " " + " ".join(" ".join(j) for j in jumps) + " "
-+    for port in FORBIDDEN_PORTS:
-+        if f"--dport {port} " in joined:
-+            raise EgressScopeError(f"generated rules reference forbidden port {port}")
 +    if f"--dport {SMTP_PORT} " not in joined:
 +        raise EgressScopeError("no rule denies TCP/25 — the control would be absent")
-+    for generated in ("-A DOCKER ", "-A DOCKER-FORWARD", "-A DOCKER-INGRESS"):
-+        if generated in joined:
-+            raise EgressScopeError("must not write into Docker-generated chains")
-+    # Parent jumps are part of the transaction now, so -I/-D against builtin
-+    # chains are expected — but every one of them must target our chain, and
-+    # nothing may be appended to a builtin chain outright.
-+    for line in document.splitlines():
-+        stripped = line.strip()
-+        if stripped.startswith("-A ") and not stripped.startswith(f"-A {CHAIN} "):
-+            raise EgressScopeError(f"unexpected append to another chain: {stripped}")
-+        if stripped.startswith(("-I ", "-D ")) and not stripped.endswith(f"-j {CHAIN}"):
-+            raise EgressScopeError(f"rule does not target {CHAIN}: {stripped}")
-+    if "wg0" in joined:
-+        raise EgressScopeError("WireGuard is deliberately out of scope")
 +    if "-j REJECT" not in document:
 +        raise EgressScopeError("no reject rule present — the control would be absent")
++
++
++def assert_scope_teardown(document: str) -> None:
++    """A teardown may only delete rules we own, and only touch our chain."""
++    for raw in document.splitlines():
++        line = raw.strip()
++        if not line or line.startswith(("*", "COMMIT")):
++            continue
++        if line.startswith("-D "):
++            if not line.endswith(f"-j {CHAIN}"):
++                raise EgressScopeError(f"refusing to delete a rule we do not own: {line}")
++        elif line.startswith(("-F ", "-X ")):
++            if line.split()[1] != CHAIN:
++                raise EgressScopeError(f"refusing to flush or drop another chain: {line}")
++        else:
++            raise EgressScopeError(f"a teardown may not contain: {line}")
++
++
++def build_teardown_document(save_output: str) -> str:
++    """
++    One transaction that removes T-074 entirely, whatever shape it is in.
++
++    Used by rollback. It deliberately does **not** reuse the interface and
++    bridge recorded when the rollout ran: after a Docker restart, `--ensure`
++    reconciles onto a new bridge without touching the generation marker, so a
++    rollback pinned to the old bridge would remove the host jump, fail to find
++    the container one, flush the chain, and then fail to delete it because the
++    live jump still references it — leaving an empty chain, no protection, and
++    a non-zero exit halfway through. Reading the live ruleset instead makes the
++    teardown correct regardless of what has changed underneath.
++    """
++    owned = owned_parent_jumps(save_output)
++    lines = ["-D " + rule[len("-A "):] for rule in owned]
++    if f":{CHAIN} " in save_output or f"-A {CHAIN} " in save_output:
++        lines.append(f"-F {CHAIN}")
++        lines.append(f"-X {CHAIN}")
++    if not lines:
++        return ""
++    return "*filter\n" + "\n".join(lines) + "\nCOMMIT\n"
 +
 +
 +#: `iptables-save` renders `-p tcp` with an implicit `-m tcp` match that is
 +#: absent from the arguments we pass in. Normalising it away lets the live
 +#: ruleset be compared against what this module generates, instead of the
 +#: contract being restated by hand in shell — where it would drift.
-+_NOISE = ("-m tcp",)
-+
-+
 +def normalise(line: str) -> str:
 +    parts = [p for p in line.split() if p]
 +    out, skip = [], 0
@@ -1740,14 +2005,18 @@ index 0000000..487e241
 +    return " ".join(out)
 +
 +
++def _quote(token: str) -> str:
++    return f'"{token}"' if " " in token else token
++
++
 +def expected_lines(interface: str, bridge: str) -> list[str]:
 +    """
 +    Every `iptables-save` line T-074 owns, in normalised form.
 +
-+    This is the whole contract in one place: the chain, its single reject rule,
-+    and both jumps. `verify` compares the live ruleset against exactly this, so
-+    an empty chain, a DROP where a REJECT belongs, a wrong port, a stale bridge
-+    or a duplicated jump are all the same kind of failure — a mismatch — rather
++    The whole contract in one place: the chain, its single reject rule, and
++    both jumps. `verify` compares the live ruleset against exactly this, so an
++    empty chain, a DROP where a REJECT belongs, a wrong port, a stale bridge or
++    a duplicated jump are all the same kind of failure — a mismatch — rather
 +    than each needing its own hand-written check.
 +    """
 +    lines = [f":{CHAIN} - [0:0]"]
@@ -1755,10 +2024,6 @@ index 0000000..487e241
 +    for chain, *rule in build_jump_rules(interface, bridge):
 +        lines.append(normalise(f"-A {chain} " + " ".join(_quote(r) for r in rule)))
 +    return lines
-+
-+
-+def _quote(token: str) -> str:
-+    return f'"{token}"' if " " in token else token
 +
 +
 +def owned_lines(save_output: str) -> list[str]:
@@ -1777,9 +2042,9 @@ index 0000000..487e241
 +    """
 +    Return the problems with the live ruleset; empty means the contract holds.
 +
-+    Reports missing and unexpected lines separately, and counts duplicates:
-+    a second jump is not merely untidy, it is evidence that an idempotence
-+    guarantee has broken somewhere.
++    Missing and unexpected lines are reported separately, and duplicates are
++    counted: a second jump is not merely untidy, it is evidence that an
++    idempotence guarantee has broken somewhere.
 +    """
 +    expected = expected_lines(interface, bridge)
 +    actual = owned_lines(save_output)
@@ -1834,6 +2099,11 @@ index 0000000..487e241
 +    parser.add_argument("--bridge", help="override bridge detection")
 +    parser.add_argument("--apply", action="store_true")
 +    parser.add_argument(
++        "--teardown",
++        action="store_true",
++        help="remove every T-074 rule found in the live ruleset, in one transaction",
++    )
++    parser.add_argument(
 +        "--verify",
 +        action="store_true",
 +        help="check the live ruleset against the full contract and exit non-zero on any mismatch",
@@ -1850,6 +2120,27 @@ index 0000000..487e241
 +    if saved.returncode != 0:
 +        print(f"FAIL: iptables-save: {saved.stderr.strip()}", file=sys.stderr)
 +        return 1
++
++    if args.teardown:
++        document = build_teardown_document(saved.stdout)
++        if not document:
++            print("teardown: nothing owned by T-074 is present")
++            return 0
++        try:
++            assert_scope_teardown(document)
++        except EgressScopeError as exc:
++            print(f"FAIL: {exc}", file=sys.stderr)
++            return 1
++        if not args.apply:
++            print(document, end="")
++            print("# dry run — nothing applied")
++            return 0
++        removed = _run(["iptables-restore", "--noflush"], input_text=document)
++        if removed.returncode != 0:
++            print(f"FAIL: iptables-restore: {removed.stderr.strip()}", file=sys.stderr)
++            return 1
++        print(f"teardown: removed {document.count('-D ')} jump(s) and the chain")
++        return 0
 +
 +    if args.verify:
 +        problems = verify(args.interface, bridge, saved.stdout)
