@@ -1,9 +1,9 @@
 diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
 new file mode 100644
-index 0000000..f3461fe
+index 0000000..e1bdf3f
 --- /dev/null
 +++ b/backend/tests/test_t074_apply.py
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,491 @@
 +"""
 +T-074: the apply script, the rollback it generates, and the systemd unit.
 +
@@ -254,8 +254,10 @@ index 0000000..f3461fe
 +def test_the_rollback_refuses_to_run_when_superseded(tmp_path):
 +    env, _ = _make_env(tmp_path)
 +    script = _generated_rollback(tmp_path, env).read_text()
-+    assert "superseded" in script
 +    assert "CURRENT_FILE" in script
++    assert "not current" in script
++    # And it refuses on absence too — see the fail-closed tests below.
++    assert "no current-generation marker" in script
 +
 +
 +def test_the_timer_unit_name_carries_the_generation(tmp_path):
@@ -317,29 +319,49 @@ index 0000000..f3461fe
 +    assert 'fail "generated rollback references' in APPLY.read_text(encoding="utf-8")
 +
 +
-+def test_the_generated_rollback_is_valid_shell_and_runs_twice(tmp_path):
++def test_the_generated_rollback_is_valid_shell_and_is_idempotent(tmp_path):
 +    env, _ = _make_env(tmp_path)
 +    script = _generated_rollback(tmp_path, env)
 +    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603
 +
-+    # Behavioural: first run removes, second run finds nothing and still exits 0.
-+    # The generation guard is satisfied by construction — this rollback belongs
-+    # to the only generation in its own state dir.
-+    env2, _ = _make_env(tmp_path / "second", iptables_c_rc=0)
-+    env2["T074_STATE_DIR"] = env["T074_STATE_DIR"]
-+    first = subprocess.run(  # noqa: S603
-+        ["bash", str(script)], env=env2, capture_output=True, text=True,
-+    )
-+    assert first.returncode == 0, first.stderr
-+    assert "removed jump" in first.stdout
++    marker = Path(env["T074_STATE_DIR"]) / "current"
++    generation = script.parent.name
 +
-+    env3, _ = _make_env(tmp_path / "third", iptables_c_rc=1)
-+    env3["T074_STATE_DIR"] = env["T074_STATE_DIR"]
-+    second = subprocess.run(  # noqa: S603
-+        ["bash", str(script)], env=env3, capture_output=True, text=True,
-+    )
-+    assert second.returncode == 0, second.stderr
-+    assert "already absent" in second.stdout
++    def run(iptables_c_rc, tag):
++        # The guard is fail-closed and the rollback clears the marker when it
++        # completes, so it is rewritten before each run. Idempotence here means
++        # the *removal* logic tolerates rules that are already gone — which is
++        # modelled by what `iptables -C` answers, not by the guard.
++        marker.write_text(generation)
++        run_env, _ = _make_env(tmp_path / tag, iptables_c_rc=iptables_c_rc)
++        run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++        result = subprocess.run(  # noqa: S603
++            ["bash", str(script)], env=run_env, capture_output=True, text=True,
++        )
++        assert result.returncode == 0, result.stderr
++        return result.stdout
++
++    # Rules present: they are removed.
++    assert "removed jump" in run(0, "present")
++    # Rules already gone: reported, still exit 0, nothing left half-done.
++    absent = run(1, "absent")
++    assert "already absent" in absent
++    assert "removed jump" not in absent
++
++
++def test_a_completed_rollback_clears_the_current_marker(tmp_path):
++    # Otherwise the generation would still look current afterwards, and a
++    # second timer for it could fire against a ruleset it no longer owns.
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    marker = Path(env["T074_STATE_DIR"]) / "current"
++    marker.write_text(script.parent.name)
++
++    run_env, _ = _make_env(tmp_path / "clear", iptables_c_rc=0)
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    subprocess.run(["bash", str(script)], env=run_env, check=True,  # noqa: S603
++                   capture_output=True, text=True)
++    assert not marker.exists()
 +
 +
 +# ───────────────────────────── shared defaults ───────────────────────────────
@@ -368,12 +390,117 @@ index 0000000..f3461fe
 +        calls = _calls(log)
 +        assert not any("--apply" in c for c in calls), mode
 +        assert not any("systemd-run" in c for c in calls), mode
++
++
++# ───────────────── generation guard: fail-closed (T-074 review) ──────────────
++# The marker's ABSENCE is not evidence that this generation is current, so the
++# guard refuses then too. A legitimate automatic rollback always has it: the
++# rollout writes the marker before arming the timer, and arms the timer before
++# touching the firewall.
++
++
++def _rollback_with_marker(tmp_path, marker: str | None):
++    """Generate a rollback, set /run's marker to `marker`, run it, return stdout."""
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    generation = script.parent.name
++    current = Path(env["T074_STATE_DIR"]) / "current"
++
++    if marker is None:
++        current.unlink(missing_ok=True)
++    else:
++        current.write_text(marker.replace("<self>", generation))
++
++    run_env, _ = _make_env(tmp_path / "runner", iptables_c_rc=0)
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(script)], env=run_env, capture_output=True, text=True,
++    )
++    assert result.returncode == 0, result.stderr
++    return result.stdout
++
++
++def test_rollback_runs_when_the_marker_matches(tmp_path):
++    out = _rollback_with_marker(tmp_path, "<self>")
++    assert "removed jump" in out
++
++
++def test_rollback_is_a_noop_for_a_different_generation(tmp_path):
++    out = _rollback_with_marker(tmp_path, "20200101T000000Z-1")
++    assert "not current" in out
++    assert "removed jump" not in out
++
++
++def test_rollback_refuses_when_the_marker_is_absent(tmp_path):
++    # Previously this ran the rollback — fail-open authorisation for a
++    # destructive operation.
++    out = _rollback_with_marker(tmp_path, None)
++    assert "no current-generation marker" in out
++    assert "removed jump" not in out
++
++
++def test_rollback_refuses_when_the_marker_is_empty(tmp_path):
++    out = _rollback_with_marker(tmp_path, "")
++    assert "removed jump" not in out
++    assert "not current" in out or "no current-generation marker" in out
++
++
++def test_rollback_refuses_when_the_marker_is_unreadable(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    current = Path(env["T074_STATE_DIR"]) / "current"
++    current.write_text("whatever")
++    current.chmod(0o000)
++    try:
++        run_env, _ = _make_env(tmp_path / "runner2", iptables_c_rc=0)
++        run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++        result = subprocess.run(  # noqa: S603
++            ["bash", str(script)], env=run_env, capture_output=True, text=True,
++        )
++        assert result.returncode == 0, result.stderr
++        assert "removed jump" not in result.stdout
++    finally:
++        current.chmod(0o600)
++
++
++def test_the_boot_scoping_of_the_marker_is_documented(tmp_path):
++    # /run is tmpfs and the timer is transient, so both are scoped to this
++    # boot. That is a design choice, not the reason the guard is safe — the
++    # script says so, because relying on it silently would be a trap.
++    env, _ = _make_env(tmp_path)
++    body = APPLY.read_text(encoding="utf-8")
++    assert "current boot" in body
++    assert "not the reason the" in body and "guard is safe" in body
++
++
++# ────────────── verify_live now checks the contract, not existence ───────────
++
++
++def test_verify_live_delegates_to_the_generator_contract():
++    # The contract must not be restated in shell, where it would drift from
++    # what the generator actually produces.
++    body = APPLY.read_text(encoding="utf-8")
++    verify_block = body[body.index("verify_live() {"):body.index("}", body.index("verify_live() {"))]
++    assert "--verify" in verify_block
++    assert "iptables -w -C" not in verify_block, (
++        "the contract is duplicated in shell instead of delegated"
++    )
++
++
++def test_ensure_fails_when_verification_fails(tmp_path):
++    # A failing --verify must stop `ensure` reporting success, or systemd shows
++    # the unit active with the firewall open.
++    env, _ = _make_env(tmp_path, extra={
++        "python3": 'case " $* " in *" --verify "*) exit 1;; esac; exit 0',
++    })
++    r = _run(tmp_path, ["--interface", IFACE, "--ensure"], env, expect_rc=1)
++    assert "not present after apply" in r.stderr or "ensure" in r.stderr
 diff --git a/backend/tests/test_t074_smtp_egress.py b/backend/tests/test_t074_smtp_egress.py
 new file mode 100644
-index 0000000..ab88868
+index 0000000..e1165b7
 --- /dev/null
 +++ b/backend/tests/test_t074_smtp_egress.py
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,322 @@
 +"""
 +T-074: outbound SMTP egress must be denied on exactly one port, in exactly two
 +chains, and nowhere else.
@@ -600,6 +727,102 @@ index 0000000..ab88868
 +def test_an_implausible_bridge_name_is_refused(bad):
 +    with pytest.raises(eg.EgressScopeError):
 +        eg.build_jump_rules(IFACE, bad)
++
++
++# ─────────────────── full-contract verification (T-074 review) ───────────────
++# The old check asked only whether two jumps existed. A jump can point at a
++# chain that is empty, rejects the wrong port, or DROPs where it should
++# REJECT — and in every one of those cases it passed, systemd reported active,
++# and TCP/25 was open. These assert the whole contract instead.
++
++
++def _save(*lines: str) -> str:
++    return "*filter\n" + "\n".join(lines) + "\nCOMMIT\n"
++
++
++def _healthy() -> str:
++    # As iptables-save renders it: `-p tcp` gains an implicit `-m tcp`.
++    return _save(
++        f":{eg.CHAIN} - [0:0]",
++        f'-A OUTPUT -o {IFACE} -p tcp -m tcp --dport 25 -m comment '
++        f'--comment "T-074 deny outbound SMTP host" -j {eg.CHAIN}',
++        f'-A DOCKER-USER -i {BRIDGE} -o {IFACE} -p tcp -m tcp --dport 25 -m comment '
++        f'--comment "T-074 deny outbound SMTP containers" -j {eg.CHAIN}',
++        f'-A {eg.CHAIN} -p tcp -m comment --comment "T-074 deny outbound SMTP" '
++        f"-j REJECT --reject-with icmp-port-unreachable",
++    )
++
++
++def test_a_healthy_ruleset_verifies_clean():
++    assert eg.verify(IFACE, BRIDGE, _healthy()) == []
++
++
++def test_an_empty_chain_fails_even_though_both_jumps_exist():
++    # The precise false-green the reviewer identified.
++    ruleset = "\n".join(
++        ln for ln in _healthy().splitlines() if not ln.startswith(f"-A {eg.CHAIN} ")
++    )
++    problems = eg.verify(IFACE, BRIDGE, ruleset)
++    assert any("missing" in p and "REJECT" in p for p in problems)
++
++
++def test_drop_instead_of_reject_fails():
++    ruleset = _healthy().replace("-j REJECT --reject-with icmp-port-unreachable", "-j DROP")
++    assert eg.verify(IFACE, BRIDGE, ruleset)
++
++
++def test_the_wrong_port_fails():
++    assert eg.verify(IFACE, BRIDGE, _healthy().replace("--dport 25", "--dport 587"))
++
++
++def test_a_stale_bridge_fails():
++    # The failure that leaves containers able to send while everything looks
++    # applied: the jump exists, but names a bridge that no longer carries them.
++    assert eg.verify(IFACE, BRIDGE, _healthy().replace(BRIDGE, "br-000000000000"))
++
++
++def test_a_missing_container_jump_fails():
++    ruleset = "\n".join(
++        ln for ln in _healthy().splitlines() if "DOCKER-USER" not in ln
++    )
++    assert any("missing" in p for p in eg.verify(IFACE, BRIDGE, ruleset))
++
++
++def test_a_duplicated_jump_is_reported():
++    # Not merely untidy: evidence that an idempotence guarantee has broken.
++    dup = next(ln for ln in _healthy().splitlines() if ln.startswith("-A OUTPUT"))
++    ruleset = _healthy().replace(dup, dup + "\n" + dup)
++    assert any("duplicated" in p for p in eg.verify(IFACE, BRIDGE, ruleset))
++
++
++def test_an_unexpected_extra_rule_in_our_chain_is_reported():
++    extra = f"-A {eg.CHAIN} -p tcp --dport 587 -j ACCEPT"
++    assert any("unexpected" in p for p in eg.verify(IFACE, BRIDGE, _healthy() + extra + "\n"))
++
++
++def test_an_accept_smuggled_into_our_chain_is_reported():
++    extra = f"-A {eg.CHAIN} -j ACCEPT"
++    assert any("unexpected" in p for p in eg.verify(IFACE, BRIDGE, _healthy() + extra + "\n"))
++
++
++def test_an_entirely_absent_chain_fails():
++    assert len(eg.verify(IFACE, BRIDGE, _save("-A INPUT -j ACCEPT"))) >= 3
++
++
++def test_normalisation_ignores_only_the_implicit_tcp_match():
++    assert eg.normalise("-p tcp -m tcp --dport 25") == "-p tcp --dport 25"
++    # It must not swallow anything else that happens to follow -m.
++    assert eg.normalise("-m comment --comment x") == "-m comment --comment x"
++    assert eg.normalise("-m conntrack --ctstate NEW") == "-m conntrack --ctstate NEW"
++
++
++def test_the_contract_covers_chain_rule_and_both_jumps():
++    lines = eg.expected_lines(IFACE, BRIDGE)
++    assert any(ln.startswith(f":{eg.CHAIN}") for ln in lines)
++    assert any(ln.startswith("-A OUTPUT") for ln in lines)
++    assert any(ln.startswith("-A DOCKER-USER") for ln in lines)
++    assert any("REJECT" in ln for ln in lines)
++    assert len(lines) == 4
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 index a18d935..bab1841 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
@@ -650,10 +873,10 @@ index a18d935..bab1841 100644
  ```text
 diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
 new file mode 100755
-index 0000000..45f728d
+index 0000000..e1b3a68
 --- /dev/null
 +++ b/ops/t074/apply_t074.sh
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,272 @@
 +#!/usr/bin/env bash
 +# T-074 — apply the outbound SMTP restriction.
 +#
@@ -772,16 +995,14 @@ index 0000000..45f728d
 +  python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE" --apply
 +}
 +
-+# Assert the live rules exist. `--ensure` must not report success while the
-+# firewall is unprotected, or systemd will show the unit active and green with
-+# no rule in place.
++# Assert the live ruleset matches the whole contract, not merely that two
++# jumps exist. A jump can point at a chain that is empty, or that rejects the
++# wrong port, or that DROPs where it should REJECT — in every one of those
++# cases the old check passed, systemd reported active, and TCP/25 was open.
++# The comparison is delegated to the generator so the contract lives in one
++# tested place instead of being restated here, where it would drift.
 +verify_live() {
-+  iptables -w -C OUTPUT -o "$INTERFACE" -p tcp --dport 25 \
-+    -m comment --comment "$COMMENT host" -j "$CHAIN" 2>/dev/null \
-+    || return 1
-+  iptables -w -C DOCKER-USER -i "$BRIDGE" -o "$INTERFACE" -p tcp --dport 25 \
-+    -m comment --comment "$COMMENT containers" -j "$CHAIN" 2>/dev/null \
-+    || return 1
++  python3 "$HERE/smtp_egress.py" --interface "$INTERFACE" --bridge "$BRIDGE" --verify
 +}
 +
 +# ── unattended path ──────────────────────────────────────────────────────────
@@ -827,14 +1048,25 @@ index 0000000..45f728d
 +GENERATION="$GENERATION"
 +CURRENT_FILE="$STATE_DIR/current"
 +
-+# Generation guard. A timer from an earlier rollout must not fire after a later
-+# apply and delete protection that a different transaction installed.
-+if [[ -r "\$CURRENT_FILE" ]]; then
-+  current="\$(cat "\$CURRENT_FILE")"
-+  if [[ "\$current" != "\$GENERATION" ]]; then
-+    echo "[t074] rollback \$GENERATION superseded by \$current — doing nothing"
-+    exit 0
-+  fi
++# Generation guard, deliberately fail-closed. A timer from an earlier rollout
++# must not fire after a later apply and delete protection a different
++# transaction installed — and an ABSENT marker is not evidence that this
++# generation is current, so it refuses too. A legitimate automatic rollback
++# always has the marker: the rollout writes it before arming the timer, which
++# it does before touching the firewall.
++#
++# The marker lives in /run and the timer is transient, so both are scoped to
++# the current boot on purpose. That is a design choice, not the reason the
++# guard is safe: the marker can also vanish without a reboot, through manual
++# cleanup or a failed unit, and refusing is correct in those cases too.
++if [[ ! -r "\$CURRENT_FILE" ]]; then
++  echo "[t074] no current-generation marker — rollback refused"
++  exit 0
++fi
++current="\$(cat "\$CURRENT_FILE" 2>/dev/null || true)"
++if [[ -z "\$current" || "\$current" != "\$GENERATION" ]]; then
++  echo "[t074] rollback \$GENERATION is not current (marker: \${current:-unreadable}) — doing nothing"
++  exit 0
 +fi
 +
 +drop_rule() {
@@ -919,10 +1151,10 @@ index 0000000..45f728d
 +NEXT
 diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
 new file mode 100644
-index 0000000..ef1fea8
+index 0000000..d5cf448
 --- /dev/null
 +++ b/ops/t074/smtp_egress.py
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,314 @@
 +#!/usr/bin/env python3
 +"""
 +T-074 — deny outbound direct-to-MX SMTP from this host and its containers.
@@ -1065,6 +1297,86 @@ index 0000000..ef1fea8
 +        raise EgressScopeError("no reject rule present — the control would be absent")
 +
 +
++#: `iptables-save` renders `-p tcp` with an implicit `-m tcp` match that is
++#: absent from the arguments we pass in. Normalising it away lets the live
++#: ruleset be compared against what this module generates, instead of the
++#: contract being restated by hand in shell — where it would drift.
++_NOISE = ("-m tcp",)
++
++
++def normalise(line: str) -> str:
++    parts = [p for p in line.split() if p]
++    out, skip = [], 0
++    for i, part in enumerate(parts):
++        if skip:
++            skip -= 1
++            continue
++        if part == "-m" and i + 1 < len(parts) and parts[i + 1] == "tcp":
++            skip = 1
++            continue
++        out.append(part)
++    return " ".join(out)
++
++
++def expected_lines(interface: str, bridge: str) -> list[str]:
++    """
++    Every `iptables-save` line T-074 owns, in normalised form.
++
++    This is the whole contract in one place: the chain, its single reject rule,
++    and both jumps. `verify` compares the live ruleset against exactly this, so
++    an empty chain, a DROP where a REJECT belongs, a wrong port, a stale bridge
++    or a duplicated jump are all the same kind of failure — a mismatch — rather
++    than each needing its own hand-written check.
++    """
++    lines = [f":{CHAIN} - [0:0]"]
++    lines += [normalise(r) for r in build_chain_rules()]
++    for chain, *rule in build_jump_rules(interface, bridge):
++        lines.append(normalise(f"-A {chain} " + " ".join(_quote(r) for r in rule)))
++    return lines
++
++
++def _quote(token: str) -> str:
++    return f'"{token}"' if " " in token else token
++
++
++def owned_lines(save_output: str) -> list[str]:
++    """T-074-owned lines from `iptables-save`, normalised, order-insensitive."""
++    found = []
++    for raw in save_output.splitlines():
++        line = raw.strip()
++        if not line:
++            continue
++        if line.startswith(f":{CHAIN} ") or CHAIN in line:
++            found.append(normalise(line))
++    return found
++
++
++def verify(interface: str, bridge: str, save_output: str) -> list[str]:
++    """
++    Return the problems with the live ruleset; empty means the contract holds.
++
++    Reports missing and unexpected lines separately, and counts duplicates:
++    a second jump is not merely untidy, it is evidence that an idempotence
++    guarantee has broken somewhere.
++    """
++    expected = expected_lines(interface, bridge)
++    actual = owned_lines(save_output)
++    problems = []
++
++    for line in expected:
++        count = actual.count(line)
++        if count == 0:
++            problems.append(f"missing: {line}")
++        elif count > 1:
++            problems.append(f"duplicated {count}x: {line}")
++
++    for line in actual:
++        if line not in expected:
++            problems.append(f"unexpected: {line}")
++
++    return problems
++
++
 +def _run(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
 +    return subprocess.run(  # noqa: S603
 +        argv, input=input_text, capture_output=True, text=True, check=False
@@ -1099,6 +1411,11 @@ index 0000000..ef1fea8
 +    parser.add_argument("--network", default="beauty-gr_default")
 +    parser.add_argument("--bridge", help="override bridge detection")
 +    parser.add_argument("--apply", action="store_true")
++    parser.add_argument(
++        "--verify",
++        action="store_true",
++        help="check the live ruleset against the full contract and exit non-zero on any mismatch",
++    )
 +    args = parser.parse_args(argv)
 +
 +    try:
@@ -1109,6 +1426,19 @@ index 0000000..ef1fea8
 +    except EgressScopeError as exc:
 +        print(f"FAIL: {exc}", file=sys.stderr)
 +        return 1
++
++    if args.verify:
++        saved = _run(["iptables-save"])
++        if saved.returncode != 0:
++            print(f"FAIL: iptables-save: {saved.stderr.strip()}", file=sys.stderr)
++            return 1
++        problems = verify(args.interface, bridge, saved.stdout)
++        if problems:
++            for problem in problems:
++                print(f"FAIL: {problem}", file=sys.stderr)
++            return 1
++        print(f"verified: {len(expected_lines(args.interface, bridge))} owned rules match the contract")
++        return 0
 +
 +    print(f"# deny outbound TCP/{SMTP_PORT} via {args.interface}; container bridge {bridge}")
 +    if not args.apply:
