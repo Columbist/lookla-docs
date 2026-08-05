@@ -1,9 +1,9 @@
 diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
 new file mode 100644
-index 0000000..e1bdf3f
+index 0000000..eaa8663
 --- /dev/null
 +++ b/backend/tests/test_t074_apply.py
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,624 @@
 +"""
 +T-074: the apply script, the rollback it generates, and the systemd unit.
 +
@@ -28,6 +28,7 @@ index 0000000..e1bdf3f
 +import shutil
 +import stat
 +import subprocess
++import time
 +from pathlib import Path
 +
 +import pytest
@@ -495,12 +496,144 @@ index 0000000..e1bdf3f
 +    })
 +    r = _run(tmp_path, ["--interface", IFACE, "--ensure"], env, expect_rc=1)
 +    assert "not present after apply" in r.stderr or "ensure" in r.stderr
++
++
++# ──────────────── shared lock across all three paths (T-074 review) ──────────
++# The generation marker alone does not close this race: stopping a .timer does
++# not stop a .service that has already started, so a rollback which has passed
++# its guard can still be running while a newer rollout applies — and would then
++# delete the newer generation's protection. One lock, taken by rollout, ensure
++# and the generated rollback, before anything else any of them does.
++
++
++def _lock_path(tmp_path) -> Path:
++    return tmp_path / "t074.lock"
++
++
++def _with_lock(env, tmp_path):
++    env["T074_LOCK_FILE"] = str(_lock_path(tmp_path))
++    return env
++
++
++def _hold_lock(tmp_path, seconds: float):
++    """Start a process holding the same lock, and wait until it really has it."""
++    lock = _lock_path(tmp_path)
++    lock.parent.mkdir(parents=True, exist_ok=True)
++    ready = tmp_path / "held"
++    proc = subprocess.Popen(  # noqa: S603
++        ["bash", "-c",
++         f'exec 9>"{lock}"; flock 9; touch "{ready}"; sleep {seconds}'],
++    )
++    for _ in range(200):
++        if ready.exists():
++            return proc
++        time.sleep(0.05)
++    proc.kill()
++    raise AssertionError("helper never acquired the lock")
++
++
++def test_all_three_paths_use_the_same_lock_path(tmp_path):
++    body = APPLY.read_text(encoding="utf-8")
++    assert body.count("T074_LOCK_FILE") >= 2, "rollout/ensure and the rollback heredoc"
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, _with_lock(env, tmp_path))
++    assert "flock 9" in script.read_text()
++
++
++def test_ensure_gives_up_immediately_when_the_lock_is_held(tmp_path):
++    # Non-blocking on purpose: a conflicting run is already converging the same
++    # state, and Restart=on-failure will retry this one.
++    holder = _hold_lock(tmp_path, 5)
++    try:
++        env, log = _make_env(tmp_path)
++        r = _run(tmp_path, ["--interface", IFACE, "--ensure"], _with_lock(env, tmp_path),
++                 expect_rc=1)
++        assert "holds the lock" in r.stderr
++        calls = _calls(log)
++        assert not any("docker" in c for c in calls), "bridge resolution ran despite the lock"
++        assert not any("--apply" in c for c in calls)
++    finally:
++        holder.kill()
++
++
++def test_rollout_waits_for_the_lock_rather_than_failing(tmp_path):
++    # An attended rollout should queue, not abort: the operator is present and
++    # a transient conflict is not a reason to refuse.
++    holder = _hold_lock(tmp_path, 2)
++    try:
++        env, log = _make_env(tmp_path)
++        started = time.monotonic()
++        _run(tmp_path, ["--interface", IFACE, "--rollout", "--dry-run"],
++             _with_lock(env, tmp_path))
++        assert time.monotonic() - started >= 1.5, "rollout did not wait for the lock"
++        assert any("docker" in c for c in _calls(log)), "rollout never ran after acquiring"
++    finally:
++        holder.kill()
++
++
++def test_the_lock_is_taken_before_bridge_resolution(tmp_path):
++    body = APPLY.read_text(encoding="utf-8")
++    assert body.index("flock") < body.index("resolve_bridge()"), (
++        "resolving the bridge before locking lets two runs disagree about it"
++    )
++    assert body.index("flock") < body.index("STATE_DIR/current"), (
++        "the marker must not be read or written outside the lock"
++    )
++
++
++def test_a_failing_run_releases_the_lock(tmp_path):
++    # The descriptor closes on exit, including on failure, so the next run is
++    # not blocked by a crashed predecessor.
++    env, _ = _make_env(tmp_path, bridge_ok=False)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], _with_lock(env, tmp_path),
++         expect_rc=1)
++
++    env2, log2 = _make_env(tmp_path / "after")
++    _run(tmp_path, ["--interface", IFACE, "--ensure"], _with_lock(env2, tmp_path))
++    assert any("docker" in c for c in _calls(log2)), "the lock was left held"
++
++
++def test_the_rollback_takes_the_lock_before_reading_the_marker(tmp_path):
++    env, _ = _make_env(tmp_path)
++    script = _generated_rollback(tmp_path, _with_lock(env, tmp_path)).read_text()
++    assert script.index("flock 9") < script.index("CURRENT_FILE\"") , (
++        "reading the marker outside the lock reintroduces the race"
++    )
++
++
++def test_a_stale_rollback_waiting_on_the_lock_becomes_a_noop(tmp_path):
++    # The exact race: rollback A passes nothing yet, waits for the lock; a
++    # newer rollout writes current=B; A acquires the lock, re-reads the marker,
++    # sees B, and must not remove anything.
++    env, _ = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    marker = Path(env["T074_STATE_DIR"]) / "current"
++    marker.write_text(script.parent.name)
++
++    holder = _hold_lock(tmp_path, 2)
++    run_env, _ = _make_env(tmp_path / "stale", iptables_c_rc=0)
++    run_env["T074_STATE_DIR"] = env["T074_STATE_DIR"]
++    _with_lock(run_env, tmp_path)
++
++    proc = subprocess.Popen(  # noqa: S603
++        ["bash", str(script)], env=run_env,
++        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
++    )
++    time.sleep(0.5)
++    marker.write_text("20991231T235959Z-999")  # a newer rollout takes over
++    holder.kill()
++    out, _err = proc.communicate(timeout=30)
++
++    assert proc.returncode == 0, _err
++    assert "removed jump" not in out, "a stale rollback deleted a newer generation's rules"
++    assert "not current" in out
 diff --git a/backend/tests/test_t074_smtp_egress.py b/backend/tests/test_t074_smtp_egress.py
 new file mode 100644
-index 0000000..e1165b7
+index 0000000..db2ddb8
 --- /dev/null
 +++ b/backend/tests/test_t074_smtp_egress.py
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,501 @@
 +"""
 +T-074: outbound SMTP egress must be denied on exactly one port, in exactly two
 +chains, and nowhere else.
@@ -657,24 +790,81 @@ index 0000000..e1165b7
 +    assert eg.build_restore_document() == eg.build_restore_document()
 +
 +
-+def test_jumps_are_checked_before_insertion(monkeypatch, capsys):
++def test_apply_reads_the_live_ruleset_then_restores_once(monkeypatch):
++    # Idempotence is now a property of reconciliation rather than of a -C
++    # probe: every apply reads the current ruleset and converges it in one
++    # transaction, so there is no "already present" shortcut left to assert on.
++    calls = []
++    applied = {"done": False}
++
++    class R:
++        def __init__(self, stdout):
++            self.returncode = 0
++            self.stdout = stdout
++            self.stderr = ""
++
++    def runner(argv, **kw):
++        calls.append(argv)
++        if argv[0] == "iptables-restore":
++            applied["done"] = True
++            return R("")
++        if argv[0] == "iptables-save":
++            # Model the ruleset actually changing: the post-apply verification
++            # is real, so a stub that always returns an empty ruleset would
++            # make main() fail — as it should.
++            return R(_healthy() if applied["done"] else _save())
++        return R("")
++
++    monkeypatch.setattr(eg, "_run", runner)
++    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE, "--apply"]) == 0
++
++    programs = [c[0] for c in calls]
++    assert programs.count("iptables-restore") == 1, "the policy must be one transaction"
++    assert "iptables-save" in programs, "reconciliation must read the live ruleset"
++    assert not any(c[:2] == ["iptables", "-I"] for c in calls), (
++        "jumps must be part of the transaction, not separate commands"
++    )
++    assert programs.count("iptables-save") == 2, (
++        "read before reconciling, and read again to prove the contract holds"
++    )
++
++
++def test_apply_fails_when_the_result_does_not_match_the_contract(monkeypatch):
++    # If the restore silently leaves the ruleset wrong, apply must not report
++    # success — otherwise systemd shows the unit active with a broken policy.
++    class R:
++        def __init__(self, stdout=""):
++            self.returncode = 0
++            self.stdout = stdout
++            self.stderr = ""
++
++    monkeypatch.setattr(
++        eg, "_run",
++        lambda argv, **kw: R(_save()) if argv[0] == "iptables-save" else R(),
++    )
++    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE, "--apply"]) == 1
++
++
++def test_dry_run_reads_but_never_mutates(monkeypatch, capsys):
++    # Reconciliation has to read iptables-save even to print what it would do;
++    # what must not happen is a restore or an insert.
++    seen = []
++
 +    class R:
 +        returncode = 0
-+        stdout = ""
++        stdout = "*filter\nCOMMIT\n"
 +        stderr = ""
 +
-+    monkeypatch.setattr(eg, "_run", lambda *a, **k: R())
-+    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE, "--apply"]) == 0
-+    assert capsys.readouterr().out.count("already present") == 2
++    def runner(argv, **kw):
++        seen.append(argv[0])
++        if argv[0] != "iptables-save":
++            raise AssertionError(f"dry run executed a mutating command: {argv}")
++        return R()
 +
-+
-+def test_dry_run_executes_nothing(monkeypatch, capsys):
-+    def explode(*a, **k):
-+        raise AssertionError("dry run must not execute firewall commands")
-+
-+    monkeypatch.setattr(eg, "_run", explode)
++    monkeypatch.setattr(eg, "_run", runner)
 +    assert eg.main(["--interface", IFACE, "--bridge", BRIDGE]) == 0
 +    assert "dry run — nothing applied" in capsys.readouterr().out
++    assert seen == ["iptables-save"]
 +
 +
 +# ─────────────────────────── bridge detection safety ─────────────────────────
@@ -823,8 +1013,130 @@ index 0000000..e1165b7
 +    assert any(ln.startswith("-A DOCKER-USER") for ln in lines)
 +    assert any("REJECT" in ln for ln in lines)
 +    assert len(lines) == 4
++
++
++# ───────────────── reconciliation of stale jumps (T-074 review) ──────────────
++# The previous apply only ever ADDED a missing jump. Recreating the compose
++# network changes the bridge name, so the new jump was added and the old one
++# stayed; --verify then reported the stale jump forever and Restart=on-failure
++# rebuilt the same state every time. A changing bridge is the entire reason the
++# systemd unit exists, so that was the one case it could not handle.
++
++
++def _with_jumps(*jump_lines: str) -> str:
++    return _save(f":{eg.CHAIN} - [0:0]", *jump_lines)
++
++
++_HOST_JUMP = (
++    f'-A OUTPUT -o {IFACE} -p tcp -m tcp --dport 25 -m comment '
++    f'--comment "T-074 deny outbound SMTP host" -j {eg.CHAIN}'
++)
++_OLD_CONTAINER_JUMP = (
++    f'-A DOCKER-USER -i br-OLDOLDOLD -o {IFACE} -p tcp -m tcp --dport 25 -m comment '
++    f'--comment "T-074 deny outbound SMTP containers" -j {eg.CHAIN}'
++)
++
++
++def test_a_stale_bridge_jump_is_deleted_not_merely_supplemented():
++    doc = eg.build_reconciliation_document(
++        _with_jumps(_HOST_JUMP, _OLD_CONTAINER_JUMP), IFACE, BRIDGE
++    )
++    assert "-D DOCKER-USER -i br-OLDOLDOLD" in doc
++    assert f"-I DOCKER-USER 1 -i {BRIDGE}" in doc
++
++
++def test_a_duplicated_jump_collapses_to_one():
++    doc = eg.build_reconciliation_document(
++        _with_jumps(_HOST_JUMP, _HOST_JUMP), IFACE, BRIDGE
++    )
++    assert doc.count("-D OUTPUT") == 2, "both copies must be removed"
++    assert doc.count("-I OUTPUT 1") == 1, "exactly one must be installed"
++
++
++def test_an_unexpected_owned_parent_jump_is_removed():
++    rogue = f'-A FORWARD -p tcp --dport 25 -j {eg.CHAIN}'
++    doc = eg.build_reconciliation_document(_with_jumps(_HOST_JUMP, rogue), IFACE, BRIDGE)
++    assert "-D FORWARD -p tcp --dport 25" in doc
++
++
++def test_rules_belonging_to_other_tickets_are_never_deleted():
++    # Ownership is decided solely by jumping to our chain.
++    others = _with_jumps(
++        _HOST_JUMP,
++        "-A INPUT -i eth0 -p tcp -m tcp --dport 80 -j LOOKLA-CLOUDFLARE",
++        "-A INPUT -i eth0 -p tcp -m tcp --dport 8888 -j LOOKLA-T072-DENY",
++    )
++    doc = eg.build_reconciliation_document(others, IFACE, BRIDGE)
++    assert "LOOKLA-CLOUDFLARE" not in doc
++    assert "LOOKLA-T072-DENY" not in doc
++
++
++def test_deletions_are_derived_from_the_live_ruleset_only():
++    # Deleting a rule that does not exist aborts the whole restore, so nothing
++    # may be deleted speculatively.
++    doc = eg.build_reconciliation_document(_with_jumps(), IFACE, BRIDGE)
++    assert "-D " not in doc
++
++
++def test_the_owned_chain_is_flushed_and_refilled():
++    doc = eg.build_reconciliation_document(_with_jumps(_HOST_JUMP), IFACE, BRIDGE)
++    assert f":{eg.CHAIN} - [0:0]" in doc
++    assert doc.count("-j REJECT") == 1
++
++
++def test_parent_jumps_are_inserted_at_position_one_not_appended():
++    # Docker may leave a RETURN at the end of DOCKER-USER; a rule appended
++    # after it would never be evaluated.
++    doc = eg.build_reconciliation_document(_with_jumps(), IFACE, BRIDGE)
++    assert "-I OUTPUT 1 " in doc and "-I DOCKER-USER 1 " in doc
++    assert "-A OUTPUT " not in doc and "-A DOCKER-USER " not in doc
++
++
++def test_the_whole_policy_is_one_transaction():
++    # Not just the owned chain: the deletions and both parent jumps are in the
++    # same document, so there is no window with a half-applied policy.
++    doc = eg.build_reconciliation_document(
++        _with_jumps(_HOST_JUMP, _OLD_CONTAINER_JUMP), IFACE, BRIDGE
++    )
++    assert doc.startswith("*filter\n")
++    assert doc.rstrip().endswith("COMMIT")
++    assert doc.count("COMMIT") == 1
++    for fragment in ("-D OUTPUT", "-D DOCKER-USER", f":{eg.CHAIN}", "-j REJECT",
++                     "-I OUTPUT 1", "-I DOCKER-USER 1"):
++        assert fragment in doc, fragment
++
++
++def test_reapplying_converges_rather_than_accumulating():
++    after_first = _with_jumps(
++        _HOST_JUMP,
++        f'-A DOCKER-USER -i {BRIDGE} -o {IFACE} -p tcp -m tcp --dport 25 -m comment '
++        f'--comment "T-074 deny outbound SMTP containers" -j {eg.CHAIN}',
++    )
++    doc = eg.build_reconciliation_document(after_first, IFACE, BRIDGE)
++    assert doc.count("-I OUTPUT 1") == 1
++    assert doc.count("-I DOCKER-USER 1") == 1
++    assert doc.count("-D ") == 2, "the current jumps are replaced, not stacked"
++
++
++def test_scope_check_rejects_a_document_touching_another_chain():
++    doc = eg.build_reconciliation_document(_with_jumps(), IFACE, BRIDGE)
++    tampered = doc.replace("COMMIT", "-A INPUT -j ACCEPT\nCOMMIT")
++    with pytest.raises(eg.EgressScopeError, match="another chain"):
++        eg.assert_scope(tampered, eg.build_jump_rules(IFACE, BRIDGE))
++
++
++def test_scope_check_rejects_a_jump_targeting_something_else():
++    # The tamper has to change where the line *ends*, since that is what
++    # ownership is decided by. An earlier version of this test appended text
++    # mid-line, leaving the trailing "-j LOOKLA-T074-DENY" intact — so nothing
++    # raised and the test proved nothing.
++    doc = eg.build_reconciliation_document(_with_jumps(), IFACE, BRIDGE)
++    tampered = doc.replace(f"-j {eg.CHAIN}\n-I DOCKER-USER", "-j ACCEPT\n-I DOCKER-USER")
++    assert tampered != doc, "the tamper did not apply"
++    with pytest.raises(eg.EgressScopeError, match="does not target"):
++        eg.assert_scope(tampered, eg.build_jump_rules(IFACE, BRIDGE))
 diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
-index a18d935..bab1841 100644
+index a18d935..8473aa5 100644
 --- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 +++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
 @@ -2387,7 +2387,7 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost
@@ -857,7 +1169,7 @@ index a18d935..bab1841 100644
 +
 +#### Verification
 +
-+**405 backend tests** (367 + 38 new), ruff clean. The guards were mutation-tested:
++**474 backend tests** (367 + 107 new), ruff clean. The guards were mutation-tested:
 +
 +| Mutation | Result |
 +|---|---|
@@ -871,12 +1183,37 @@ index a18d935..bab1841 100644
  #### Proposed rule
  
  ```text
+@@ -2418,6 +2446,24 @@ inbound rules     → untouched (T-049 and T-072 keep their chains)
+ 
+ Ports 465 and 587 are deliberately **not** included: they are submission ports for authenticated relay through a provider, which is what a legitimate future sender would use. Blocking 25 removes direct-to-MX delivery, which is the abuse path, without foreclosing a proper setup later.
+ 
++#### Reconciliation, not accretion
++
++The first implementation only ever *added* a missing jump. Recreating the compose network changes the bridge name, so a fresh jump was installed and the stale one stayed; `--verify` then reported it as unexpected forever, and `Restart=on-failure` could not help because every retry rebuilt the same state. A changing bridge is the entire reason the systemd unit exists, so that was the one scenario it could not survive.
++
++Every apply now reads the live `iptables-save`, derives a deletion for **each** existing rule jumping to `LOOKLA-T074-DENY` — stale, duplicated or current — and reinstalls exactly two, all in one `iptables-restore --noflush` transaction. Deletions come from the live ruleset rather than being guessed, because deleting a rule that does not exist aborts the whole transaction. Ownership is decided solely by the jump target, so neighbouring chains are never candidates.
++
++The jumps use `-I <chain> 1` rather than `-A`: Docker may leave a `RETURN` at the end of `DOCKER-USER`, and a rule appended after it would never be evaluated.
++
++This also makes the atomicity claim true. Previously the chain was one transaction and both parent jumps were separate `iptables -I` calls, so a failure between them left a half-applied policy. The test that asserted atomicity only covered the chain; it now covers the whole document, and a post-apply `--verify` proves the result rather than assuming it.
++
++#### One lock for three paths
++
++The generation marker does not close every race, because stopping a `.timer` does not stop a `.service` that has already started. A rollback that had passed its guard could still be running while a newer rollout applied, and would then delete the newer generation's protection.
++
++`--rollout`, `--ensure` and the generated rollback now share one `flock`, taken before bridge resolution, before the marker is read or written, before stale timers are stopped, and before any mutation. `--ensure` takes it non-blocking and exits non-zero on conflict, since `Restart=on-failure` will retry and a conflicting run is already converging the same state. `--rollout` and the rollback wait: an attended operator should queue rather than abort, and a rollback that gave up on a busy lock would silently protect nothing. The rollback re-reads the marker **after** acquiring the lock, so the exact race above ends in a no-op.
++
++Concurrency is tested with real parallel processes holding the same lock, not by reading the source.
++
+ #### Boundaries
+ 
+ Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mutation and persistence through the existing mechanism. No container restart. T-049's and T-072's chains untouched. If a consumer is discovered later, it goes through an authenticated submission port rather than reopening 25.
 diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
 new file mode 100755
-index 0000000..e1b3a68
+index 0000000..62f931a
 --- /dev/null
 +++ b/ops/t074/apply_t074.sh
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,303 @@
 +#!/usr/bin/env bash
 +# T-074 — apply the outbound SMTP restriction.
 +#
@@ -960,6 +1297,27 @@ index 0000000..e1b3a68
 +
 +log()  { printf '[t074] %s\n' "$*"; }
 +fail() { printf '[t074] FAIL: %s\n' "$*" >&2; exit 1; }
++
++# ── one lock for every path that touches T-074 state ─────────────────────────
++# rollout, ensure and the generated rollback all take it, because the
++# generation marker alone does not close this race: stopping a .timer does not
++# stop a .service that has already started, so a rollback which has passed its
++# guard can still be running while a newer rollout applies — and would then
++# delete the newer generation's protection.
++#
++# Taken before bridge resolution, before reading or writing the marker, before
++# stopping timers, and before any mutation. Released when the process exits,
++# including on failure, because the descriptor closes.
++LOCK_FILE="${T074_LOCK_FILE:-/run/lock/lookla-t074.lock}"
++mkdir -p "$(dirname "$LOCK_FILE")"
++exec 9>"$LOCK_FILE"
++if [[ "$MODE" == "ensure" ]]; then
++  # Non-blocking: a conflicting run means someone else is already converging
++  # the same state, and Restart=on-failure will retry this one shortly.
++  flock -n 9 || fail "another T-074 operation holds the lock; systemd will retry"
++else
++  flock 9
++fi
 +
 +# ── bridge resolution, with a bounded wait in --ensure ───────────────────────
 +# A stale or unresolvable bridge produces a rule that matches nothing while the
@@ -1047,6 +1405,16 @@ index 0000000..e1b3a68
 +
 +GENERATION="$GENERATION"
 +CURRENT_FILE="$STATE_DIR/current"
++LOCK_FILE="\${T074_LOCK_FILE:-$LOCK_FILE}"
++
++# Same lock as rollout and ensure, taken BEFORE the generation guard. Waiting
++# here is deliberate: if a rollout is mid-flight this rollback must not act on
++# a half-applied ruleset, and once the lock is released the marker it then
++# reads is the authoritative one. A rollback that simply gave up on a busy lock
++# would silently fail to protect anything.
++mkdir -p "\$(dirname "\$LOCK_FILE")"
++exec 9>"\$LOCK_FILE"
++flock 9
 +
 +# Generation guard, deliberately fail-closed. A timer from an earlier rollout
 +# must not fire after a later apply and delete protection a different
@@ -1151,10 +1519,10 @@ index 0000000..e1b3a68
 +NEXT
 diff --git a/ops/t074/smtp_egress.py b/ops/t074/smtp_egress.py
 new file mode 100644
-index 0000000..d5cf448
+index 0000000..487e241
 --- /dev/null
 +++ b/ops/t074/smtp_egress.py
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,376 @@
 +#!/usr/bin/env python3
 +"""
 +T-074 — deny outbound direct-to-MX SMTP from this host and its containers.
@@ -1278,6 +1646,53 @@ index 0000000..d5cf448
 +    return f"*filter\n:{CHAIN} - [0:0]\n{body}\nCOMMIT\n"
 +
 +
++def owned_parent_jumps(save_output: str) -> list[str]:
++    """
++    Every parent-chain rule currently pointing at our chain, verbatim.
++
++    Returned exactly as `iptables-save` printed them, because that text is what
++    `-D` needs to match. Ownership is decided solely by the rule jumping to
++    `LOOKLA-T074-DENY`; nothing else is ever considered ours.
++    """
++    found = []
++    for raw in save_output.splitlines():
++        line = raw.strip()
++        if line.startswith("-A ") and line.endswith(f"-j {CHAIN}"):
++            found.append(line)
++    return found
++
++
++def build_reconciliation_document(save_output: str, interface: str, bridge: str) -> str:
++    """
++    One transaction that converges the live ruleset onto the contract.
++
++    The previous version only ever *added* a missing jump. That left the main
++    persistence scenario broken: recreate the compose network, the bridge name
++    changes, the new jump is added and the old one stays. `--verify` then
++    reports the stale jump as unexpected and fails forever, and
++    `Restart=on-failure` cannot help because every retry rebuilds the same
++    state. Since a changing bridge is the entire reason the systemd unit
++    exists, that was the one case it could not handle.
++
++    So every existing owned jump is deleted first — stale, duplicated or
++    simply current — and the two correct ones are re-inserted. Deleting a rule
++    we just read from `iptables-save` is safe; deleting one that does not exist
++    would abort the whole transaction, which is why the deletions are derived
++    from the live ruleset rather than guessed.
++
++    `-I <chain> 1` rather than `-A`: Docker may leave a `RETURN` at the end of
++    `DOCKER-USER`, and a rule appended after it would never be evaluated.
++    """
++    lines = []
++    for existing in owned_parent_jumps(save_output):
++        lines.append("-D " + existing[len("-A "):])
++    lines.append(f":{CHAIN} - [0:0]")
++    lines.extend(build_chain_rules())
++    for chain, *rule in build_jump_rules(interface, bridge):
++        lines.append(f"-I {chain} 1 " + " ".join(_quote(r) for r in rule))
++    return "*filter\n" + "\n".join(lines) + "\nCOMMIT\n"
++
++
 +def assert_scope(document: str, jumps: list[list[str]]) -> None:
 +    """Fail before anything is applied if the generated rules drifted."""
 +    joined = document + " " + " ".join(" ".join(j) for j in jumps) + " "
@@ -1289,8 +1704,15 @@ index 0000000..d5cf448
 +    for generated in ("-A DOCKER ", "-A DOCKER-FORWARD", "-A DOCKER-INGRESS"):
 +        if generated in joined:
 +            raise EgressScopeError("must not write into Docker-generated chains")
-+    if "-A INPUT" in document or "-A FORWARD" in document or "-A OUTPUT" in document:
-+        raise EgressScopeError("only T-074's own chain may be populated here")
++    # Parent jumps are part of the transaction now, so -I/-D against builtin
++    # chains are expected — but every one of them must target our chain, and
++    # nothing may be appended to a builtin chain outright.
++    for line in document.splitlines():
++        stripped = line.strip()
++        if stripped.startswith("-A ") and not stripped.startswith(f"-A {CHAIN} "):
++            raise EgressScopeError(f"unexpected append to another chain: {stripped}")
++        if stripped.startswith(("-I ", "-D ")) and not stripped.endswith(f"-j {CHAIN}"):
++            raise EgressScopeError(f"rule does not target {CHAIN}: {stripped}")
 +    if "wg0" in joined:
 +        raise EgressScopeError("WireGuard is deliberately out of scope")
 +    if "-j REJECT" not in document:
@@ -1420,18 +1842,16 @@ index 0000000..d5cf448
 +
 +    try:
 +        bridge = args.bridge or detect_bridge(args.network)
-+        document = build_restore_document()
-+        jumps = build_jump_rules(args.interface, bridge)
-+        assert_scope(document, jumps)
 +    except EgressScopeError as exc:
 +        print(f"FAIL: {exc}", file=sys.stderr)
 +        return 1
 +
++    saved = _run(["iptables-save"])
++    if saved.returncode != 0:
++        print(f"FAIL: iptables-save: {saved.stderr.strip()}", file=sys.stderr)
++        return 1
++
 +    if args.verify:
-+        saved = _run(["iptables-save"])
-+        if saved.returncode != 0:
-+            print(f"FAIL: iptables-save: {saved.stderr.strip()}", file=sys.stderr)
-+            return 1
 +        problems = verify(args.interface, bridge, saved.stdout)
 +        if problems:
 +            for problem in problems:
@@ -1440,11 +1860,19 @@ index 0000000..d5cf448
 +        print(f"verified: {len(expected_lines(args.interface, bridge))} owned rules match the contract")
 +        return 0
 +
++    try:
++        document = build_reconciliation_document(saved.stdout, args.interface, bridge)
++        assert_scope(document, build_jump_rules(args.interface, bridge))
++    except EgressScopeError as exc:
++        print(f"FAIL: {exc}", file=sys.stderr)
++        return 1
++
++    stale = len(owned_parent_jumps(saved.stdout))
 +    print(f"# deny outbound TCP/{SMTP_PORT} via {args.interface}; container bridge {bridge}")
++    print(f"# reconciling: {stale} existing owned jump(s) removed, 2 installed")
++
 +    if not args.apply:
 +        print(document, end="")
-+        for chain, *rule in jumps:
-+            print(f"# jump: iptables -I {chain} 1 {' '.join(rule)}")
 +        print("# dry run — nothing applied")
 +        return 0
 +
@@ -1453,15 +1881,17 @@ index 0000000..d5cf448
 +        print(f"FAIL: iptables-restore: {restore.stderr.strip()}", file=sys.stderr)
 +        return 1
 +
-+    for chain, *rule in jumps:
-+        if _run(["iptables", "-C", chain, *rule]).returncode == 0:
-+            print(f"jump in {chain} already present — not duplicated")
-+            continue
-+        inserted = _run(["iptables", "-I", chain, "1", *rule])
-+        if inserted.returncode != 0:
-+            print(f"FAIL: could not install jump in {chain}: {inserted.stderr.strip()}", file=sys.stderr)
-+            return 1
-+        print(f"jump installed in {chain}")
++    # The whole policy is one transaction now, so a success here means the
++    # contract holds — but it is cheap to prove rather than assume.
++    confirm = _run(["iptables-save"])
++    if confirm.returncode != 0:
++        print(f"FAIL: iptables-save after apply: {confirm.stderr.strip()}", file=sys.stderr)
++        return 1
++    problems = verify(args.interface, bridge, confirm.stdout)
++    if problems:
++        for problem in problems:
++            print(f"FAIL: after apply: {problem}", file=sys.stderr)
++        return 1
 +
 +    print("applied")
 +    return 0
