@@ -2274,6 +2274,58 @@ Assess provider abuse reports and IP reputation · review log retention (68 MB/d
 
 ---
 
+### T-074 — Restrict unnecessary outbound SMTP
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Hardening
+**Dependencies:** T-049 ✅, T-072 ✅
+**Status:** ✅ Completed. Reviewed across several rounds, **APPROVE**, merged via PR #76 and two follow-up fixes (PR #77, PR #78), applied to production in attended mode on 2026-08-05.
+
+Nothing on this host legitimately opens TCP/25 outbound. Mail is sent through the Resend HTTPS API, and mail is received through Cloudflare Email Routing — neither needs port 25. Leaving it open means that anything which manages to run here can speak SMTP directly to the world, which is how a compromised host earns a blocklist entry before anyone notices.
+
+The rule denies TCP/25 leaving the external interface, from the host and from the containers, and rejects rather than drops so nothing waits on a timeout. Submission ports 465 and 587 are deliberately untouched.
+
+#### Container traffic never passes through OUTPUT
+
+`FORWARD` jumps to `DOCKER-USER` first, so container egress never traverses the `OUTPUT` chain. A rule placed only in `OUTPUT` would look correct, verify green, and cover no container at all. Two jumps are required, and both are checked against the full contract on every run.
+
+#### The rollout could not be armed at all: `/run` is `noexec`
+
+The first attended rollout stopped before touching the firewall:
+
+```text
+Failed to find executable /run/lookla-t074/<generation>/rollback.sh: Permission denied
+[t074] FAIL: could not arm the rollback timer — nothing has been applied
+```
+
+The generated rollback lives under `/run`, which is mounted `noexec`. That refuses `exec()` by virtue of the filesystem, not the mode bits, so an executable script there still fails and the timed rollback could never be created. The rollout refuses to touch the firewall without one, so it correctly did nothing.
+
+`systemd-run` is now given the script as an argument to an interpreter — reading a file is not `exec()` — and the operator instruction prints the same form. Neither syntax checking nor the stubbed tests could have caught this: the dry run exits before arming, and no stub modelled a kernel refusal. One now refuses exactly what the kernel refuses.
+
+#### A failed arm must not disarm what is already installed
+
+The first fix deleted the generation marker whenever arming failed. On a clean host that is right; once a generation is installed it is destructive — the marker is the only thing that authorises a rollback, so a rollout that applied nothing would leave the previous generation's rules live with nothing able to remove them.
+
+The order is now: preserve the existing marker byte for byte, including the case where there is none → write the new one → arm → on failure restore the previous marker and leave every existing timer alone → only after a successful arm retire the older timers, skipping the one just armed → then apply.
+
+Two of those guarantees were unprotected until a mutation exposed them. A "no timer was stopped" assertion held over an empty set because the stub reported no timers at all. And nothing pinned the skip of the freshly armed unit: on a real host the pattern matching stale timers also matches the unit armed seconds earlier, so retiring it would leave the firewall applied with no rollback whatsoever — the one state attended mode exists to prevent.
+
+#### Outbound SMTP restriction boundary
+
+```text
+2026-08-05 17:56:17 Europe/Athens (EEST)
+```
+
+Before this instant the host and all six containers could open TCP/25 to any public MX. After it, both paths are refused in under a millisecond.
+
+Proven by rule counters, not by log text: after the rule was live, thirteen probe packets landed on the reject rule — one from the host, twelve from the six containers. An earlier reading showed zeros for the same probes, because a reconciliation run had rebuilt the chain in one transaction between the probes and the reading. That a connection is refused says nothing about *which* rule refused it.
+
+Submission ports 465 and 587 remain open and the Resend HTTPS path was verified from inside the API container after the rule was live. The WireGuard interface is out of scope and unmodified, the neighbouring T-049 and T-072 chains are byte-identical to the pre-rollout capture, and the full ruleset diff is exactly four added lines.
+
+IPv4 only. The containers have no global IPv6 address and the host has no IPv6 route to a public MX on 25, so there is no second path today — but an IPv6 egress path would need its own rule.
+
+A systemd unit reinstates the rule after a reboot or a Docker restart, re-resolving the container bridge from current state rather than reusing a stored name. It runs the unattended mode only: arming a timed rollback from a unit would mean a Docker restart silently deleting the protection minutes later.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
