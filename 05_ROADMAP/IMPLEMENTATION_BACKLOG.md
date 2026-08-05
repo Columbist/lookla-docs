@@ -2423,7 +2423,7 @@ This does not contradict T-049's finding that `DOCKER-USER` was the wrong layer 
 
 #### Verification
 
-**474 backend tests** (367 + 107 new), ruff clean. The guards were mutation-tested:
+**483 backend tests** (367 + 116 new), ruff clean. The guards were mutation-tested:
 
 | Mutation | Result |
 |---|---|
@@ -2455,6 +2455,18 @@ Every apply now reads the live `iptables-save`, derives a deletion for **each** 
 The jumps use `-I <chain> 1` rather than `-A`: Docker may leave a `RETURN` at the end of `DOCKER-USER`, and a rule appended after it would never be evaluated.
 
 This also makes the atomicity claim true. Previously the chain was one transaction and both parent jumps were separate `iptables -I` calls, so a failure between them left a half-applied policy. The test that asserted atomicity only covered the chain; it now covers the whole document, and a post-apply `--verify` proves the result rather than assuming it.
+
+#### Teardown reads the live ruleset
+
+Pinning the rollback's teardown to the bridge recorded at rollout time produced the worst outcome in this ticket. After a Docker restart, `--ensure` reconciles onto a new bridge without touching the marker or the armed timer; when that timer fired, the rollback removed the host jump, failed to find the old container jump, flushed the chain, and then could not delete it because the live jump still referenced it — aborting under `set -e` with an empty chain, no protection, and TCP/25 open in both directions.
+
+The teardown is now derived from a live `iptables-save` under the same lock, removes every rule jumping to our chain whatever its shape, and flushes and drops the chain in **one** transaction, so there is no half-removed state to land in. The selector is anchored to `-j CHAIN` at end of line, which is what keeps a neighbouring rule that merely *mentions* the chain in a comment out of it.
+
+#### Additions and deletions are validated differently
+
+A single strict scope check rejected the very documents that would have cleaned up a malformed owned rule. A jump naming `wg0`, or port 587, or another interface, is exactly what reconciliation exists to remove — but the validator saw the forbidden token in the `-D` line and refused the transaction, so `--ensure` looped without ever fixing anything.
+
+Deleting a rule that jumps to our chain always *narrows* T-074's effect, so a deletion now needs only to prove ownership. Adding one widens it, so an addition still faces the full contract.
 
 #### One lock for three paths
 
