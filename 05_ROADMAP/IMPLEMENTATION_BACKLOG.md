@@ -2476,6 +2476,51 @@ The generation marker does not close every race, because stopping a `.timer` doe
 
 Concurrency is tested with real parallel processes holding the same lock, not by reading the source.
 
+#### The rollout could not be armed at all: `/run` is `noexec`
+
+The first attended rollout aborted before touching the firewall:
+
+```text
+Failed to find executable /run/lookla-t074/<generation>/rollback.sh: Permission denied
+[t074] FAIL: could not arm the rollback timer — nothing has been applied
+```
+
+`$T074_STATE_DIR` defaults to `/run/lookla-t074`, and `/run` is mounted `rw,nosuid,nodev,noexec`. `noexec` refuses `exec()` on a file by virtue of its filesystem, not its mode bits, so a `-rwxr-xr-x` script there still returns 126 and the timer could never be created. T-049 never hit this because its rollback lives under `/var/backups`, on the root filesystem.
+
+`systemd-run` is now given `/bin/bash "$ROLLBACK"`: reading a file is not `exec()`, and `noexec` does not restrict it. The state directory stays in `/run` on purpose — it is cleared on reboot, and after a reboot the unit reconciles from live state rather than from a stale generation. The closing operator instruction prints `bash <path>` for the same reason.
+
+Neither `bash -n` nor the stubbed tests could catch this: the dry run exits before arming, and no stub modelled a kernel refusal. A stub now refuses exactly what the kernel refuses — an executable argv living under the state directory.
+
+#### A failed arm must not disarm the generation that is already installed
+
+The first fix deleted the generation marker whenever arming failed. On a clean host that is correct; once a generation is installed it is destructive:
+
+```text
+generation A applied, current = A, timer A armed
+rollout B stops timer A, replaces the marker, fails to arm timer B, deletes the marker
+→ A's rules live, A's timer stopped, A's marker gone, A's rollback refused by its own guard
+```
+
+The rollout "applied nothing" while disarming what was already in place. The order is now: preserve the existing marker byte for byte (including the case where there is none) → write the new one → arm → on failure restore the previous marker by rename and leave every existing timer alone → **only after a successful arm** retire the older timers, skipping the unit just armed → then apply.
+
+Two of those guarantees were unprotected until a mutation exposed them. The "no timer was stopped" assertion held over an empty set, because the `systemctl` stub reported no units at all. And nothing pinned the skip of the freshly armed unit — on a real host the glob `lookla-t074-rollback-*.timer` matches the unit armed seconds earlier, so retiring it would leave the firewall applied with no rollback whatsoever, the one state attended mode exists to prevent. Removing that line passed all 56 tests.
+
+#### Outbound SMTP restriction boundary
+
+```text
+2026-08-05 17:56:17 Europe/Athens (EEST)   — generation 20260805T145617Z-1956208
+```
+
+Before this instant the host and all six containers could open TCP/25 to any public MX. After it, the host jump on `OUTPUT` and the container jump on `DOCKER-USER` send TCP/25 to `LOOKLA-T074-DENY`, which rejects with `icmp-port-unreachable` — refused in under a millisecond, not dropped, so nothing waits on a timeout.
+
+Proven by counters rather than by log text: after the rule was in place, thirteen probe packets (one from the host, twelve from the six containers) landed on the REJECT rule, one on the `OUTPUT` jump and twelve on the `DOCKER-USER` jump. An earlier reading showed zeros for the same probes — `--ensure` had rebuilt the chain in one transaction between the probes and the reading, resetting the counters. The refusal alone proves nothing about *which* rule refused.
+
+Submission ports are deliberately untouched: 465 and 587 remain open from the host and from the containers, and the Resend path is HTTPS to `api.resend.com:443`, verified from inside `beauty_api` after the rule was live. `wg0` is out of scope and unmodified. The T-049 and T-072 chains are byte-identical to the pre-rollout capture, and the full ruleset diff is exactly four added lines.
+
+IPv4 only. The containers have no global IPv6 address and the host has no IPv6 route to a public MX on 25, so there is no second path today; `ip6tables` carries no equivalent rule and would need one if IPv6 egress is ever enabled.
+
+`t074-smtp-egress.service` is installed and enabled. It runs `--ensure`, never `--rollout`, so a Docker restart re-resolves the bridge and reconciles without arming a timer nobody is watching.
+
 #### Boundaries
 
 Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mutation and persistence through the existing mechanism. No container restart. T-049's and T-072's chains untouched. If a consumer is discovered later, it goes through an authenticated submission port rather than reopening 25.
