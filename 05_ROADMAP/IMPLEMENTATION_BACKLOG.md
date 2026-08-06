@@ -3004,6 +3004,25 @@ The interim manual procedure is now documented in `PRIVACY_OPERATIONS.md` §5, i
 
 ---
 
+### Privacy Policy correction — reviewer photo and profile link (deployed)
+
+**Deployed 2026-08-06 from `51c65ec`, web only.** Image `952f9121651c`; rollback point pinned as `beauty-gr-web:rollback-20260806` (`cfb219f1f37e`) *before* the build, since building moves the `latest` tag.
+
+The policy and LIA 4.1 both stated that no reviewer profile photo and no profile link are collected. `crawler_sources.raw_data` retains `authorAttribution.photoUri` and the reviewer's profile `uri` for 6,245 of 7,481 rows. The text was corrected in all four locales rather than waiting for T-076, because a published statement has to describe what the system does today, not what it will do after a ticket ships.
+
+Verified in production: the corrected paragraph is present in `en`, `ru`, `uk` and `el` (the last through its standing `/el/privacy → /privacy` redirect — Greek is the default locale), with zero occurrences of the old wording; `restarts=0`, no 5xx, and home, locales, `/search`, a salon page and `/api/health` all 200. API, database and every other container untouched.
+
+Roll back with:
+
+```bash
+docker tag beauty-gr-web:rollback-20260806 beauty-gr-web:latest
+docker compose up -d --no-deps web
+```
+
+**T-076 is not a dependency of this deploy, and this deploy is not a substitute for it.** Once T-076 stops retaining those two fields and purges the existing payloads, the wording narrows again — a separate change, reviewed on its own.
+
+---
+
 ### T-078 — The duplicate-claim guard queries a column that does not exist
 **Priority:** P1 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** none (found while writing the T-047/T-048 data matrix)
