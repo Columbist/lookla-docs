@@ -3023,6 +3023,29 @@ docker compose up -d --no-deps web
 
 ---
 
+### Salon claiming restored — T-078 + T-079 deployment boundary
+
+```text
+2026-08-06 16:0x Europe/Athens   —  api only, from 18e74ba
+```
+
+Deployed as one unit, because T-078 alone would have restored claiming together with the T-079 race. Image `83d7e807044c`; rollback pinned as `beauty-gr-api:rollback-20260806` (`57a47c4b8b7f`) before the build, since building moves the `latest` tag.
+
+Before this instant, `POST /api/owner/claim/request` raised `column "id" does not exist` on every call, so **no salon could be claimed at all** — the duplicate case was only the visible half. Verified against the production schema both before and after: the old `SELECT id FROM salon_owners` still errors, the new `SELECT 1 … LIMIT 1` runs, and `SELECT … FOR UPDATE` on `salons` behaves as the lock requires.
+
+Post-deploy: `_lock_salon` and `FOR UPDATE` present in the running image, the defective query gone, `restarts=0`, no 5xx, `/api/health`, the site, search, a salon page and `/api/salons` all 200, `claim/request` correctly 401 unauthenticated. Web, crawler, database and Redis untouched.
+
+Roll back with:
+
+```bash
+docker tag beauty-gr-api:rollback-20260806 beauty-gr-api:latest
+docker compose up -d --no-deps api
+```
+
+No migration, so the rollback needs no data step.
+
+---
+
 ### T-079 — A claim token outlives the claim it was issued for
 **Priority:** P1 | **Owner:** BE | **Epic:** EPIC-09 | **Estimate:** 1h
 **Dependencies:** T-078 ✅ (unreachable until the claim guard was fixed)
