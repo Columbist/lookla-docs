@@ -2326,6 +2326,37 @@ A systemd unit reinstates the rule after a reboot or a Docker restart, re-resolv
 
 ---
 
+### T-047 / T-048 — Personal-data matrix (joint design)
+**Priority:** P1 | **Owner:** BE | **Epic:** EPIC-09 | **Phase:** Design
+**Status:** Design merged (PR #79). Neither implementation has started.
+
+Erasure (T-047) is event-driven — one person, every table at once. Retention (T-048) is time-driven — one table, every person at once. They ship separately, but both answer the same question for each column: what happens to it, and when. Deciding that twice is how the two end up disagreeing, so the decision is fixed once, in one document, before either job is written.
+
+The matrix was derived from the running schema, the foreign-key graph and the code that writes to it — not from the existing documentation. Three tables holding personal data have no ORM model and would be invisible to a survey based on the models alone.
+
+#### Erasure cannot be a delete
+
+Three columns are `NOT NULL` with `ON DELETE NO ACTION`, so the database refuses a direct delete of an account while its messages, conversations and claim tokens exist. Deleting those first would destroy the other party's record of a conversation they were also part of. The account row is therefore emptied of identifiers and kept as an anchor.
+
+That result is **pseudonymised, not anonymised**: a stable id survives, and so does the history pointing at it. The design says so explicitly, because "anonymised" hid a judgement that needs to be visible — what is kept, under which purpose, and until when. Each retained category now names all three, and the anchor itself is deleted once its last dependent row has aged out.
+
+#### What the schema review found
+
+The manual erasure procedure had drifted from its own schema, silently. A correctly-executed erasure left behind an email address on past appointments, live claim tokens, a self-registered professional's public profile, an active integration and its secret, a verbatim copy of the person's content in the moderation queue, and a second federated identity. All are now in the procedure, which is in use until T-047 ships.
+
+Two public statements were also wrong and have been corrected:
+
+- **Removing a review on objection was described as deleting one row.** The author name and text also sit in the stored crawl payload for 6,245 salons, and the importer's conflict guard matches nothing once the row is gone — so the next crawl restores the review. Durable suppression is now a separate ticket; until it ships the removal is manual and re-checked after the next crawl.
+- **The Privacy Policy said no reviewer profile photo or profile link is collected.** Both are retained in the stored crawl payload. The policy was corrected in all four languages rather than waiting for the ticket that removes the data, because the collection is happening today.
+
+#### Retention needs a clock that can actually be computed
+
+Several targets were stated against columns that cannot express them. A "12 months after review" clock keeps a never-reviewed row for ever; a ban with no expiry is not a decision to retain indefinitely, it is the absence of one. Those now have explicit rules for the null case.
+
+The largest gap: crawled reviews and staff are kept while the source still publishes them, but nothing records *when a row was last seen*. Every importer is "insert, or do nothing" — so re-seeing a row every day for two years advances no timestamp at all. A retention job built on today's schema would delete rows the source still serves. T-048 therefore owns a small clock contract: when an item was last observed, when it was first found missing, and — critically — what counts as a *complete* crawl, since a timed-out or partially-paged run must advance nothing.
+
+---
+
 ## EPIC-10 — Translation QA
 
 ### T-032 — Manual Russian translation quality review
