@@ -3023,6 +3023,31 @@ docker compose up -d --no-deps web
 
 ---
 
+### T-079 — A claim token outlives the claim it was issued for
+**Priority:** P1 | **Owner:** BE | **Epic:** EPIC-09 | **Estimate:** 1h
+**Dependencies:** T-078 ✅ (unreachable until the claim guard was fixed)
+
+`POST /api/owner/claim/verify` inserted into `salon_owners` without re-checking ownership. Two people request a claim on an unclaimed salon; the first verifies and becomes owner; the second's token is still unused and unexpired, so their verification adds a **second owner row** and returns success. `ON CONFLICT DO NOTHING` does not prevent it — the only uniqueness is the composite `(user_id, salon_id)`, so two different users for one salon is a valid pair.
+
+A second `SELECT` before the `INSERT` is not sufficient either: two concurrent verifications can both observe no owner. The salon row is locked with `SELECT … FOR UPDATE`, which serialises claims for that salon and nothing else.
+
+**Both endpoints take that lock**, through one shared helper. With it only in `verify`, a concurrent `request` still reads `salon_owners` before the claim commits, passes its ownership guard, and inserts a token *after* the claim swept the outstanding ones — so a live token survives a completed claim and the endpoint reports success for an already-claimed salon. Both endpoints read ownership and then write on the strength of what they read, so both must hold the same lock or the read is stale by the time the write lands.
+
+**Ownership is checked before the token, and the order matters.** A successful claim burns every outstanding token for the salon, so a loser arriving afterwards has no live token left; checking the token first would answer *"invalid or expired code"* — true, but misleading, since their code was fine and somebody else simply got there first. Claim state is already public via `is_owner_claimed`, so answering 409 first discloses nothing new.
+
+**Acceptance Criteria:**
+- [x] Second verification on a claimed salon returns 409, not 200 and not 400
+- [x] Exactly one `salon_owners` row per salon after any sequence of verifications
+- [x] A successful claim invalidates every other outstanding token for that salon
+- [x] The refused token is burned rather than left retryable for the rest of its hour
+- [x] A database fault is not reported as 409
+- [x] **A request arriving during an in-flight claim** waits on the lock, then returns 409 and issues no token — proven by holding exactly what `verify` holds (lock, uncommitted owner row, token sweep) and asserting the request is genuinely blocked via `pg_stat_activity` before the claim commits, not merely slow
+- [x] **Two simultaneous verifications produce one owner** — proven against a real Postgres, since SQLite serialises writes on its own and would pass without any lock. CI gains a `postgres:16-alpine` service, and the test **fails rather than skips** when `TEST_DATABASE_URL` is missing on CI, so deleting the service breaks the build instead of silently dropping the guarantee.
+
+Mutation-verified: removing `FOR UPDATE` makes both concurrent verifications return 200 and create two owners; removing the lock from `request` alone leaves it not waiting at all; disabling the ownership check fails three tests; not burning the other tokens fails one.
+
+---
+
 ### T-078 — The duplicate-claim guard queries a column that does not exist
 **Priority:** P1 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
 **Dependencies:** none (found while writing the T-047/T-048 data matrix)
