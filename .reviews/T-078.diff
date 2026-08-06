@@ -1,0 +1,193 @@
+diff --git a/backend/app/routers/owner.py b/backend/app/routers/owner.py
+index 72ec074..3f134f8 100644
+--- a/backend/app/routers/owner.py
++++ b/backend/app/routers/owner.py
+@@ -31,8 +31,13 @@ async def request_claim(body: ClaimIn, user: User = Depends(get_current_user), d
+     if not salon:
+         raise HTTPException(404, "Salon not found")
+ 
++    # `salon_owners` has no `id` column — its primary key is composite
++    # (user_id, salon_id) — so selecting `id` here raised UndefinedColumn and
++    # this guard returned 500 instead of 409, never blocking a second claim.
++    # The error is deliberately left to propagate rather than caught and
++    # reported as a conflict: a database fault is not "already claimed".
+     existing = db.execute(text(
+-        "SELECT id FROM salon_owners WHERE salon_id = :sid"
++        "SELECT 1 FROM salon_owners WHERE salon_id = :sid LIMIT 1"
+     ), {"sid": body.salon_id}).first()
+     if existing:
+         raise HTTPException(409, "Salon already claimed")
+diff --git a/backend/tests/test_owner_claim_guard.py b/backend/tests/test_owner_claim_guard.py
+new file mode 100644
+index 0000000..1b0b46d
+--- /dev/null
++++ b/backend/tests/test_owner_claim_guard.py
+@@ -0,0 +1,168 @@
++"""
++T-078: the duplicate-claim guard on POST /api/owner/claim/request.
++
++The guard ran `SELECT id FROM salon_owners`, and that table has no `id`
++column — its primary key is the composite (user_id, salon_id). Postgres
++raised UndefinedColumn, so the endpoint returned 500 instead of 409 and never
++blocked a second claim on an already-claimed salon.
++
++Testing this by reading the source would prove nothing: the statement is
++valid SQL and only fails against the real schema. These tests therefore run
++the endpoint against a database built from the same models, and one of them
++asserts directly that no query names a column the table does not have.
++
++`claiming_tokens` has no ORM model — it is written through raw SQL in the
++router — so the fixture creates it explicitly. That absence is the same
++reason the erasure checklist missed the table for so long.
++"""
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, event, text
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from app.main import app
++from app.core.database import get_db, Base
++from app.core.deps import get_current_user
++from app.models.salon import Salon, SalonOwner
++from app.models.user import User
++
++CLAIMED_SALON = 1
++UNCLAIMED_SALON = 2
++CLAIMANT = 10
++EXISTING_OWNER = 11
++
++
++@pytest.fixture
++def client():
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    Base.metadata.create_all(engine)
++    session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    with engine.begin() as conn:
++        conn.execute(text("""
++            CREATE TABLE claiming_tokens (
++                id         INTEGER PRIMARY KEY AUTOINCREMENT,
++                user_id    INTEGER NOT NULL,
++                salon_id   INTEGER NOT NULL,
++                token      VARCHAR NOT NULL,
++                expires_at TIMESTAMP NOT NULL,
++                used_at    TIMESTAMP,
++                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++                UNIQUE (user_id, salon_id)
++            )
++        """))
++
++    session = session_local()
++    session.add(Salon(id=CLAIMED_SALON, name="Claimed", slug="claimed", is_active=True))
++    session.add(Salon(id=UNCLAIMED_SALON, name="Unclaimed", slug="unclaimed", is_active=True))
++    session.add(User(id=CLAIMANT, email="claimant@example.com"))
++    session.add(User(id=EXISTING_OWNER, email="owner@example.com"))
++    session.add(SalonOwner(user_id=EXISTING_OWNER, salon_id=CLAIMED_SALON))
++    session.commit()
++    claimant = session.get(User, CLAIMANT)
++    session.close()
++
++    def override_get_db():
++        db = session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    app.dependency_overrides[get_db] = override_get_db
++    app.dependency_overrides[get_current_user] = lambda: claimant
++
++    test_client = TestClient(app)
++    test_client.engine = engine
++    try:
++        yield test_client
++    finally:
++        test_client.close()
++        app.dependency_overrides.pop(get_db, None)
++        app.dependency_overrides.pop(get_current_user, None)
++        engine.dispose()
++
++
++def _statements(client, fn) -> list[str]:
++    captured = []
++
++    def _log(conn, cursor, statement, parameters, context, executemany):
++        captured.append(statement)
++
++    event.listen(client.engine, "before_cursor_execute", _log)
++    try:
++        fn()
++    finally:
++        event.remove(client.engine, "before_cursor_execute", _log)
++    return captured
++
++
++def test_an_unclaimed_salon_accepts_a_claim_request(client):
++    r = client.post("/api/owner/claim/request", json={"salon_id": UNCLAIMED_SALON})
++
++    assert r.status_code == 200, r.text
++    with client.engine.begin() as conn:
++        rows = conn.execute(text(
++            "SELECT user_id, salon_id FROM claiming_tokens WHERE salon_id = :s"
++        ), {"s": UNCLAIMED_SALON}).fetchall()
++    assert [tuple(row) for row in rows] == [(CLAIMANT, UNCLAIMED_SALON)]
++
++
++def test_an_already_claimed_salon_is_refused_with_409(client):
++    r = client.post("/api/owner/claim/request", json={"salon_id": CLAIMED_SALON})
++
++    # The status code is the assertion. Before T-078 this raised, and a test
++    # that only checked "not 200" would have passed on the 500.
++    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
++    assert "already claimed" in r.text
++
++    with client.engine.begin() as conn:
++        count = conn.execute(text(
++            "SELECT count(*) FROM claiming_tokens WHERE salon_id = :s"
++        ), {"s": CLAIMED_SALON}).scalar()
++    assert count == 0, "a refused claim still issued a token"
++
++
++def test_the_guard_never_selects_a_column_salon_owners_does_not_have(client):
++    # The regression itself: `id` is not a column of salon_owners, whose
++    # primary key is composite. This asserts against the statements actually
++    # sent to the database, not against the source text.
++    statements = _statements(
++        client,
++        lambda: client.post("/api/owner/claim/request", json={"salon_id": CLAIMED_SALON}),
++    )
++
++    owner_queries = [s for s in statements if "salon_owners" in s]
++    assert owner_queries, "the guard did not query salon_owners at all"
++
++    columns = {c.name for c in SalonOwner.__table__.columns}
++    assert "id" not in columns, "schema changed — this test's premise needs revisiting"
++    for statement in owner_queries:
++        assert "SELECT id" not in statement, (
++            f"guard selects a non-existent column: {statement}"
++        )
++
++
++def test_a_database_fault_is_not_reported_as_a_conflict(client):
++    # 409 must mean "already claimed", never "the query failed". Point the
++    # guard at a table that does not exist and the request must fail loudly.
++    with client.engine.begin() as conn:
++        conn.execute(text("ALTER TABLE salon_owners RENAME TO salon_owners_moved"))
++
++    with pytest.raises(Exception) as excinfo:
++        client.post("/api/owner/claim/request", json={"salon_id": UNCLAIMED_SALON})
++
++    assert "409" not in str(excinfo.value)
++
++    with client.engine.begin() as conn:
++        conn.execute(text("ALTER TABLE salon_owners_moved RENAME TO salon_owners"))
++
++
++def test_a_missing_salon_is_still_404_not_409(client):
++    r = client.post("/api/owner/claim/request", json={"salon_id": 9999})
++    assert r.status_code == 404, r.text
