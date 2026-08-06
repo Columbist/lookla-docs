@@ -1,0 +1,178 @@
+diff --git a/docs/04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md b/docs/04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md
+index 8e1c6cd..c7670e3 100644
+--- a/docs/04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md
++++ b/docs/04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md
+@@ -1,7 +1,7 @@
+ ---
+ title: Personal Data Matrix — joint design basis for T-047 (erasure) and T-048 (retention)
+ status: Draft — for review
+-version: 0.6
++version: 0.7
+ owner: Zhuykov Andrey (data controller, hello@lookla.gr)
+ reviewers: []
+ last_updated: 2026-08-06
+@@ -57,7 +57,7 @@ External   EXTERNAL DELETE, or —
+ Condition  when this row applies at all, or —
+ ```
+ 
+-Every table in §2 carries all five columns — `Column | DB | Manual | External | Condition | Clock` — even where most are `—`. §2.6 uses the same shape with the Clock column named *Terminal event / clock*, since crawled data ends on an event rather than a fixed period. Version 0.4 declared the Condition column and then omitted it, so conditions went back into prose inside other cells.
++Every table in §2 uses the same six-column shape — `Column | DB | Manual | External | Condition | Clock` — even where most cells are `—`. §2.6 uses the same shape with the Clock column named *Terminal event / clock*, since crawled data ends on an event rather than a fixed period. Version 0.4 declared the Condition column and then omitted it, so conditions went back into prose inside other cells.
+ 
+ ### 1.1 What survives erasure is pseudonymised, not anonymised
+ 
+@@ -282,17 +282,34 @@ so re-seeing a row on every crawl for two years advances nothing. `crawler_sourc
+ 
+ *Bootstrap — the part that decides whether the first run is a cleanup or an incident.* Version 0.5 said "backfilled to `created_at`", which is a false claim: `created_at` records the first import, and the old schema never recorded a re-observation, so it is not evidence about whether the source still serves the row. Backfilling it would mark every row older than 24 months as unseen, and the first cleanup run would delete rows the crawler saw yesterday.
+ 
+-The column is therefore left `NULL` on migration, and:
++The column is therefore left `NULL` on migration. But "a `NULL` never age-deletes" cannot be the whole rule either, or a legacy row that the first complete baseline does *not* contain stays `NULL` for ever and becomes immortal: absent from every snapshot, never stamped, never eligible. "Absence of evidence is not evidence of absence" holds only until a complete snapshot exists — after that, absence *is* an observation, within that snapshot's scope.
++
++Three timestamps, not one:
++
++```text
++last_seen_at         set to crawl_started_at for every item the snapshot contained
++first_missing_at     set to baseline_completed_at the first time a verified complete
++                     snapshot covering this item's scope did NOT contain it;
++                     cleared the moment the item reappears
++baseline_completed_at recorded per scope, not globally
++```
++
++Rules:
+ 
+ ```text
+-NULL last_seen_at  never age-deletes — absence of evidence is not evidence
+-baseline           one complete successful snapshot per source stamps
+-                   only the items actually observed
+-cleanup            the job refuses to run for a source until that source
+-                   has a verified baseline
++observed in a verified snapshot  → last_seen_at advances, first_missing_at cleared
++absent from a verified snapshot  → first_missing_at set if not already set
++partial / failed / timed-out     → nothing changes, and the snapshot is not
++                                   recorded as verified
++age-delete eligible              → 24 months past the later of
++                                   last_seen_at and first_missing_at
++last_seen_at NULL and
++first_missing_at NULL            → never deleted: no snapshot has covered it yet
+ ```
+ 
+-A simpler alternative is acceptable if the baseline proves awkward: stamp existing rows with the **migration timestamp**, starting a fresh 24-month clock without asserting anything historical. It defers the removal of genuinely stale rows by up to two years, and that is the honest trade — the wrong version of this deletes live data on day one.
++*Scope.* "Verified complete" must be attached to the scope the crawl actually guarantees — this provider, for this salon, through the last page — never a vague global "source". A crawl that covered 200 of 6,400 salons says nothing about the other 6,200, and a scope defined loosely here is how a pagination cap turns into a mass deletion.
++
++A simpler alternative remains acceptable if the baseline proves awkward: stamp existing rows with the **migration timestamp**, starting a fresh 24-month clock without asserting anything historical. It defers removal of genuinely stale rows by up to two years — the honest trade, since the wrong version of this deletes live data on day one. It is an alternative to the `NULL` bootstrap, not a variant of it: under it no row is left `NULL`, so it does not collide with the rule above.
+ 
+ *Writers.* `DO NOTHING` becomes `DO UPDATE SET last_seen_at = :crawl_started_at` at all four import sites. The timestamp is the crawl's start, not `now()`, so every row from one crawl carries the same instant.
+ 
+@@ -305,19 +322,25 @@ A simpler alternative is acceptable if the baseline proves awkward: stamp existi
+ Acceptance tests for this clock:
+ 
+ ```text
+-seen again inside 24 months        → retained
+-not seen for > 24 months           → deleted
+-crawl failed or returned partially → clock does not advance, nothing deleted
+-source omitted one page            → no deletion attributable to that crawl
+-identity alias changed             → the existing clock continues, no reset
+-row never observed since migration → never deleted, whatever created_at says
++seen again inside 24 months           → retained
++not seen for > 24 months              → deleted
++crawl failed or returned partially    → no clock changes, baseline stays unverified
++source omitted one page               → no deletion attributable to that crawl
++identity alias changed                → the existing clock continues, no reset
++legacy row present in the baseline    → receives last_seen_at
++legacy row absent from the baseline   → survives now; eligible 24 months after
++                                        baseline_completed_at, not immortal
++item reappears after being missing    → first_missing_at cleared, clock restarts
++no snapshot has covered it yet        → never deleted, whatever created_at says
+ ```
+ 
+ **26,448 review rows, 26,156 with an author name. 6,245 of 7,481 crawler-source rows carry a review with a non-empty author display name** — and the payload holds more than the `reviews` table does: the same 6,245 rows carry a reviewer photo URI and a link to their profile on the source platform, neither of which is imported. See Appendix A.
+ 
+ ### 2.7 Tables with no personal data today
+ 
+-`alembic_version`, `salon_categories`, `salon_tags`, `service_categories`, `subscription_plans`, `tags`, `professional_availability` (once §2.4 deletes the subject's rows), `staff_schedules`, `crawler_sources` apart from `raw_data`.
++`alembic_version`, `salon_categories`, `salon_tags`, `service_categories`, `subscription_plans`, `tags`, `crawler_sources` apart from `raw_data`.
++
++`professional_availability` and `staff_schedules` are **not** in this list — both are a natural person's working schedule, classified `YES` in Appendix B, and both were listed here in an earlier version while being classified as personal data three sections away.
+ 
+ Three need a note rather than a dismissal:
+ 
+@@ -656,7 +679,6 @@ Version 0.4 used a single mutually-exclusive scale (personal / derived / technic
+ | `staff` | `is_active`, `source`, `id`, `salon_id` | YES | technical / business key |
+ | `translation_cache` | `source_text`, `translated_text` | COND | free text — empty and unwritten; dropped by T-048 |
+ | `translation_cache` | everything else | COND | technical |
+-
+ | `staff_schedules` | `staff_id` | YES | pseudonymous identifier |
+ | `staff_schedules` | `day_of_week`, `start_time`, `end_time`, `is_available`, `valid_from`, `valid_to` | YES | a named person's working schedule / operational |
+ | `staff_schedules` | `id` | YES | technical |
+diff --git a/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
+index dc2fd57..27bfd6e 100644
+--- a/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
++++ b/docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md
+@@ -1,7 +1,7 @@
+ ---
+ title: Privacy Operations — Manual SOPs and Legitimate Interest Assessments
+ status: Approved
+-version: 1.4
++version: 1.5
+ owner: Zhuykov Andrey (data controller, hello@lookla.gr)
+ reviewers: []
+ last_updated: 2026-08-06
+@@ -93,10 +93,16 @@ This document is the internal operational backing for the claims made in the pub
+      SELECT id FROM professionals WHERE user_id = :id;   -- keep these, call them :prof_ids
+      ```
+ 
+-     **(b) Compare with `IS DISTINCT FROM`, never with `<>` or a bare boolean.** `name`, `password_hash`, `is_active` and `is_email_verified` are all nullable in the schema, and in Postgres `name <> 'Deleted user'` is `UNKNOWN` when `name` is `NULL` — so a row left in a wrong state is silently excluded from the count and the check reports success.
++     **(b) Count the anchors that must *exist*, not only the values that must be right.** Every residual check has the shape `count(*) … WHERE id = :id AND (wrong values)`. If the row were deleted outright — the one thing this procedure must never do, since dependent history points at it — that count is zero and the check reports success. Absence and correctness are different questions and need different queries.
++
++     **(c) Compare with `IS DISTINCT FROM`, never with `<>` or a bare boolean.** `name`, `password_hash`, `is_active` and `is_email_verified` are all nullable in the schema, and in Postgres `name <> 'Deleted user'` is `UNKNOWN` when `name` is `NULL` — so a row left in a wrong state is silently excluded from the count and the check reports success.
+ 
+      ```sql
+      SELECT
++       (SELECT count(*) FROM users WHERE id = :id)                      AS user_anchor,
++       (SELECT count(*) FROM unnest(:prof_ids) e(id)
++          LEFT JOIN professionals p ON p.id = e.id
++         WHERE p.id IS NULL)                                            AS missing_prof_anchors,
+        (SELECT count(*) FROM users WHERE id = :id
+          AND (email             IS DISTINCT FROM ('deleted-user-' || id || '@lookla.gr')
+            OR name              IS DISTINCT FROM 'Deleted user'
+@@ -125,6 +131,7 @@ This document is the internal operational backing for the claims made in the pub
+          AND (name IS DISTINCT FROM 'Deleted professional'
+            OR slug IS DISTINCT FROM ('deleted-professional-' || id)
+            OR user_id IS NOT NULL
++           OR specialty IS NOT NULL
+            OR phone IS NOT NULL OR email IS NOT NULL OR instagram IS NOT NULL
+            OR bio IS NOT NULL OR bio_el IS NOT NULL
+            OR bio_ru IS NOT NULL OR bio_uk IS NOT NULL
+@@ -144,7 +151,17 @@ This document is the internal operational backing for the claims made in the pub
+        (SELECT count(*) FROM salon_owners WHERE user_id = :id)           AS owner_links;
+      ```
+ 
+-     Every count must be zero. `owner_links` is the single exception, and only under outcome 3 of step 5 — retained on a written basis with access revoked — and only when that decision is recorded. Anything else non-zero means the erasure is not finished.
++     Completion requires:
++
++     ```text
++     user_anchor          = 1          the tombstone still exists
++     missing_prof_anchors = 0          every captured profile still exists
++     every other count    = 0          nothing was left in a wrong state
++     ```
++
++     `owner_links` is the single exception to the last line, and only under outcome 3 of step 5 — retained on a written basis with access revoked — and only when that decision is recorded.
++
++     **Keep this query and step 1/step 8 in step with each other.** Every column an `UPDATE` above clears must appear in the predicate here; `specialty` was cleared by step 8 and unchecked here until 2026-08-06, and `apple_id`, `is_email_verified` and `client_email` each had the same gap earlier. When a column is added to either side, add it to the other in the same edit — this checklist has drifted from the schema three times, and each time the verification looked clean.
+ 
+   10. Record the completion date in the log.
+   11. The anonymized row (and any redacted messages/notes) will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 78873b7..d359a87 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -2959,8 +2959,8 @@ The T-060 Footer tripwire fired correctly — it pins the number of footer contr
+ - [ ] Confirm translation-cache columns (`Review.text_en/ru/uk`, `Service.name_en/ru/uk`) need no separate cleanup job — they are columns on the same row as the source content, so they are deleted automatically if/when the source row is deleted; no separate cache table exists
+ - [ ] `salon_owners` gains a `status`/`ended_at` column via an Alembic migration, landing **together with** one shared active-ownership predicate applied to every SQL and ORM reader (including `_owner_claimed_expr` in `salons.py`, which feeds the public `is_owner_claimed` badge), plus a tripwire test against new direct queries; the Privacy Policy's claim-retention wording is updated back to a fixed 12-month-post-end target once this ships
+ - [ ] **Observation clock** (`PERSONAL_DATA_MATRIX.md` §2.6.1): `reviews.last_seen_at` and `staff.last_seen_at`, or one `source_observations` table; all four crawler writers change `ON CONFLICT … DO NOTHING` to `DO UPDATE SET last_seen_at = :crawl_started_at`; a definition of a *complete* snapshot, since a partial, timed-out or failed crawl must advance nothing. Without this, no re-confirmation clock is computable and a retention job would delete rows the source still serves
+-- [ ] **Bootstrap contract**: `last_seen_at` is nullable and left `NULL` on migration. `created_at` records the first import and is *not* evidence that the source stopped serving the row, so backfilling it would delete rows the crawler saw yesterday. A `NULL` never age-deletes; the job refuses to run for a source until that source has one complete verified baseline snapshot. (Acceptable alternative: stamp the migration timestamp, starting a fresh clock without asserting history.)
+-- [ ] Tests: seen inside the window → retained; not seen past it → deleted; failed or partial crawl → clock unchanged and nothing deleted; a page omitted by the source → no deletion attributable to that crawl; identity alias changed → existing clock continues; **row never observed since migration → never deleted, whatever `created_at` says**
++- [ ] **Bootstrap contract**: `last_seen_at` nullable and left `NULL` on migration — `created_at` records the first import and is not evidence that the source stopped serving the row, so backfilling it would delete rows the crawler saw yesterday. But `NULL` alone would make a legacy row absent from every snapshot immortal, so three timestamps are needed: `last_seen_at`, `first_missing_at` (set when a *verified complete* snapshot covering that scope does not contain the item, cleared when it reappears), and `baseline_completed_at` per scope. Eligibility is 24 months past the later of the first two; a row no snapshot has yet covered is never deleted. "Verified complete" is scoped to provider + salon + last page, never a vague global source. (Acceptable alternative: stamp the migration timestamp — under it no row is left `NULL`.)
++- [ ] Tests: seen inside the window → retained; not seen past it → deleted; failed or partial crawl → no clock changes and the baseline stays unverified; a page omitted by the source → no deletion attributable to that crawl; identity alias changed → existing clock continues; legacy row in the baseline → gets `last_seen_at`; **legacy row absent from the baseline → survives now, eligible 24 months after `baseline_completed_at`**; item reappears → `first_missing_at` cleared; no snapshot has covered it yet → never deleted
+ - [ ] The tombstone-anchor GC of §1.2: a `users`/`professionals` row whose last dependent row has aged out, with no evidence hold open, is deleted
+ 
+ ---

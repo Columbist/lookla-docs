@@ -1,10 +1,10 @@
 ---
 title: Privacy Operations — Manual SOPs and Legitimate Interest Assessments
 status: Approved
-version: 1.0
+version: 1.5
 owner: Zhuykov Andrey (data controller, hello@lookla.gr)
 reviewers: []
-last_updated: 2026-07-17
+last_updated: 2026-08-06
 related_documents:
   - 04_ARCHITECTURE/SECURITY.md
   - 04_ARCHITECTURE/DATA_FLOW.md
@@ -34,25 +34,137 @@ This document is the internal operational backing for the claims made in the pub
 
 **Step 4 — Execute the request, by type:**
 
-- **Access / export:** query and hand the requester a plain-text or JSON summary of: `users` row (excluding `password_hash`), `messages` where they are sender, `availability_requests`/`appointments` where they are the client, `reports` they filed, `salon_owners` rows linking them to a salon. Send via the same email thread.
+- **Access / export:** the export walks **the same matrix as erasure** (`PERSONAL_DATA_MATRIX.md` §2), not a shorter hand-written list — a subject whose professional profile, webhooks, moderation submissions or second-role records were omitted has not received their data. Cover at minimum: the `users` row (excluding `password_hash`), `messages` where they are sender, `conversations` they belong to, `availability_requests`/`appointments` where they are the client, `reports` they filed, `moderation_queue` rows they submitted, `salon_owners` rows linking them to a salon, `professionals` and its child rows if they are a professional, and `webhooks` they own. Alongside the data itself, state the **purposes**, the **categories**, the **recipients** and the **retention period** for each — a copy of the data alone is an incomplete answer. Send via the same email thread.
 
 - **Rectification:** update the specific field(s) directly (`UPDATE users SET name = :new WHERE id = :id;` etc.) after confirming the correction with the requester.
 
 - **Erasure (account deletion), target: 30 days from request.**
-  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **anonymize in place**, not hard-delete the row. This is a checklist, not a single step — every item below must be worked through, not just the `users` row:
+  Because several tables have a `NOT NULL` foreign key to `users.id` (e.g. `messages.sender_user_id`, confirmed via `chat.py`'s `JOIN users u ON m.sender_user_id = u.id`), a hard `DELETE FROM users` would break referential integrity and destroy the *other* party's conversation history in a shared conversation. The MVP approach is **pseudonymise in place** (previously described here as "anonymize"), not hard-delete the row — the stable `users.id` and the history referencing it survive on purpose, so the result reduces risk without taking the data outside the protection regime. Three constraints (`messages.sender_user_id`, `conversations.client_user_id`, `claiming_tokens.user_id` — all `NOT NULL` with `ON DELETE NO ACTION`) mean the database refuses a **direct** hard delete while those dependent rows exist. That is not the same as the delete being impossible: the dependent rows could be deleted first. Lookla deliberately preserves the shared history instead, so it pseudonymises the anchor rather than destroying the other party's record. The constraint makes the shortcut unavailable; the choice is still a choice, and it is made on those grounds. This is a checklist, not a single step — every item below must be worked through, not just the `users` row:
 
-  1. **`users` row** — `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, is_active = false WHERE id = :id;` — clears email, password, name, phone, WhatsApp, Viber, avatar, and the Google account ID (`sub`) in one statement, and disables login.
-  2. **Verification/reset tokens** — `DELETE FROM email_verifications WHERE user_id = :id;` and `DELETE FROM password_resets WHERE user_id = :id;`.
+  1. **`users` row** — `UPDATE users SET email = 'deleted-user-' || id || '@lookla.gr', password_hash = '', name = 'Deleted user', phone = NULL, viber_phone = NULL, whatsapp_phone = NULL, avatar_url = NULL, google_id = NULL, apple_id = NULL, is_active = false, is_email_verified = false WHERE id = :id;` — clears email, password, name, phone, WhatsApp, Viber, avatar, and **both** federated identities (`google_id` and `apple_id`) in one statement, and disables login. `apple_id` and `is_email_verified` were both missing from this statement until 2026-08-06 — leaving `is_email_verified` true asserts that an address nobody controls was confirmed.
+  2. **Verification/reset/claim tokens** — `DELETE FROM email_verifications WHERE user_id = :id;`, `DELETE FROM password_resets WHERE user_id = :id;` and `DELETE FROM claiming_tokens WHERE user_id = :id;`. The last one was missing from this checklist until 2026-08-06; it is `NOT NULL` with `ON DELETE NO ACTION`, so it also blocks any hard delete.
   3. **Sessions** — `DELETE FROM refresh_tokens WHERE user_id = :id;` (also sign the user out by invalidating the `access_token`/`refresh_token` cookies if they still hold an active browser session).
   4. **Reports** — `UPDATE reports SET reporter_user_id = NULL WHERE reporter_user_id = :id;` (the `reporter_ip` and report content stay, per the report-retention target below and the anti-abuse legitimate interest — only the link to this specific person is removed).
-  5. **Salon-owner claim associations** — review `salon_owners` rows for this `user_id` manually before touching them; removing a live salon's owner link has a business-visible effect on that salon's "Owner verified" status (T-011). Confirm with the requester whether they also want the salon-owner relationship removed, or only their personal account data.
-  6. **Availability requests / appointments** — for rows where `client_user_id = :id`, anonymize `client_name` and `client_phone` on the row itself (same placeholder pattern as step 1), rather than deleting the row outright — a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with. Also check `service_notes`/`reply_text` on these rows for free text — see step 7.
+  5. **Salon-owner claim associations — a completion blocker, not a courtesy question.** `salon_owners.user_id` is `ON DELETE CASCADE`, but this procedure never deletes the `users` row, so the cascade never fires and the row survives. Every reader treats its existence as an *active* ownership — the claim guard, `_require_ownership`, chat access and unread counters, booking access, subscription ownership, and the public "Owner verified" badge — so a pseudonymised account would keep owner access to a live salon. Resolve as exactly one of three, and record which and why:
+     1. **transferred** to another verified account;
+     2. **ended** — until the `ended_at` column exists (T-048), this means `DELETE FROM salon_owners WHERE user_id = :id AND salon_id = :sid;`, which flips that salon's "Owner verified" state, so tell the salon;
+     3. **retained** on a separately written basis — and even then access is revoked, because a pseudonymised account must never authorise anything.
+
+     Do not mark the erasure complete while this is unresolved.
+  6. **Availability requests / appointments** — for rows where `client_user_id = :id`, apply the exact operations below — the name takes a placeholder, the contact fields are cleared, and they are not the same operation:
+
+    ```sql
+    UPDATE availability_requests SET client_name = 'Deleted user', client_phone = NULL
+     WHERE client_user_id = :id;
+    UPDATE appointments SET client_name = 'Deleted user', client_phone = NULL, client_email = NULL
+     WHERE client_user_id = :id;
+    ```
+
+    rather than deleting the rows outright — a salon may have a legitimate business reason to retain the fact that an appointment happened, distinct from *who* it was with. Also check `service_notes`, `reply_text` and `preferred_dates` on availability requests, and `notes` and `cancellation_reason` on appointments, for free text — see step 7. `client_email`, `preferred_dates`, `notes` and `cancellation_reason` were all missing from this step until 2026-08-06.
   7. **Free text — messages and notes, reviewed manually, not auto-scrubbed.** Replacing the `users` row does not remove personal data the person may have *typed into free text* elsewhere — a phone number or full name written directly into a message body or an availability-request note survives step 1 untouched. There is no automated free-text PII scrubber today; this step is a manual read-through, not optional:
      - Read every `messages.body` where `sender_user_id = :id` (or where the conversation involves this user, if reviewing from the other direction). Where a message contains personal data typed by the requester (a phone number, an email, a full name), redact only that specific text in place (`UPDATE messages SET body = '[redacted]' WHERE id = :message_id;` or a targeted string replacement) — do not delete the surrounding message or conversation, which would remove the other party's legitimate record of what was discussed.
      - Read `service_notes` and `reply_text` on this user's `availability_requests` rows for the same reason, and redact in place if personal data is found beyond the already-anonymized `client_name`/`client_phone` fields.
      - Record in the completion log which messages/notes (if any) were redacted, separately from the account-level anonymization — this is a distinct action with its own judgment call, not automatic.
-  8. Record the completion date in the log.
-  9. The anonymized row (and any redacted messages/notes) will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
+  8. **Second roles — the account may not only be a client.** Check and act on each, added 2026-08-06:
+     - `professionals` where `user_id = :id` — a self-registered professional's public profile is **not** touched by step 1. `name` is `NOT NULL`, so it takes a placeholder, not a `NULL`; `slug` is a public URL derived from the name, so it takes a unique non-identifying value rather than being cleared:
+
+       ```sql
+       UPDATE professionals SET
+         name = 'Deleted professional',
+         slug = 'deleted-professional-' || id,
+         user_id = NULL, specialty = NULL, phone = NULL, email = NULL,
+         instagram = NULL, base_city = NULL,
+         bio = NULL, bio_el = NULL, bio_ru = NULL, bio_uk = NULL,
+         base_lat = NULL, base_lng = NULL, service_radius_km = NULL,
+         does_home_visits = false, has_home_studio = false,
+         is_active = false, is_verified = false, needs_review = false
+       WHERE user_id = :id;
+       ```
+
+       Then delete the matching `professional_social_links`, `professional_availability` and `professional_portfolio` rows. Do not delete the `professionals` row itself — it is referenced by conversations, requests, appointments and reports.
+     - `webhooks` where `owner_user_id = :id` — disable, revoke the `secret`, delete the row. Never leave an active integration without an owner.
+     - `moderation_queue` where `submitter_user_id = :id` — null the submitter and read `content_text`, which is a verbatim copy of the user's content taken at submission and is not touched by redacting the original.
+     - If the account is an **administrator**: `UPDATE reports SET resolved_by = NULL WHERE resolved_by = :id;` and `UPDATE moderation_queue SET reviewed_by = NULL WHERE reviewed_by = :id;` — the decision and its timestamp stay as an unattributed audit record.
+  9. **Verify before closing.** Two things make this check trustworthy, and both were missing from the first version of it:
+
+     **(a) Capture the professional ids *before* step 8 runs.** That step sets `professionals.user_id = NULL`, which destroys the only link back to the subject — after it, no query can tell whether the profile was properly tombstoned. Record the ids first, in the request log:
+
+     ```sql
+     SELECT id FROM professionals WHERE user_id = :id;   -- keep these, call them :prof_ids
+     ```
+
+     **(b) Count the anchors that must *exist*, not only the values that must be right.** Every residual check has the shape `count(*) … WHERE id = :id AND (wrong values)`. If the row were deleted outright — the one thing this procedure must never do, since dependent history points at it — that count is zero and the check reports success. Absence and correctness are different questions and need different queries.
+
+     **(c) Compare with `IS DISTINCT FROM`, never with `<>` or a bare boolean.** `name`, `password_hash`, `is_active` and `is_email_verified` are all nullable in the schema, and in Postgres `name <> 'Deleted user'` is `UNKNOWN` when `name` is `NULL` — so a row left in a wrong state is silently excluded from the count and the check reports success.
+
+     ```sql
+     SELECT
+       (SELECT count(*) FROM users WHERE id = :id)                      AS user_anchor,
+       (SELECT count(*) FROM unnest(:prof_ids) e(id)
+          LEFT JOIN professionals p ON p.id = e.id
+         WHERE p.id IS NULL)                                            AS missing_prof_anchors,
+       (SELECT count(*) FROM users WHERE id = :id
+         AND (email             IS DISTINCT FROM ('deleted-user-' || id || '@lookla.gr')
+           OR name              IS DISTINCT FROM 'Deleted user'
+           OR password_hash     IS DISTINCT FROM ''
+           OR is_active         IS DISTINCT FROM false
+           OR is_email_verified IS DISTINCT FROM false
+           OR phone IS NOT NULL OR viber_phone IS NOT NULL
+           OR whatsapp_phone IS NOT NULL OR avatar_url IS NOT NULL
+           OR google_id IS NOT NULL OR apple_id IS NOT NULL))            AS users_residual,
+       (SELECT count(*) FROM refresh_tokens      WHERE user_id = :id)    AS sessions,
+       (SELECT count(*) FROM email_verifications WHERE user_id = :id)    AS verifications,
+       (SELECT count(*) FROM password_resets     WHERE user_id = :id)    AS resets,
+       (SELECT count(*) FROM claiming_tokens     WHERE user_id = :id)    AS claim_tokens,
+       (SELECT count(*) FROM webhooks        WHERE owner_user_id = :id)  AS webhooks,
+       (SELECT count(*) FROM reports
+         WHERE reporter_user_id = :id OR resolved_by = :id)              AS report_links,
+       (SELECT count(*) FROM moderation_queue
+         WHERE submitter_user_id = :id OR reviewed_by = :id)             AS moderation_links,
+       (SELECT count(*) FROM appointments WHERE client_user_id = :id
+         AND (client_name IS DISTINCT FROM 'Deleted user'
+           OR client_phone IS NOT NULL OR client_email IS NOT NULL))     AS appointment_residual,
+       (SELECT count(*) FROM availability_requests WHERE client_user_id = :id
+         AND (client_name IS DISTINCT FROM 'Deleted user'
+           OR client_phone IS NOT NULL))                                 AS request_residual,
+       (SELECT count(*) FROM professionals WHERE id = ANY(:prof_ids)
+         AND (name IS DISTINCT FROM 'Deleted professional'
+           OR slug IS DISTINCT FROM ('deleted-professional-' || id)
+           OR user_id IS NOT NULL
+           OR specialty IS NOT NULL
+           OR phone IS NOT NULL OR email IS NOT NULL OR instagram IS NOT NULL
+           OR bio IS NOT NULL OR bio_el IS NOT NULL
+           OR bio_ru IS NOT NULL OR bio_uk IS NOT NULL
+           OR base_city IS NOT NULL OR base_lat IS NOT NULL OR base_lng IS NOT NULL
+           OR service_radius_km IS NOT NULL
+           OR does_home_visits IS DISTINCT FROM false
+           OR has_home_studio  IS DISTINCT FROM false
+           OR is_active        IS DISTINCT FROM false
+           OR is_verified      IS DISTINCT FROM false
+           OR needs_review     IS DISTINCT FROM false))                  AS professional_residual,
+       (SELECT count(*) FROM professional_portfolio
+         WHERE professional_id = ANY(:prof_ids))                         AS prof_portfolio,
+       (SELECT count(*) FROM professional_social_links
+         WHERE professional_id = ANY(:prof_ids))                         AS prof_social,
+       (SELECT count(*) FROM professional_availability
+         WHERE professional_id = ANY(:prof_ids))                         AS prof_availability,
+       (SELECT count(*) FROM salon_owners WHERE user_id = :id)           AS owner_links;
+     ```
+
+     Completion requires:
+
+     ```text
+     user_anchor          = 1          the tombstone still exists
+     missing_prof_anchors = 0          every captured profile still exists
+     every other count    = 0          nothing was left in a wrong state
+     ```
+
+     `owner_links` is the single exception to the last line, and only under outcome 3 of step 5 — retained on a written basis with access revoked — and only when that decision is recorded.
+
+     **Keep this query and step 1/step 8 in step with each other.** Every column an `UPDATE` above clears must appear in the predicate here; `specialty` was cleared by step 8 and unchecked here until 2026-08-06, and `apple_id`, `is_email_verified` and `client_email` each had the same gap earlier. When a column is added to either side, add it to the other in the same edit — this checklist has drifted from the schema three times, and each time the verification looked clean.
+
+  10. Record the completion date in the log.
+  11. The anonymized row (and any redacted messages/notes) will also age out of any *pre*-anonymization backup within 7 days, per the already-published backup rotation.
 
 - **Restriction:** set `is_active = false` on the `users` row (already-existing column) to block login/authentication while a dispute is resolved, without deleting anything.
 
@@ -83,7 +195,7 @@ Referenced by the public policy's Section 12 (Children): *"If we learn that a mi
 
 **Step 2 — Verification.** Request reasonable confirmation from whoever raised the concern, or from the account holder directly (e.g. asking them to confirm their age). This is *not* a formal ID-check process — consistent with the public policy not claiming a technical age-verification system exists. The bar is "reasonable," not "certain."
 
-**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them). Work through the full checklist in Section 1 step "Erasure," items 1–7, exactly as for a self-requested erasure — including the mandatory free-text review of this account's messages and availability-request notes (Section 1, item 7), since a minor may have typed a real name, phone number, or other identifying detail directly into a message even though the account profile itself is anonymized. Additionally for this case specifically:
+**Step 3 — Once confirmed, act promptly** (target: within 5 business days of confirmation — a proactive child-safety action, handled faster than the general 1-month data-subject-request SLA, which governs requests *from* the account holder, not reports *about* them). Work through **every item of the current erasure checklist** in Section 1 (do not cite a fixed range of item numbers here — the checklist has gained items twice, and a fixed range silently excludes them), exactly as for a self-requested erasure — including the mandatory free-text review of this account's messages and availability-request notes (Section 1, item 7), since a minor may have typed a real name, phone number, or other identifying detail directly into a message even though the account profile itself is anonymized. Additionally for this case specifically:
 1. `UPDATE users SET is_active = false WHERE id = :id;` — do this *first*, immediately on confirmation, before working through the rest of the checklist, to stop further use of the account without waiting for the full erasure process to complete.
 2. If an appointment tied to this account is still pending (in the future), the controller manually contacts the salon to inform them the booking is cancelled — there is no automated appointment-cancellation notification today (a gap already disclosed in the public policy's Security section, regarding appointment confirmations generally).
 3. Any salon-owner claim linked to the account is reviewed as a priority, not deferred — a minor should not be a salon's registered owner.
@@ -100,8 +212,8 @@ The public policy's Section 2 states five processing activities rely on Lookla's
 
 - **Purpose:** displaying attributed reviews is the core trust mechanism of a review-aggregating marketplace — an unattributed review carries far less credibility for a user choosing a salon.
 - **Necessity:** the reviewer's name is already public on the source platform (typically Google), which the reviewer chose to post to. Lookla republishes what is already public rather than collecting anything new; there is no less intrusive way to provide the same trust signal (a fully anonymized review would defeat the purpose).
-- **Balancing:** reviewers are not Lookla users and have no direct relationship with Lookla, which weighs against processing. In favor: the review was already voluntarily made public by the reviewer on a comparable platform for a comparable purpose (helping other consumers), so the reuse is not a surprising or out-of-context one; Lookla discloses the source ("Source: Google Reviews," T-012) rather than obscuring provenance; no additional reviewer data is collected beyond name, rating, and review text (no photo, no profile link, no reviewer ID).
-- **Conclusion:** legitimate interest applies. Mitigation already in place: source attribution label. Any reviewer who objects can be accommodated via `hello@lookla.gr` — removal of a specific review on a legitimate objection is operationally simple (delete the `reviews` row).
+- **Balancing:** reviewers are not Lookla users and have no direct relationship with Lookla, which weighs against processing. In favor: the review was already voluntarily made public by the reviewer on a comparable platform for a comparable purpose (helping other consumers), so the reuse is not a surprising or out-of-context one; Lookla discloses the source ("Source: Google Reviews," T-012) rather than obscuring provenance; no additional reviewer data is **displayed or imported** beyond name, rating and review text. **Corrected 2026-08-06:** the earlier claim that no photo and no profile link are *collected* was wrong. The stored crawl payload (`crawler_sources.raw_data`) retains `authorAttribution.photoUri` and `authorAttribution.uri` — the reviewer's profile photo URL and a link to their public profile on the source platform — for 6,245 of 7,481 rows. Neither is shown, imported into `reviews`, or used to identify anyone, but both are retained, and retention is collection. This weighs against the balancing test as it stood, and the honest position until the data is removed is that we hold more than the purpose requires. T-076 removes both fields from stored payloads; the public Privacy Policy was corrected in all four locales on the same date rather than waiting for that ticket.
+- **Conclusion:** legitimate interest applies. Mitigation already in place: source attribution label. Any reviewer who objects can be accommodated via `hello@lookla.gr` — but **removal is not the single-step operation this document previously described.** See the corrected procedure in §5 below; the earlier wording ("delete the `reviews` row") was wrong in both halves and is retracted.
 
 ### 4.2 Professional/staff names
 
@@ -135,6 +247,25 @@ The public policy's Section 2 states five processing activities rely on Lookla's
 
 ---
 
-## 5. Tracking
+## 5. Review objection: interim removal procedure (corrected 2026-08-06)
+
+This section replaces the claim in §4.1 that honouring a reviewer's objection is a single `DELETE FROM reviews`. Two facts, established by reading the schema and the crawler (see `PERSONAL_DATA_MATRIX.md` §4.1):
+
+1. **The review exists in two places.** The author name and text are also inside `crawler_sources.raw_data`, for 6,245 of 7,481 rows — together with a reviewer photo URI and a link to their profile, neither of which the `reviews` table imports. Deleting the `reviews` row leaves that copy.
+2. **The delete does not hold.** The crawler's insert is guarded by `ON CONFLICT (source, source_id) DO NOTHING`, which conflicts on nothing once the row is gone, so the next enrichment run reinserts the review with the same author name.
+
+A durable mechanism (a suppression record checked before every import) is tracked as **T-076** and is not built yet. Until it ships, every objection is honoured manually, in this order:
+
+1. Record the objection in the private log with the review's `source` and `source_id` — this is the suppression record until the table exists.
+2. `DELETE FROM reviews WHERE source = :source AND source_id = :source_id;`
+3. Remove the matching element from `crawler_sources.raw_data` for that salon, so the copy does not survive.
+4. **After the next crawler run for that salon, check the review has not returned.** If it has, repeat steps 2–3 and note the recurrence in the log — that is the signal T-076 has become urgent for this reviewer.
+5. Confirm to the objector only once step 4 has passed. Do not confirm removal on the strength of step 2 alone.
+
+Until T-076 ships, the honest description of the guarantee is: removal on objection is performed manually and re-verified after the next crawl, not enforced automatically.
+
+---
+
+## 6. Tracking
 
 A private, dated log of data-subject requests, minor-account reports, and monthly cleanup runs is kept by the controller outside this (public) documentation tree — this file records the *procedure*, not a live register of individual requests, which would itself be personal data.

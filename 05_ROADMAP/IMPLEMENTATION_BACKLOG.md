@@ -2957,7 +2957,75 @@ The T-060 Footer tripwire fired correctly — it pins the number of footer contr
 - [ ] A scheduled job (cron, Celery beat, or equivalent) exists that purges each of the above once past its retention target
 - [ ] Each job is tested against a fixture with rows both inside and outside the retention window
 - [ ] Confirm translation-cache columns (`Review.text_en/ru/uk`, `Service.name_en/ru/uk`) need no separate cleanup job — they are columns on the same row as the source content, so they are deleted automatically if/when the source row is deleted; no separate cache table exists
-- [ ] `salon_owners` gains a `status`/`ended_at` column via an Alembic migration, and the Privacy Policy's claim-retention wording is updated back to a fixed 12-month-post-end target once this ships
+- [ ] `salon_owners` gains a `status`/`ended_at` column via an Alembic migration, landing **together with** one shared active-ownership predicate applied to every SQL and ORM reader (including `_owner_claimed_expr` in `salons.py`, which feeds the public `is_owner_claimed` badge), plus a tripwire test against new direct queries; the Privacy Policy's claim-retention wording is updated back to a fixed 12-month-post-end target once this ships
+- [ ] **Observation clock** (`PERSONAL_DATA_MATRIX.md` §2.6.1): `reviews.last_seen_at` and `staff.last_seen_at`, or one `source_observations` table; all four crawler writers change `ON CONFLICT … DO NOTHING` to `DO UPDATE SET last_seen_at = :crawl_started_at`; a definition of a *complete* snapshot, since a partial, timed-out or failed crawl must advance nothing. Without this, no re-confirmation clock is computable and a retention job would delete rows the source still serves
+- [ ] **Bootstrap contract**: `last_seen_at` nullable and left `NULL` on migration — `created_at` records the first import and is not evidence that the source stopped serving the row, so backfilling it would delete rows the crawler saw yesterday. But `NULL` alone would make a legacy row absent from every snapshot immortal, so three timestamps are needed: `last_seen_at`, `first_missing_at` (set when a *verified complete* snapshot covering that scope does not contain the item, cleared when it reappears), and `baseline_completed_at` per scope. Eligibility is 24 months past the later of the first two; a row no snapshot has yet covered is never deleted. "Verified complete" is scoped to provider + salon + last page, never a vague global source. (Acceptable alternative: stamp the migration timestamp — under it no row is left `NULL`.)
+- [ ] Tests: seen inside the window → retained; not seen past it → deleted; failed or partial crawl → no clock changes and the baseline stays unverified; a page omitted by the source → no deletion attributable to that crawl; identity alias changed → existing clock continues; legacy row in the baseline → gets `last_seen_at`; **legacy row absent from the baseline → survives now, eligible 24 months after `baseline_completed_at`**; item reappears → `first_missing_at` cleared; no snapshot has covered it yet → never deleted
+- [ ] The tombstone-anchor GC of §1.2: a `users`/`professionals` row whose last dependent row has aged out, with no evidence hold open, is deleted
+
+---
+
+### T-076 — Review suppression: make an objection stick
+**Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
+**Dependencies:** none (filed from the T-047/T-048 data-matrix design)
+
+LIA 4.1 promises that a reviewer's objection is honoured by deleting the `reviews` row. Both halves of that fail, established against the live schema and the crawler:
+
+- the author name and text also live in `crawler_sources.raw_data` for **6,245 of 7,481** rows, alongside a reviewer photo URI and a profile link the `reviews` table never imports;
+- re-import is guarded by `ON CONFLICT (source, source_id) DO NOTHING`, which conflicts on nothing once the row is gone — so the next enrichment run reinserts the review with the same author name.
+
+The interim manual procedure is now documented in `PRIVACY_OPERATIONS.md` §5, including the re-check after the next crawl. This ticket replaces it.
+
+**`(source, source_id)` is not a sufficient key.** Only Google has a stable upstream identity (`g_<placeId>_<review resource name>`, 25,332 of 26,448 rows). Treatwell derives it from content every time — `md5(f"tw:{salon_id}:{author}:{pub}:{body[:30]}")` — and Fresha falls back to the same shape when the upstream id is absent. Editing the author name or the first 30 characters of the text produces a different `source_id`, so a suppressed review returns as a new row while the old key stays dutifully suppressed.
+
+**Acceptance Criteria:**
+- [ ] A suppression record that survives deletion of the `reviews` row and outlives the source's ability to re-serve the review
+- [ ] Uses the upstream immutable id wherever the source exposes one
+- [ ] A documented stable suppression identity for each fallback path, and defined behaviour when `source_id` is null or empty
+- [ ] Old identities retained as aliases when the id strategy changes, so existing suppressions keep matching
+- [ ] Every import path consults it *before* insert — `enrichment.py` (two sites) and `treatwell.py`
+- [ ] Suppressing a review also strikes the matching element from `crawler_sources.raw_data`
+- [ ] Re-import test **mutates** the author name, the body and the rating — re-importing an identical payload only proves the hash is deterministic
+- [ ] A test that a change of id strategy does not silently unsuppress
+- [ ] Removes `authorAttribution.photoUri` and `authorAttribution.uri` from stored payloads (6,245 rows) and from future writes — these are retained today with no purpose, and the Privacy Policy was corrected in all four locales on 2026-08-06 to disclose them until this ships
+- [ ] LIA 4.1 and `PRIVACY_OPERATIONS.md` §5 updated to describe the durable mechanism once it exists
+
+---
+
+### T-077 — Search queries are sent to OpenAI and no legal basis names them
+**Priority:** P2 | **Owner:** PRODUCT/BE | **Estimate:** 1h | **Epic:** EPIC-09
+**Dependencies:** T-017
+
+`_translate_query()` in `salons.py` sends the **user's search query** to OpenAI. LIA 4.5 covers "public review/service text" and its balancing test rests on the content already being public — which a search query is not. Either the assessment is extended to cover queries (with its own necessity and balancing reasoning), or the query is translated without leaving the host, or the practice stops.
+
+**Acceptance Criteria:**
+- [ ] A decision recorded: extend the LIA, change the implementation, or stop
+- [ ] If the LIA is extended, the public Privacy Policy's OpenAI disclosure is checked to match what is actually sent
+
+---
+
+### T-078 — The duplicate-claim guard queries a column that does not exist
+**Priority:** P1 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+**Dependencies:** none (found while writing the T-047/T-048 data matrix)
+
+`owner.py:35` guards against claiming an already-claimed salon with:
+
+```sql
+SELECT id FROM salon_owners WHERE salon_id = :sid
+```
+
+`salon_owners` has no `id` column — only `(user_id, salon_id)`. Verified against the production schema:
+
+```text
+ERROR:  column "id" does not exist
+```
+
+So `POST /owner/claim/request` raises instead of returning its intended `409 Salon already claimed`, and the guard never blocks a second claim. Every other reader of this table uses `SELECT 1` and is unaffected.
+
+**Acceptance Criteria:**
+- [ ] The guard selects an existing column and returns 409 as intended
+- [ ] A test claims a salon twice and asserts 409 on the second attempt — asserting the status code, not merely that an error occurred
+- [ ] The other `salon_owners` readers are checked for the same class of error
 
 ---
 
