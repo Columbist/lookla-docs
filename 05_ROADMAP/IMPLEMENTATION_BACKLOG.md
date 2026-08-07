@@ -2965,6 +2965,86 @@ The T-060 Footer tripwire fired correctly — it pins the number of footer contr
 
 ---
 
+### T-080 — Review connector: take the operator out of the relay
+**Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-11 | **Estimate:** 1d
+**Dependencies:** none
+
+Today every review round costs the operator two manual relays — console to architect and back. At five to seven rounds per ticket that is ten to fourteen interruptions, each able to stall for hours. The review itself earns its keep (it caught the `request`/`verify` race, the lost generation marker, and a smoke test that could have destroyed production); the *relay* does not.
+
+#### Autonomy tiers
+
+The operator should be reached when they are genuinely needed, not when a step merely finished.
+
+```text
+T0  act, log only          docs, comments, added test coverage,
+                           revert to a known-good state
+T1  architect review,      code with no schema, auth, personal-data
+    auto-merge on approve  or firewall impact
+T2  architect review,      migrations, auth, personal data, firewall,
+    notify before apply    any production deploy
+T3  operator, always       credentials, DNS, payments, publishing legal
+                           text, anything externally irreversible,
+                           anything that spends money
+```
+
+#### Why the architect is not asked to fetch the diff itself
+
+The tempting design — post everything to GitHub, then ping the model to go and read it — does not work and does not save anything:
+
+- the repository is **private**, so the model cannot read it without being handed credentials, which is a worse trade than sending a diff;
+- content is billed as input tokens whether it arrives in the prompt or through a tool call, so fetching moves the cost rather than removing it, and adds a round trip.
+
+What does save money is sending **less**, and measured on this repository the numbers are blunt:
+
+```text
+T-047 branch diff        14 files, 5669 insertions
+  code + docs            ≈ 22,000 tokens
+  docs/.reviews/*.diff   ≈ 38,600 tokens   ← a copy of the same diff
+  overpaid               63% of the package
+```
+
+`docs/.reviews/T-0XX.diff` exists so a reviewer without repository access can read a diff. A connector that holds a `gh` token does not need it, so the practice stops for connector-reviewed PRs.
+
+Three further savings, in order of size:
+
+1. **Incremental rounds.** Round two onward sends the delta since the last reviewed SHA plus the previous findings — not the whole diff again. Our PRs run three to seven rounds, so this is where the budget actually goes.
+2. **Stable prefix.** System prompt and repository context first, volatile parts last, so provider-side prompt caching applies.
+3. **Model tiering.** A cheap model answers "were the findings addressed"; the strong model runs the full architectural pass only on a new head.
+
+#### Budget
+
+A ledger records tokens and cost per call. Telegram receives a running total every **$10** spent, and a daily ceiling stops the connector rather than letting it drift. `OPENAI_API_KEY` and `TELEGRAM_CHAT_ID` already exist — no new credentials.
+
+#### Limits are a state, not an error
+
+Hitting a provider limit is expected and must be survivable without a human:
+
+```text
+429 / rate limited        exponential backoff with jitter, honour Retry-After,
+                          keep waiting — this is not a failure
+insufficient quota        stop, notify Telegram, do not burn retries on it
+provider outage           back off, resume; the queue is on disk
+```
+
+The distinction matters: "wait and continue later" and "stop and fetch a human" look alike in a log and are opposite instructions. The queue is durable for the same reason the erasure ledger is — a pause must resume, not restart, and the same applies when the *developer* side hits a session limit mid-ticket.
+
+#### Deadlock
+
+At most **three** automated rounds per head. Beyond that the connector stops and sends the operator the disagreement, not the transcript. Two models can be endlessly polite to each other.
+
+**Acceptance Criteria:**
+- [ ] Tier is derived from the changed paths and recorded on the PR; T2 and T3 cannot auto-merge
+- [ ] A new head with green CI triggers exactly one review; a re-run without a new head triggers none
+- [ ] Round two onward sends the delta and the previous findings, not the whole diff
+- [ ] `docs/.reviews/*.diff` is excluded from every package
+- [ ] Cost ledger per call; Telegram notice each $10; a daily ceiling that halts the connector
+- [ ] Rate limits back off and resume without human involvement; quota exhaustion stops and notifies
+- [ ] The queue survives a restart mid-round and resumes rather than restarting
+- [ ] Three rounds without convergence escalates to the operator with a summary
+- [ ] The architect model is one config line — the reviewer stays a *different* model family from the developer on purpose, because correlated blind spots are the failure this whole loop exists to avoid
+
+---
+
 ### T-076 — Review suppression: make an objection stick
 **Priority:** P1 | **Owner:** BE | **Estimate:** 3h | **Epic:** EPIC-09
 **Dependencies:** none (filed from the T-047/T-048 data-matrix design)
