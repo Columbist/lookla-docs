@@ -3143,6 +3143,46 @@ No migration, so the rollback needs no data step.
 
 ---
 
+### Alembic target guard — a migration ran against production by accident
+
+**2026-08-06.** A migration intended for a disposable Postgres was applied to production. Two empty tables were created and `alembic_version` moved `0003 → 0004`; both were reverted the same day, with `alembic_version` back at `0003`, `to_regclass` NULL for both tables, 38 tables as before, and the API untouched (no rebuild was needed — the running image never referenced them).
+
+Nothing in the command was reckless in isolation:
+
+- it carried `DATABASE_URL=…`, which **nothing reads** — `env.py` builds its URL from `get_settings()`, itself assembled from `DB_USER`/`DB_HOST`/`DB_PORT`/`DB_NAME`;
+- it ran with `--network host`, where `.env`'s `DB_HOST=localhost` is the production server.
+
+Each half looked like an isolated run. The run never *checked* where it was; it found out by succeeding.
+
+#### The guard
+
+`alembic/env.py` now asks the server who it is — `current_database()`, `current_user`, `inet_server_addr()`, `inet_server_port()` — and compares that against an intention the caller had to state:
+
+```text
+ALEMBIC_DEPLOY_MODE        production | test    required, no default
+ALEMBIC_EXPECTED_DATABASE  the exact database name
+ALEMBIC_EXPECTED_USER      the exact role
+ALEMBIC_EXPECTED_SERVER    host:port as the server reports it
+```
+
+All four must be present and match before the migration transaction opens. A name alone is not an identity: `beauty_gr` on staging, on a restored backup cluster, or on whatever host a stale DSN points at answers to the same name, and a name-only check would have let all three through. Production mode is refused against anything that is not the application's own database; test mode is refused against it, and against any database whose name does not say `test`. `-x url=` and `-x url_env=` override the settings URL, the latter naming an environment variable so a password stays out of shell history and `ps`.
+
+Deploys must now pass both variables:
+
+```bash
+docker exec -e ALEMBIC_DEPLOY_MODE=production \
+            -e ALEMBIC_EXPECTED_DATABASE=beauty_gr \
+            beauty_api alembic upgrade head
+```
+
+#### Two things this turned up
+
+The first version of the guard read the probe query **on the migration connection**, which starts an implicit transaction alembic then does not own — every migration would have logged "Running upgrade" and committed nothing. Caught by checking the resulting rows rather than the log, the same way the T-074 counters were.
+
+And `0001` is a stamp placeholder: the production tables predate Alembic, so no database can be built from nothing and `upgrade head` on an empty database fails at `0002`. The migration smoke test stamps `0003` and exercises `0004`, which is self-contained.
+
+---
+
 ### T-079 — A claim token outlives the claim it was issued for
 **Priority:** P1 | **Owner:** BE | **Epic:** EPIC-09 | **Estimate:** 1h
 **Dependencies:** T-078 ✅ (unreachable until the claim guard was fixed)

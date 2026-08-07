@@ -188,7 +188,12 @@ docker exec beauty_db pg_dump -U postgres lookla | gzip > /opt/backups/lookla_pr
 
 # 2. Apply database migrations
 cd /root/beauty-gr/backend
-docker exec beauty_api alembic upgrade head
+docker exec \
+  -e ALEMBIC_DEPLOY_MODE=production \
+  -e ALEMBIC_EXPECTED_DATABASE=beauty_gr \
+  -e ALEMBIC_EXPECTED_USER=beauty \
+  -e ALEMBIC_EXPECTED_SERVER=172.18.0.7:5432 \
+  beauty_api alembic upgrade head
 
 # 3. Rebuild and redeploy frontend and backend
 docker buildx build -t lookla-api ./backend
