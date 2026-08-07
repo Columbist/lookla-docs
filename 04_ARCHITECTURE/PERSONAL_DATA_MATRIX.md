@@ -456,7 +456,11 @@ T-048's acceptance criteria state *"no separate cache table exists."* The table 
 
 Drop the table in T-048's migration and correct the criterion, so the next person reading the schema does not reasonably conclude that user text is cached and start writing there.
 
-Separately: `_translate_query()` in `salons.py` sends the **user's search query** to OpenAI. LIA 4.5 covers public review and service text and does not mention search queries. Flagged for policy review as **T-077**; not folded into either ticket here.
+**Correction, 2026-08-07.** Earlier versions of this section stated that `_translate_query()` sends the user's search query to OpenAI. It does not. `_translate_query` is a lookup against two local dictionaries (`CITY_SYNONYMS`, `SERVICE_SYNONYMS`) and makes no network call at all; the claim came from seeing `translate_batch` imported in the same file and joining two unrelated things. `AUDIT.md`, `DATA_FLOW.md` and `API_SPECIFICATION.md` all described it correctly, and this document contradicted them.
+
+What actually reaches OpenAI is `translate_batch`, called from exactly two places as of `24a079f` — service names and review text — which is what LIA 4.5 already covers. Both are content imported from public sources: **no text a Lookla user typed into the product** — a message, a report, a search query — reaches OpenAI.
+
+One tripwire remains, and it is the reason this section is not simply deleted: `services/moderation.py` contains `check_text`, which posts arbitrary text to OpenAI's moderation endpoint, and **nothing calls it**. Wiring it up would begin sending user-submitted content — messages, reports, review drafts — to a processor that no assessment covers. Whoever connects it extends LIA 4.5 and the public disclosure in the same change — and `backend/tests/test_openai_call_sites.py` fails until they do, because a sentence in a document does not fail a build.
 
 ## 5. Retention clocks must not have a NULL that means "forever"
 

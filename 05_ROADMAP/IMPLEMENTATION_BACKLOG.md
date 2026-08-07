@@ -3072,17 +3072,34 @@ The interim manual procedure is now documented in `PRIVACY_OPERATIONS.md` §5, i
 
 ---
 
-### T-077 — Search queries are sent to OpenAI and no legal basis names them
-**Priority:** P2 | **Owner:** PRODUCT/BE | **Estimate:** 1h | **Epic:** EPIC-09
-**Dependencies:** T-017
+### T-077 — ~~Search queries are sent to OpenAI~~ — closed, the premise was wrong
+**Priority:** — | **Owner:** — | **Epic:** EPIC-09
+**Status:** ✅ Closed 2026-08-07 as invalid. No code change was needed or made.
 
-`_translate_query()` in `salons.py` sends the **user's search query** to OpenAI. LIA 4.5 covers "public review/service text" and its balancing test rests on the content already being public — which a search query is not. Either the assessment is extended to cover queries (with its own necessity and balancing reasoning), or the query is translated without leaving the host, or the practice stops.
+The ticket claimed `_translate_query()` sends the user's search query to OpenAI. It does not, and never did. `_translate_query` is a lookup against two local dictionaries and makes no network call; the claim came from seeing `translate_batch` imported into the same file and joining two unrelated things while writing the T-047/T-048 matrix.
+
+Verified at `24a079f`, across the whole codebase — OpenAI is reached from exactly two places:
+
+```text
+services/translate.py   translate_batch  called twice, with service names and
+                                         review text — LIA 4.5 covers both
+services/moderation.py  check_text       called from nowhere
+```
+
+Both inputs are content imported from public sources. **No text a Lookla user typed into the product** — a message, a report, a search query — reaches OpenAI.
+
+`AUDIT.md`, `DATA_FLOW.md` and `API_SPECIFICATION.md` had all described `_translate_query` correctly as a synonym dictionary. The matrix contradicted three existing documents and stood for a day. That is worth more attention than the error: a claim about *this* codebase should be checked against it before being written down, and one that contradicts existing documentation should not survive being written.
+
+#### What was actually found
+
+`check_text` posts arbitrary text to OpenAI's moderation endpoint and has no callers. Dead today, and a real exposure the moment anyone wires it up: it would begin sending user-submitted content — messages, reports, review drafts — to a processor no assessment covers.
+
+Rather than leave that as prose nobody re-reads, `backend/tests/test_openai_call_sites.py` fails when a call site appears that this ticket did not account for. Adding one is then a deliberate act with an obligation attached: extend LIA 4.5 and the public disclosure in the same change.
 
 **Acceptance Criteria:**
-- [ ] A decision recorded: extend the LIA, change the implementation, or stop
-- [ ] If the LIA is extended, the public Privacy Policy's OpenAI disclosure is checked to match what is actually sent
-
----
+- [x] Every OpenAI call site enumerated and its input identified
+- [x] The false claim corrected wherever it was written
+- [x] The dead moderation path made to fail CI if it is wired up silently
 
 ### Privacy Policy correction — reviewer photo and profile link (deployed)
 
