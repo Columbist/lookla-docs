@@ -49,7 +49,11 @@ No non-residential professional or service address has been selected. **The oper
 
 Article 5 of Directive 2000/31/EC requires an information-society service to make easily, directly and permanently accessible: the provider's name, the geographic address at which it is established, contact details including email, and — where applicable — registration and VAT details.
 
-The document currently gives the name and `hello@lookla.gr`. **No geographic address is published, and none has been invented.** Publication is technically blocked until this is resolved.
+The document currently gives the name and `hello@lookla.gr`, plus `admin@lookla.gr` for legally significant communication — a distinct address, which is the operator's answer to question 6 below.
+
+**Update, 2026-08-10.** The operator supplied a geographic address and then advised that the physical address does not have to be published. It has accordingly been removed from the frontend entirely, rather than held unrendered: that module is compiled into what a browser downloads, so a value kept "for later" there is published anyway.
+
+**This is the one point on which the reviewer's confirmation is most needed in writing.** Article 5(1)(b) on its face requires the geographic address at which the provider is established, and the answer above departs from that reading. It may well be right — there are arguments about what "established" means for a natural person with no registered activity, and about what a supervisory authority requires in practice — but the file needs the reasoning from a Greek lawyer rather than a note that the question was asked and answered somewhere. Publication stays blocked until it is on file.
 
 Please advise on:
 
