@@ -3875,6 +3875,84 @@ Either way the misleading confirmation string goes.
 
 ---
 
+### T-083 — First public release as a read-only catalogue
+
+**Priority:** P0 | **Owner:** BE+FE | **Epic:** EPIC-11 | **Estimate:** 2d
+**Dependencies:** T-082 ✅. Gates M-01 launch.
+
+The first public release presents Lookla as a **directory**, not a platform:
+
+> Lookla shows reference information and helps you contact a salon directly.
+> Lookla does not take or confirm appointments, is not a party to any contract,
+> and takes no payments.
+
+Everything a visitor can do is read something and then leave to contact the
+business themselves. Nothing a *user* submits appears in public.
+
+#### Stays
+
+Search and browse; salon name, address, phone, website, hours, categories,
+basic services; **Call / WhatsApp / Visit website**; an email route for
+correcting or removing a listing; the legal pages; **imported reviews**; GA4
+behind consent.
+
+Reviews and GA4 were both considered for removal and deliberately kept —
+see the decision note below, because each keeps an obligation alive.
+
+#### Switched off
+
+| Capability | What it is today |
+|---|---|
+| User registration and accounts | open registration, `/api/auth/register` |
+| Messaging | conversations and messages between user and salon |
+| Claiming and owner self-editing | claim by emailed code, then live edits to name, contacts, address, services, hours, social links |
+| Payments | `/api/payments/*`; `/plans` answers **200 publicly today**, advertising €29 and €14 plans for a service that takes no payments |
+| Marketing email | any send not required by a transaction |
+
+Booking and availability were removed outright in T-082 rather than switched
+off, because the feature is out of scope rather than deferred.
+
+#### The rule this is built on
+
+**Every switch is enforced at the API, and the interface follows.** Hiding a
+control while the endpoint still answers is precisely the defect T-082 existed
+to fix: no page linked to the availability endpoint, and it still wrote rows
+for an anonymous caller. So a disabled capability answers **404** — not 403,
+which would advertise that the capability exists and is merely refusing.
+
+Switches are per capability, not one release-wide flag, because they come back
+in a stated order: **claim first, then user accounts and messaging, then
+booking and payments**. Re-enabling must be a configuration change with a
+review, not a code change.
+
+#### Decision note — what keeping reviews costs
+
+Removing user-visible reviews would have dropped most of the DSA moderation
+surface, reviewer personal data and the Google reviewer-data question from the
+first release. They are kept, so those obligations stay live: 26,204 review rows
+carry an author name and 6,338 crawler payloads carry a reviewer photo URI and
+profile link. Which makes **T-076 load-bearing for launch rather than
+post-launch** — the suppression record shipped, and the `raw_data` scrub did not.
+
+With accounts off, no review is user-submitted: every review in public was
+imported and published by Lookla. That is the editorial-catalogue position, and
+it should be what the Terms say.
+
+#### Acceptance
+
+- Each disabled capability answers 404 at the API, tested with the request an
+  anonymous caller would actually send.
+- No interface entry point to a disabled capability — asserted in tests, not by
+  inspection.
+- `/api/payments/plans` no longer publishes prices for a service that cannot
+  charge.
+- Re-enabling any capability is a settings change; a test fails if enforcement
+  is moved into the frontend only.
+- The four legal documents of the read-only model exist and are reachable:
+  Legal Notice, Privacy Policy, Cookie Policy, Website Terms.
+
+---
+
 ## P0 Critical Path (minimum viable launch sequence)
 
 ```
