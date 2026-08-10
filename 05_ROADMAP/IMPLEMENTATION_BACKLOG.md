@@ -3807,6 +3807,74 @@ This session's own tool-call transcript (this conversation) also captured the fu
 
 ---
 
+### T-082 — Anonymous callers can create pending bookings and availability requests ✅
+
+**Priority:** P0 | **Owner:** BE | **Epic:** EPIC-11 | **Estimate:** 0.5d
+**Dependencies:** none. Blocked publication.
+**Resolved 2026-08-10 (PR #106): the endpoints were removed, not authenticated.** Booking is out of MVP scope. Removed with them: `/propose` and `/confirm` (the latter was the only path to a `confirmed` appointment), the account-page tile linking to a `/account/bookings` page that returned 404, the admin booking counters, and the reply string promising a confirmation nothing sent. The tables stay — documented in the matrix, covered by retention, empty, and now unwritten.
+
+Two endpoints are mounted, answer in production, and take **optional**
+authentication. Neither is linked from any page, which is why this went
+unnoticed — the interface is not the attack surface, the API is.
+
+```text
+POST /api/bookings                    → appointments row, status 'pending'
+POST /api/chat/availability-requests  → availability_requests row, status 'pending'
+```
+
+Both use `Depends(get_current_user_optional)`. Verified against production on
+2026-08-10: an unauthenticated request with an empty JSON body to
+`/api/chat/availability-requests` returned **201 Created** and wrote a row with
+no salon, no client and no contact details. The row was removed with the
+operator's authorisation; the endpoint was not changed.
+
+**Why this is P0 rather than a nuisance.** Three separate problems, and the
+third is the one that matters:
+
+1. *Unauthenticated writes.* Anyone who knows the path can fill either table.
+   There is no rate limit on these routes and no captcha anywhere in the
+   product, so the cost of filling them is a shell loop.
+2. *Owner-visible garbage.* `GET /api/chat/availability-requests/owner` shows
+   pending requests to the salon owner. A claimed salon can be shown enquiries
+   that no person ever sent — the first thing an owner sees after claiming
+   could be fabricated demand.
+3. *It contradicts what the Terms are about to say.* The legal review brief
+   states that a reservation cannot be made through the site. That is true of
+   the interface and false of the API, and the Terms are being reviewed by a
+   Greek lawyer **now**. Publishing a description of the product that the
+   product itself falsifies is worse than the defect.
+
+`POST /api/bookings` also replies with the literal string *"Booking created.
+You will receive a confirmation."* No confirmation is ever sent — nothing moves
+a row out of `pending` without a salon acting, and there is no notification on
+that path. The sentence should go regardless of what is decided about auth.
+
+#### What to decide, then build
+
+The endpoints are unreachable from the UI, so there is a real choice, and it
+should be made deliberately rather than by patching the symptom:
+
+- **Remove them** until the feature exists. The cleanest answer if booking is
+  not on the near roadmap; MVP scope lock lists online booking as out of scope
+  and the pre-launch gate requires "no booking stubs visible anywhere".
+- **Require authentication** and keep them. Defensible only if an anonymous
+  enquiry is genuinely wanted later; then rate limiting and a contact-details
+  requirement come with it, not after it.
+
+Either way the misleading confirmation string goes.
+
+#### Acceptance
+
+- An unauthenticated call to both endpoints fails, with a test that calls them
+  the way the probe did — empty body, no cookie — rather than asserting on the
+  dependency list.
+- A test that fails if either route regains optional authentication.
+- No response text promises a confirmation the system does not send.
+- If the endpoints are removed: a test that the routes are absent, so a later
+  merge cannot quietly restore them.
+
+---
+
 ## P0 Critical Path (minimum viable launch sequence)
 
 ```
