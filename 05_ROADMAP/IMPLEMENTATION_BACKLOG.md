@@ -3953,6 +3953,80 @@ it should be what the Terms say.
 
 ---
 
+### T-084 — DSA notice-and-action, statements of reasons, and internal complaints
+
+**Priority:** P0 | **Owner:** BE+FE | **Epic:** EPIC-11 | **Estimate:** 3d
+**Dependencies:** T-083. Gates publication of the Terms.
+
+The legal answers of 2026-08-11 say the DSA applies, that **no size exemption
+applies**, and that the present description **does not satisfy Article 14**.
+That combination is the largest single piece of work the review produced.
+
+Article 14 requires the Terms to set out the moderation policies, procedures,
+measures and tools — including any algorithmic decision-making and human review
+— **and the rules of procedure of the internal complaint-handling system**. The
+Terms cannot describe a system that does not exist, so the system comes first
+and the wording follows it.
+
+#### What exists today
+
+A report button. It records a report and can flag a listing for a person to
+look at. It does not acknowledge receipt, does not give reasons for a decision,
+and offers no way to disagree with one. Automated moderation exists in the code
+and is called from nowhere; nothing is screened before publication.
+
+#### What has to exist
+
+**Notice and action (Art. 16).** A notice may be submitted by anyone, including
+someone with no account — which matters, because accounts are off. It must
+carry enough to act on: what is wrong, where it is, and a way to reply. Receipt
+is confirmed without delay, and the decision is communicated.
+
+**Statement of reasons (Art. 17).** When content is removed, demoted or an
+account restricted, the person affected is told what was done, on what ground —
+Terms breach or illegality — whether automated means were involved, and how to
+contest it. **This is the obligation the product is furthest from:** reviews are
+imported, so the person affected by a removal is usually not a user of Lookla
+and there may be no address to write to. How that is handled has to be decided
+rather than left to fail quietly.
+
+**Internal complaint handling (Art. 20).** A way to contest a decision for at
+least six months after it, decided by a person rather than by a rule, with the
+outcome communicated.
+
+**Article 21** — information about certified out-of-court dispute settlement.
+Note this is a different regime from the consumer ADR body the same answers
+said not to name; both can be true, and the wording must not conflate them.
+
+**Article 24 transparency reporting** applies if Lookla is an online platform.
+The classification given — "providing information" — does not settle that on its
+own, and the answer to §2.3 question 9 of the remaining-questions document is
+what decides it.
+
+#### Where this meets the review suppression already built
+
+T-076 shipped the record that makes a removal stick across re-imports: it
+matches by identity and by fingerprint, so editing a display name does not
+defeat it, and it never deletes silently. That is the *enforcement* half. This
+ticket is the *procedure* half — who may ask, what they are told, and how they
+disagree. They share the same record, and the statement of reasons should be
+stored against it.
+
+#### Acceptance
+
+- A notice can be submitted without an account, and its receipt is confirmed.
+- Every moderation decision produces a stored statement of reasons, linked to
+  the suppression or report it belongs to.
+- A decision can be contested for six months, and the contest reaches a person.
+- The Terms describe the above accurately, and a test fails if §9 claims a
+  procedure the code does not implement — the failure mode this whole ticket
+  exists to prevent is a document describing a system nobody built.
+- Where the affected person cannot be reached — an imported review with no
+  contact — the system records that fact rather than silently skipping the
+  notification.
+
+---
+
 ## P0 Critical Path (minimum viable launch sequence)
 
 ```

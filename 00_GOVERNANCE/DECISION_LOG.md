@@ -670,3 +670,130 @@ GA4 is the industry standard with the widest ecosystem support. Search Console i
 ---
 
 *Last updated: 2026-07-09*
+
+### DEC-018 — Legal positions taken by the operator, without a lawyer's opinion
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-11 |
+| Status | APPROVED |
+| Decided by | Operator |
+
+**Context**
+
+`T-045_REMAINING_QUESTIONS.md` and `TERMS_LEGAL_EXTRACT.md` were prepared for review by a Greek lawyer. Answers were returned on 2026-08-11. Asked whether they were a lawyer's opinion, the operator instructed that they be recorded as **the operator's own decisions**.
+
+That distinction is recorded rather than smoothed over, because the two are not interchangeable: an opinion transfers a judgement to someone qualified to make it, and a decision keeps it. Nothing here says the positions are wrong.
+
+**Decision**
+
+The following are the operator's positions, adopted without an external opinion:
+
+| Position | Taken as |
+|---|---|
+| The §12 limitation is enforceable against a Greek consumer | Yes |
+| §14 is compatible with Rome I and Brussels I recast | Yes |
+| No specific Greek ADR body is named | Correct as drafted |
+| 16 is appropriate as the product minimum age | Yes |
+| Contractual capacity requires nothing further | Yes |
+| Messaging does not change the age answer | Yes |
+| No age verification or parental authorisation is required | Yes — no account can be created in this release |
+| The DSA applies, category "providing information" | Yes |
+| No size exemption applies | Yes |
+| Article 14 is **not** satisfied by the present description | Yes |
+| Notice-and-action and internal complaint handling must be built | Yes |
+| The geographic address need not be published | Yes — and it is therefore absent from the frontend entirely |
+
+**Reason**
+
+Recorded by instruction. The operator has read the questions and taken the positions; no external opinion was obtained.
+
+**Consequences**
+
+- The two positions that create work stand: **T-084** builds notice-and-action, statements of reasons and internal complaint handling, because Article 14 cannot be satisfied by describing a system that does not exist.
+- The publication gate for the Terms is **not** opened by this entry. `TERMS_PUBLICATION_ENABLED` remains `false`, and a test fails if it is set true while the backlog records no Greek legal review. Opening it on an operator decision instead is a separate, explicit change — see "Open" below.
+- Three answers remain unusable as written and are not adopted here: what "It is" means about who builds the procedures, what "standard privacy" decides about an acceptance record, and what "we don't provide salon publicity in this release" covers. `T-045_ANSWERS.md` §3 keeps them open.
+
+**Open**
+
+Whether to publish the Terms on the operator's own reading, rather than waiting for an opinion, has not been decided. It is a change to the gate's condition, not a value, and needs its own entry here when it is made.
+
+**Affected documents**
+
+- `07_LEGAL/T-045_ANSWERS.md`
+- `07_LEGAL/T-045_REMAINING_QUESTIONS.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-084)
+
+---
+
+### DEC-019 — Publish the address, and settle the remaining questions the way comparable services do
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-11 |
+| Status | APPROVED |
+| Decided by | Operator |
+| Supersedes | DEC-018, on the geographic address only |
+
+**Context**
+
+DEC-018 recorded, among the operator's positions, that the geographic address need not be published. `T-045_COMPARABLES.md` then read the live legal pages of Yelp, Trustpilot and (from search) Vrisko: **every one publishes a full postal address**, and none of them omits it. The operator adds that in Greek practice this address commonly becomes the registered address of an individual activity in any case.
+
+**Decision**
+
+1. **The geographic address is published:** `Megalou Alexandrou 38, Athens 16452, Greece`. It returns to the frontend module and to the publication gate's conditions, both of which had been changed the previous day to keep it out.
+2. **The remaining open questions are settled the way comparable services settle them**, rather than left waiting:
+   - **No acceptance checkbox and no version-stamped acceptance record.** Yelp accepts by continued use; Trustpilot lists a box as one route among several, not a requirement. This closes the "standard privacy" ambiguity of `T-045_ANSWERS.md` §3 in the direction the product already implements.
+   - **DSA procedure lives in its own document**, linked from the Terms, rather than inside §9. Both comparables do this. T-084 builds a standalone notice-and-action page.
+   - **"It is"** is read as *the procedures must be built* — which is what T-084 does and what the Article 14 answer requires either way.
+3. **"We don't provide salon publicity in this release"** stays a statement of scope. Nothing in the product contradicts it: payments are off, there is no promoted placement, and owner editing is off.
+
+**Reason**
+
+Where a question has a settled market answer and no fact of ours makes it different, the market answer is adopted rather than waited on. Where our facts *are* different, they are not — see below.
+
+**Consequences**
+
+- `TERMS_PUBLICATION_ENABLED` is still `false`. Publishing the address makes the disclosure complete; it does not change what the gate asks for, which is a recorded review. Opening it needs its own entry.
+- The comparables' documents inform structure and coverage only. Their wording is theirs, and all three are companies that took on the obligations of companies — the questions our facts raise are the ones their documents never had to answer.
+
+**Affected documents**
+
+- `frontend/app/[locale]/terms/content.ts`
+- `07_LEGAL/T-045_COMPARABLES.md`, `07_LEGAL/T-045_ANSWERS.md`
+
+---
+
+### DEC-020 — Publish the Terms without a lawyer's opinion
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-11 |
+| Status | APPROVED |
+| Decided by | Operator |
+
+**Context**
+
+The Terms have been gated since T-045 on two conditions: a complete Article 5 disclosure, and a recorded Greek legal review. The first is now met — name, geographic address and a contact address for legally significant communication are published on the page itself, not merely held in the module. The second was never obtained: the answers of 2026-08-11 are the operator's own positions (DEC-018), and the remaining questions were settled by adopting what comparable services do (DEC-019).
+
+**Decision**
+
+Publish. `TERMS_PUBLICATION_ENABLED` is set to `true`, on the operator's decision and without a lawyer's opinion.
+
+**Reason**
+
+Recorded by instruction. The operator has read the questions, taken the positions, and judged that waiting on an opinion costs more than it removes.
+
+**Consequences**
+
+- `/terms` is served and the footer link appears, in all four locales.
+- The gate itself is **not removed**. It now accepts two bases — a recorded legal review, or this entry — and a test fails if the flag is true with neither. Publishing without an opinion is a legitimate choice; publishing without anyone having decided is not, and that is what the check still prevents.
+- **T-084 is unaffected.** Article 14 is answered "not satisfied", so notice-and-action, statements of reasons and internal complaint handling still have to be built, and §9 will be revised when they exist. Publishing the Terms today does not make that description accurate; it makes the gap visible on a live page.
+- Nothing here is a view about whether the positions are right. It records who is answerable for them.
+
+**Affected documents**
+
+- `frontend/app/[locale]/terms/content.ts`, `frontend/lib/termsContent.test.ts`
+- `07_LEGAL/T-045_ANSWERS.md`
+
+---
