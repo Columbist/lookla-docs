@@ -797,3 +797,40 @@ Recorded by instruction. The operator has read the questions, taken the position
 - `07_LEGAL/T-045_ANSWERS.md`
 
 ---
+
+### DEC-021 — Viber returns as a fourth contact action
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-12 |
+| Status | APPROVED |
+| Decided by | Operator |
+| Supersedes | DEC-015, on the list of approved CTAs only |
+
+**Context**
+
+DEC-015 approved exactly three contact actions — Call, WhatsApp, Visit website — and T-010 implemented that list. A working Viber button existed at the time and was **removed** to match, down to deleting the `viber` key from all four locale files. Tests have enforced the absence since: `contactActions.test.ts` asserts exactly three action fields and bans the string "viber" from the component.
+
+The operator's position, 2026-08-12: in Greece the primary contact channels are Viber, WhatsApp and Facebook Messenger, and **Viber's reach is greater than WhatsApp's**. A contact list that omits the most-used channel is not a shorter list, it is a worse one.
+
+**Decision**
+
+Viber is restored as a fourth action on the salon detail page. Call, WhatsApp, Visit website are unchanged.
+
+**Reason**
+
+DEC-015's purpose was to remove **fake** CTAs — buttons that did nothing. Viber is not that: it is a real channel, built from the same phone number as WhatsApp, reaching the same 5,964 salons on the day it ships. The rule it broke was "exactly three", and that number was a consequence of the approved list rather than a limit that was reasoned about.
+
+**Consequences**
+
+- The three-action contract in `lib/contactActions.ts` becomes four. The tests that enforce three are updated to enforce four, deliberately — they are not deleted, because their real subject is "no fake actions and no booking", which still holds.
+- The `viber` locale key returns to all four locale files.
+- Contact clicks are tracked per channel. Viber and WhatsApp must be counted separately, or the question this decision rests on — which channel Greeks actually use — stays unanswered.
+- **An open question inherited, not created:** a phone number does not prove the number is on Viber, or on WhatsApp. We already show WhatsApp unconditionally, so this is not a new risk introduced by Viber; it is an existing one now visible twice. Whether to show these buttons only when the channel is confirmed is a separate decision, and it applies to both.
+
+**Affected documents**
+
+- `frontend/lib/contactActions.ts`, `frontend/components/ContactButtons.tsx`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-086)
+
+---
