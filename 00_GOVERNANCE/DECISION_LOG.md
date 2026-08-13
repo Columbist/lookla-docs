@@ -834,3 +834,43 @@ DEC-015's purpose was to remove **fake** CTAs — buttons that did nothing. Vibe
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-086)
 
 ---
+
+### DEC-022 — Favourites without registration, keyed by an opaque token
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-13 |
+| Status | APPROVED |
+| Decided by | Operator |
+| Supersedes | DEC-016, on favourites only |
+
+**Context**
+
+DEC-016 settled that discovery and contact need no registration, and that favourites do. The operator's position of 2026-08-13 changes the second half: a visitor keeps favourites and their last ten viewed salons without creating anything, and an email or phone becomes a key they may give **later, if they want**, to move the list to another device.
+
+**Decision**
+
+Identity is an **opaque token** issued by us, held in the visitor's browser, carrying no personal data. Favourites and recent views hang off it. Email and phone are optional recovery keys, and reading a list by one requires proving control of it.
+
+**Reason**
+
+If a phone number were the key, anyone typing someone else's number would read their favourites — which salons a named person is interested in, alongside where those salons are. That is a disclosure designed in rather than a bug, and no care afterwards removes it. The token gives the same convenience while there is nothing to type.
+
+**Consequences**
+
+- Favourites work while accounts are switched off, and are deliberately **not** behind `feature_user_accounts` — this is what a visitor gets *instead of* an account.
+- Recent views are trimmed to ten **in storage**, not only in the response. Keeping every view and showing ten would be a history nobody asked us to hold, invisible because the endpoint never shows it.
+- `DELETE /api/visitor` erases everything held against a token, and exists from the first version. What we keep is small and voluntary; being unable to withdraw it would make it neither.
+- `last_seen_at` gives retention a clock. The period itself is not decided here.
+- **Appointments are out of scope** until there are confirmed salons — the operator's own sequencing.
+
+**Open**
+
+Attaching and verifying a recovery key is not built. It needs a delivery channel, which is the same unanswered question as T-085 — and the answer there now looks like the phone.
+
+**Affected documents**
+
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-089)
+- `04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md` — three new tables to place
+
+---
