@@ -130,7 +130,16 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/components/MapView.tsx`, `frontend/components/MapView.test.ts` (new), `frontend/lib/mapKeyboardNav.test.ts`, `frontend/lib/visualBaselineConsistency.test.ts`, `frontend/app/globals.css`, `frontend/package.json` (+`leaflet.markercluster`, +`@types/leaflet.markercluster`).
 
 ### T-102 — Missing/failed image presentation polish
-*(pending)*
+
+**Done — small, one real gap found.** Audited every `<img>` in the app first: `SalonCard.tsx` (T-065) and `SalonDetailClient.tsx`'s `GalleryImage` (T-066/T-096) already have the honest `imageFailed`-state + fallback contract. The map popup's thumbnail (`MapView.tsx`) did not — no `onError` handler at all, so a present-but-broken `primary_photo` URL fell through to the browser's own broken-image icon, exactly what the brief calls out.
+
+**Fixed:** `selectedImageFailed` state, reset via a `useEffect` keyed to `selected?.id` (not paired manually into each of the several `setSelected()` call sites — correct regardless of how selection changes, now or later). On failure, swaps to the same `Building2`/`bg-surface-subtle`/decorative fallback tokens `PhotoFallback` already established elsewhere — one honest fallback contract, not a second one invented for this component — sized to 16px instead of `PhotoFallback`'s 28px, since a 28px icon in a 64px popup thumbnail would dominate it (SalonCard's icon sits in a much larger photo area, where 28px reads as small).
+
+**Explicitly unchanged:** a salon with no `primary_photo` at all still renders no image slot in the popup (unchanged) — this ticket only fixes the failed-*after*-a-URL-existed case, not the already-correct no-URL case.
+
+**Verification:** 1327/1327 tests passing (+5 new), 0 fail. Lint clean. Build: CI-verified only.
+
+**Files:** `frontend/components/MapView.tsx`, `frontend/components/MapView.test.ts`.
 
 ### T-103 — Contact CTA: count-aware layout
 *(pending)*

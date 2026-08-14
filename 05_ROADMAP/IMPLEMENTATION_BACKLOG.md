@@ -4560,6 +4560,7 @@ Mobile opens a real bottom sheet (not a shrunk popover); desktop popover unchang
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-096 (gallery), T-095 (SalonCard already has a real fallback per T-065)
+**Status:** ✅ Done — one real gap (map popup thumbnail had no onError handler at all). Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
