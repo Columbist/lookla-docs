@@ -37,7 +37,16 @@ Container-token part of this ticket (widening beyond `shell-grid`) turned out to
 **Files:** `frontend/components/Header.tsx`, `frontend/components/Header.test.tsx`.
 
 ### T-096 — Salon gallery: data-driven mosaic
-*(pending)*
+
+**Done.** Re-audited T-066's gallery logic before touching anything, per the ticket's own "confirm exact current photo-count branching" step — it turned out the desktop mosaic was already correctly data-driven (`slice(0,3).map` never renders a tile for a photo that doesn't exist; 1 photo already renders as one large tile since `flex-[2]` only applies at `length >= 3`). The real, confirmed gap was narrower than the ticket's "Найдено" assumed: **mobile had no swipe gallery at all** — it showed the same cramped 3-tiles-in-a-row desktop mosaic, just shorter (`h-56`).
+
+Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-x-auto snap-x snap-mandatory`) showing every photo (not just the first 3 — swiping already reaches all of them, so no separate "view all" control was needed on mobile), with a `scroll`-derived "N / total" position indicator (`aria-hidden`, decorative). No new npm dependency. Desktop mosaic is untouched except `hidden md:flex` (was unconditional `flex`) so the two don't render simultaneously.
+
+**A T-066 test had to be updated, not silently passed around:** `salonDetailVisual.test.ts` had `assert.ok(!/lightbox|carousel|swiper/i.test(source))` — T-066 deliberately shipped without any carousel and guarded against one regressing back in. T-096's mobile swipe *is* a carousel, so the guard was narrowed to what it actually meant to prevent (a lightbox/overlay pattern, and the `swiper` library specifically) while explicitly allowing the one native-CSS `MobileGallery` component, with the supersession recorded inline per RFC-0001/DEC-023.
+
+**Verification:** 1287/1287 tests passing (+7 new T-096 tests), 0 fail. Lint clean. Build clean — `salons/[slug]` route grew 7.29kB → 7.58kB (MobileGallery only).
+
+**Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx` (adds a `Photo` type import, already exported by `lib/api.ts` — that file itself is untouched), `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`.
 
 ### T-097 — Salon detail: two-column desktop composition
 *(pending)*

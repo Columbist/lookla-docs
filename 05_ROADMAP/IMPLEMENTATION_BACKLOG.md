@@ -4423,6 +4423,7 @@ Every page shows real horizontal nav at ≥1024px (`Header.test.tsx` asserts thi
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-095
+**Status:** ✅ Done. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
