@@ -4536,6 +4536,7 @@ Mobile opens a real bottom sheet (not a shrunk popover); desktop popover unchang
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** none
+**Status:** ✅ Done. Only ticket in this sequence to add a dependency (`leaflet.markercluster`); build verification leaned on CI more than any other. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
