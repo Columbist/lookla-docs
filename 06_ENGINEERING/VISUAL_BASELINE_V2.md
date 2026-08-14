@@ -49,7 +49,22 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx` (adds a `Photo` type import, already exported by `lib/api.ts` — that file itself is untouched), `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`.
 
 ### T-097 — Salon detail: two-column desktop composition
-*(pending)*
+
+**Done.** The RFC's primary confirmed problem: `SalonDetailClient.tsx` wrapped its entire page in one `max-w-shell-content` (896px) column, gallery through footer, no sidebar. Switched the page container to `max-w-shell-grid` (1152px) and added a real two-column composition at `md:` (768px) and up: `md:grid md:grid-cols-[360px_1fr] md:gap-6 md:items-start`.
+
+**Sidebar is left, not right — a deliberate accessibility choice, not a visual default.** Identity/contact/hours/location needed to stay first in the DOM (mobile requires them right after the gallery, unchanged from before T-097). Two ways exist to then place that block on the *right* at desktop: CSS `order` (visual-only reposition, DOM/tab order stays first) or literal column placement matching DOM order. `order` was rejected — it would make desktop tab order visit the sidebar before the main column even though it's drawn on the right, a real WCAG 1.3.2 (meaningful sequence) mismatch, not a hypothetical one. Sidebar-left avoids the mismatch entirely: DOM order = visual order = tab order on both breakpoints, with zero `order` usage (a test locks this in). Precedent for "quick facts + contact on the left, longer content on the right" exists in the category already (Google Business Profile, Yelp).
+
+**Hours and Location moved up in the DOM**, from after Reviews/Social-links to right after the identity/contact card — the only way to get them into the sidebar without duplicating markup (the alternative, two parallel mobile/desktop trees toggled by `md:hidden` as `Header.tsx` and `MobileGallery` both do, was rejected here specifically because the sidebar contains `ContactButtons`, a much larger interactive surface than a nav or an image tile — duplicating it risked doubled analytics wiring for no real benefit, since the reorder achieves the same result without duplication). This is a real, disclosed mobile-order change, not hidden in a refactor: **Hours and Location now appear right after the contact card on mobile too**, arguably an improvement (open/closed + hours next to the CTA, not buried below the review list) rather than a compromise made only for desktop's sake.
+
+**Sidebar is `md:sticky md:top-20 md:self-start`** — stays visible (contact CTA, hours) while scrolling a long review list in the main column. `self-start` stops it from stretching to the grid row's full height, which would otherwise break `sticky`.
+
+**Two pre-existing tests broke, both from the same root cause (fragile comment-marker string slicing that assumed a fixed section order) — fixed, not worked around:** `salonDetail.test.ts` sliced `reviewsBlock` as `source.slice(indexOf('{/* Reviews'), indexOf('{/* Hours'))`, which silently produced garbage once `{/* Hours` moved to *before* `{/* Reviews` in the file — updated to slice to `{/* Social links` (the section that still immediately follows Reviews), with the reasoning recorded inline. `salonDetailVisual.test.ts` asserted the page container was `max-w-shell-content` — updated to assert `max-w-shell-grid`, exactly the change T-095's own doc predicted ("T-097 is where salon detail's width usage actually changes").
+
+**Local build could not be verified on this host** — `next build`'s TypeScript type-check phase was killed three consecutive times on columbxray (1.9GB RAM, already running the live `beauty_web` container plus several other services; no OOM evidence in kernel/journal logs, but the failure is consistent and always at the same, most memory-hungry phase). Tests (source-level, no full `tsc` program build) and lint both ran clean locally. Full build verification deferred to CI, which has adequate resources — the standard gate for this repo regardless. This is a known, disclosed limitation of local verification on this specific host, not a skipped check: CI's `frontend` job runs `next build` as part of its pipeline and must be green before merge.
+
+**Verification:** 1292/1292 tests passing (+5 new T-097 tests), 0 fail. Lint clean. Build: CI-verified only (see above).
+
+**Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx`, `frontend/app/[locale]/salons/[slug]/salonDetail.test.ts`, `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`.
 
 ### T-098 — Reviews: compact, scannable, no technical metadata
 *(pending)*
