@@ -92,7 +92,22 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/app/[locale]/search/searchShellVisual.test.ts` only — no production code changed.
 
 ### T-100 — Mobile filters: real bottom sheet
-*(pending)*
+
+**Done.** First correction before implementation: RFC-0001's evidence cited `components/SearchFilters.tsx` as the buggy file — that file is confirmed **dead code** (T-067 already documented it as unreferenced, "recorded for deletion, not migration," locked in by `lib/visualBaselineConsistency.test.ts`'s dead-code guard). The real, live filter UI is the inline popover in `search/page.tsx` — same underlying bug the RFC described (one `absolute` popover, `role="group"`, no separate mobile branch, no `role="dialog"`, no scroll-lock), just a different file than originally cited. Corrected in this record rather than left silently wrong.
+
+**Implementation:** one shared `filterFields` JSX value (area/category/rating `<select>`s), rendered in two presentational wrappers — the desktop popover (unchanged, `hidden md:block`) and a new mobile bottom sheet (`md:hidden`). State and handlers (`area`/`category`/`minRating`, `selectArea`, `update`) are not duplicated; both wrappers close over the same values, so there is exactly one filter state regardless of presentation — matches the ticket's explicit "don't duplicate filter logic" requirement.
+
+**Mobile sheet:** `role="dialog"` + `aria-modal="true"` + `aria-labelledby`, backdrop-click-to-close, explicit close button, `Escape` (via the existing shared T-057 effect — unmodified), body scroll lock, and a focus trap — the last two **scoped to when the sheet is actually the visible presentation** via `sheet.offsetParent === null` (true exactly when `md:hidden` makes it `display:none`) rather than a duplicated width check in JS, so they can never drift out of sync with the CSS breakpoint that actually decides which presentation shows. The desktop popover deliberately keeps T-057's original behaviour (no trap, no scroll lock — "compact popover pattern is appropriate there," per the brief itself).
+
+**"Show N salons" footer button:** reuses the page's existing, already-live `total` state directly — no staged/preview count, no new fetch. Filters apply immediately on select change today (both before and after this ticket), so the button's only job is to close the sheet; it was never going to need its own "apply" step to duplicate.
+
+**A T-057 test asserted the popover "stays a non-modal disclosure" file-wide** (`!source.includes('role="dialog"')`, no `aria-modal`) — that was correct when there was only one shared popover; T-100 makes it correct only for the *desktop* presentation. Split into two tests: one re-confirms the desktop popover is still non-modal (sliced to just that block), one confirms the mobile sheet is deliberately, scopedly modal — not a silent weakening of the original guarantee.
+
+**Local build could not be verified** (host memory, same as T-097/T-098/T-099) — CI is the gate.
+
+**Verification:** 1312/1312 tests passing (+15 net new across `searchControlsA11y.test.ts`), 0 fail. Lint clean.
+
+**Files:** `frontend/app/[locale]/search/page.tsx`, `frontend/app/[locale]/search/searchControlsA11y.test.ts`, `frontend/messages/{el,en,ru,uk}.json` (`close_filters`, `show_results`).
 
 ### T-101 — Map marker clustering
 *(pending)*

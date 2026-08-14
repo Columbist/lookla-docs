@@ -4513,6 +4513,7 @@ Toolbar reads as one composition, not stacked widgets; List/Map toggle never cli
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** none (parallel with T-099)
+**Status:** ✅ Done. Note: the RFC's file citation (`SearchFilters.tsx`) was wrong — that's confirmed dead code (T-067); the real fix landed in `search/page.tsx`. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
