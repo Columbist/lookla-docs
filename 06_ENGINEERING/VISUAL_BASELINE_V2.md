@@ -67,7 +67,19 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx`, `frontend/app/[locale]/salons/[slug]/salonDetail.test.ts`, `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`.
 
 ### T-098 — Reviews: compact, scannable, no technical metadata
-*(pending)*
+
+**Done.** The confirmed technical-metadata problem was real but not what it looked like at first: `"Source: Google Reviews / Imported: Yes / Original: No"` was not stray debt — it was **DEC-013's own literal mandated text** (2026-07-09, trust/honesty, tied to DEC-003's no-fake-activity principle), locked in by a dedicated exact-string test across all 4 locales. Stopped before touching it, reported the conflict to the Product Owner rather than silently simplifying under the redesign's general "no admin metadata" instruction, and got an explicit decision: **DEC-024** simplifies the wording to a single "Google reviews" label (localized) while leaving DEC-013's actual disclosure requirement intact — naming the source still tells a reader these aren't Lookla-native reviews, just without the field:value dump. DEC-013 now carries a "superseded in part by DEC-024, wording only" note; DEC-024 has the full reasoning.
+
+**Other three fixes, all presentation-only:**
+1. **Truncation.** New `ReviewCard` component: text is clamped 4 lines mobile / 6 desktop (`line-clamp-4 md:line-clamp-6`) behind Read more/Show less. The toggle only renders when the text actually overflows — measured via `scrollHeight > clientHeight` on mount, not a character-count guess, so short reviews never get a dead button. The measuring effect depends on `rev.text` only, not `expanded` — otherwise expanding would re-measure the now-unclamped element and immediately hide "Show less".
+2. **Long reviewer names.** The name/rating header row is `flex-wrap` with `min-w-0` + `truncate` on the name and `shrink-0` on the rating+date group — a long name now truncates instead of colliding with or pushing out the rating.
+3. **Raw date.** `rev.published_at.slice(0, 7)` ("2026-01") replaced with a localized "Mon YYYY" via `toLocaleDateString`, reusing the exact same locale-mapping convention already established by the Data-freshness line elsewhere in this file. `whitespace-nowrap` so the short formatted string can't wrap mid-word.
+
+**A T-096 test boundary broke as a direct, mechanical side-effect of adding `ReviewCard` — fixed, not worked around:** five tests sliced `source` from `function MobileGallery(` to `interface LazySectionResult` to isolate just that component's body; `ReviewCard` now sits between the two, so that boundary silently absorbed all of `ReviewCard` too — including its own JSDoc, which (ironically) mentioned the very `.slice(` pattern one test was asserting against. Fixed the boundary to end at `function ReviewCard(` instead, and separately reworded that one JSDoc line to avoid writing the literal old code pattern as prose in the first place — the second fix is the more durable one; the first was still necessary since other tests in that same block needed the corrected boundary regardless.
+
+**Verification:** 1297/1297 tests passing (+13 new: 4 for ReviewCard, 1 for the date-format supersession, 1 boundary-fix comment; net of the 5 T-096 tests whose only change was their slice end-marker), 0 fail. Lint clean. Build: CI-verified only, same reasoning as T-097 (local `next build` remains unreliable on this host's memory).
+
+**Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx`, `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`, `frontend/lib/reviewsSection.test.ts`, `frontend/messages/{el,en,ru,uk}.json`.
 
 ### T-099 — Search toolbar: unified responsive composition
 *(pending)*

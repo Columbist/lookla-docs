@@ -4468,6 +4468,7 @@ At 1280/1440/1920px, salon detail visibly uses the wide container with a real si
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-097 (shares the main-column width)
+**Status:** ✅ Done. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`. Source-label wording change went through DEC-024 (Product Owner sign-off) — it was DEC-013's own mandated text, not incidental debt.
 
 #### Найдено
 

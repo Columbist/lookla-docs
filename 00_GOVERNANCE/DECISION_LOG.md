@@ -480,7 +480,7 @@ Marketplace dynamics: 100 excellent Athens salons with accurate data deliver mor
 | Field | Value |
 |---|---|
 | Date | 2026-07-09 |
-| Status | APPROVED |
+| Status | APPROVED — wording superseded in part by DEC-024 (2026-08-14); the disclosure requirement itself still stands |
 | Decided by | Product Owner |
 
 **Context**
@@ -911,5 +911,41 @@ The desktop-narrow-column problem and the "reads like an MVP catalog, not a mark
 - `06_ENGINEERING/VISUAL_BASELINE_V2.md` — new, opened by this decision
 - `07_RFC/RFC-0001-visual-baseline-v2.md`
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-095–T-104)
+
+---
+
+### DEC-024 — Review source disclosure simplified to "Google reviews", drops the Imported/Original field dump
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-14 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+| Supersedes | DEC-013, wording only |
+
+**Context**
+
+DEC-013 mandated three explicit fields — `Source: Google Reviews / Imported: Yes / Original: No` — so users wouldn't mistake aggregated reviews for Lookla-native content (DEC-003, no fake activity). T-098 (Visual Baseline v2) flagged that this literal field:value phrasing reads as internal/admin metadata leaking onto a public page, not consumer copy — raised explicitly, not silently changed, since it's DEC-013's own mandated text under a dedicated exact-string test (`lib/reviewsSection.test.ts`).
+
+**Decision**
+
+The disclosure becomes a single label: **"Google reviews"** (localized, e.g. `googleReviewsSourceLabel`), replacing the three-field text everywhere it appears. Same visibility rule as before (`shouldShowReviewSourceLabel`: shown once per section, not per review, only once reviews have loaded and at least one exists) — presentation only, not the disclosure's existence or trigger condition.
+
+**Reason**
+
+DEC-013's actual goal was that a user never mistakes an aggregated review for Lookla-native content. Naming the source ("Google reviews") still communicates that on its own — nobody reads "Google reviews" and assumes a Lookla user wrote it. The literal `Imported: Yes / Original: No` fields added no fact a reasonable reader doesn't already get from "Google reviews" itself, while looking like exposed internal data-provenance flags rather than something written for a visitor. The Product Owner weighed this directly (not inferred from the redesign brief alone) and chose to drop the field dump.
+
+**Consequences**
+
+- `googleReviewsSourceLabel` string value changes in all 4 locale files; the key name is unchanged (no new key, no call-site churn beyond the string itself).
+- `lib/reviewsSection.test.ts`'s "exact required text" test is updated to the new short text, with the DEC-013→DEC-024 supersession recorded inline — not deleted, since its real subject (one section-level disclosure exists, in all 4 languages, gated correctly) still holds.
+- DEC-013 is not reversed: the requirement that aggregated reviews be identified as external stands. Only the literal wording changes.
+- If Lookla-native reviews ever exist, DEC-013's "must be visually distinguished from imported reviews" consequence is inherited unchanged by this simplified label — that design work is still open, just as it was before.
+
+**Affected documents**
+
+- `frontend/messages/{el,en,ru,uk}.json` (`salon.googleReviewsSourceLabel`)
+- `frontend/lib/reviewsSection.test.ts`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-098)
 
 ---
