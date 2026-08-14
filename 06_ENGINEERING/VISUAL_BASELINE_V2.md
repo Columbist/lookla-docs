@@ -82,7 +82,14 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/app/[locale]/salons/[slug]/SalonDetailClient.tsx`, `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`, `frontend/lib/reviewsSection.test.ts`, `frontend/messages/{el,en,ru,uk}.json`.
 
 ### T-099 — Search toolbar: unified responsive composition
-*(pending)*
+
+**Done — turned out narrower than the ticket assumed, same pattern as T-096.** Re-audited the toolbar (`search/page.tsx`) before writing any layout change, per the ticket's own "confirm current composition" step. It was already what the brief asked for: search + filter trigger + List/Map segmented control share one bordered/background sticky surface; the row is `flex flex-wrap` so the List/Map group drops to its own line at narrow widths instead of overflowing (`ml-auto` still pins it right on whichever row it lands on); the search input already has `min-w-0` — the same fix T-062 applied to the homepage SearchBar, already present here too (likely from T-064's own pass); the filter popover is viewport-capped (`max-w-[calc(100vw-1rem)]`); the page container is already `max-w-shell-grid`, full desktop width.
+
+**The real, confirmed gap:** unlike the homepage SearchBar (T-062, tested and verified at 320px, "0px overflow (down from 13px)"), this toolbar had **zero** overflow-safety regression coverage of its own — nothing would catch a future edit that silently dropped `min-w-0` or `flex-wrap` until it showed up as a pixel bug in production. Added 6 tests locking in the properties that already prevent overflow, closing that specific coverage gap rather than changing markup that didn't need changing.
+
+**Verification:** 1303/1303 tests passing (+6 new), 0 fail. Lint clean. Build: CI-verified only (same reasoning as T-097/T-098).
+
+**Files:** `frontend/app/[locale]/search/searchShellVisual.test.ts` only — no production code changed.
 
 ### T-100 — Mobile filters: real bottom sheet
 *(pending)*

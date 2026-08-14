@@ -4491,6 +4491,7 @@ Long reviewer name doesn't collide with the rating; date never wraps mid-word; l
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-095
+**Status:** ✅ Done — no production code changed; the toolbar was already correct (T-064), only test coverage was missing. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
