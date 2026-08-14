@@ -4394,4 +4394,221 @@ T-030                     [critical tests — before changing those functions]
 
 ---
 
-*Last updated: 2026-08-13*
+### T-095 — Desktop container width + nav consistency (Visual Baseline v2 foundation)
+
+**Priority:** P0 (first ticket of the Visual Baseline v2 phase) | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** Visual Baseline v1 (T-059–T-067, ✅ complete); RFC-0001 (Approved, DEC-023)
+**Status:** ✅ Done. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
+
+#### Найдено
+
+Two confirmed, code-level foundation problems that every later v2 ticket sits on top of:
+
+1. `Header.tsx:91,98,138` — the horizontal nav (`hidden md:flex`) only renders when `!isCompact`, and `isCompact = variant !== 'default'`. Every page except home passes a non-default `variant`, so search, salon detail, professionals, and the legal pages all show the mobile hamburger even at desktop widths. Home is the only page with real desktop nav today.
+2. Container tokens (`tailwind.config.ts:68-70`) stop at `shell-grid` (1152px). `SalonDetailClient.tsx:169` uses the narrower `shell-content` (896px) for its *entire* page, not just a reading-width sub-section — that's the direct cause of T-097's "narrow column" problem, but the token gap belongs here since T-097 shouldn't have to invent its own width.
+
+#### Что сделать
+
+1. `Header.tsx`: render the real nav (`Lookla | Salons & Studios | Professionals | language`) at `≥1024px` regardless of `variant`; keep the hamburger only below that breakpoint. Compact-variant pages keep whatever their `variant` changes besides nav (back button, etc.) — audit each call site before removing `isCompact` gating wholesale.
+2. Mobile drawer content pass: current open-menu is sparse (a few links filling most of the screen) — tighten spacing/grouping, keep exactly `Salons & Studios`, `Professionals`, languages (no invented links).
+3. Add no new token — `shell-content` stays for legal/reading pages; T-097 switches salon detail to `shell-grid` directly (a two-column layout needs the wide container, not a new one).
+
+#### Готово, когда
+
+Every page shows real horizontal nav at ≥1024px (`Header.test.tsx` asserts this per `variant`); mobile hamburger drawer is visibly tighter; no visual regression on homepage (already correct); lint/typecheck/tests/build clean; responsive check at 1024/1280/1440/1920px shows no overflow.
+
+---
+
+### T-096 — Salon gallery: data-driven mosaic, no empty photo slots
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-095
+
+#### Найдено
+
+`SalonDetailClient.tsx` gallery (per V1's T-066 notes: "3 tiles on one row, `+N photos` correctly localized") already fixed a real bug where empty slots rendered for missing photos — but the layout is still a fixed grid shape regardless of how many real photos exist, and on desktop the gallery width doesn't scale with the wider container this ticket's predecessor (T-095) doesn't yet apply here (T-097 handles that). To confirm exact current photo-count branching before implementation.
+
+#### Что сделать
+
+1. Audit current gallery render logic for 1/2/3+ photo counts — confirm whether it already branches or always assumes 3+.
+2. 1 photo → one large image, no fake grid. 2 photos → adapted two-tile layout. 3+ → large main + secondary tiles, `+N photos` overlaid on a real image (never an empty tile).
+3. Mobile: single cover image, swipe, `1 / N` indicator, `View all photos` / `+N photos`.
+4. Keep this data-driven — no placeholder tiles ever rendered for photos that don't exist.
+
+#### Готово, когда
+
+0/1/2/3/8-photo salons all render correctly at 375px and 1440px; no broken-image UI; no empty tile; existing gallery tests extended to cover 1-photo and 2-photo cases (not just the 3+ case T-066 tested).
+
+---
+
+### T-097 — Salon detail: two-column desktop composition
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-095, T-096
+
+#### Найдено
+
+`SalonDetailClient.tsx:169` — `max-w-shell-content mx-auto` (896px) wraps the entire page content in one column, gallery through footer. No sidebar, no grid. This is the RFC's primary confirmed problem.
+
+#### Что сделать
+
+1. Switch the page container to `shell-grid` (1152px) at ≥1024px; keep `shell-content`-equivalent measure only for actual reading-width text blocks (description prose) if needed for line-length, not the whole page.
+2. Two-column layout ≥1024px: main column (description, services, reviews) + sidebar (name/rating summary, contact CTA, opening hours, location). Evaluate `position: sticky` on the sidebar against real page height; skip if it causes overlap with footer or short-content pages.
+3. Mobile: unchanged, single column, same content order.
+
+#### Готово, когда
+
+At 1280/1440/1920px, salon detail visibly uses the wide container with a real sidebar; at ≤1023px it's single-column, unchanged from today; no CLS regression (T-066 baseline was 0.0029–0.0044); existing `salonDetailVisual.test.ts` extended for the new breakpoint behaviour.
+
+---
+
+### T-098 — Reviews: compact, scannable, no technical metadata
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-097 (shares the main-column width)
+
+#### Найдено
+
+To confirm current reviews render location inside `SalonDetailClient.tsx` (no separate `Reviews.tsx` component exists per the component inventory) — long review text and any `Imported: Yes / Original: No`-style internal fields need auditing before deciding what's presentation-only vs. needs an API field check.
+
+#### Что сделать
+
+1. Header row: reviewer name + star rating on one line (flex, not table) — long names must not break the layout; `Translated · Jan 2026` as a small metadata line, not raw ISO dates.
+2. Truncate long review text (mobile 4–6 lines, desktop a reasonable cap) behind `Read more` / `Show less` — presentation-only, no data truncation.
+3. Remove any internal-looking metadata (import/original flags) from the public-facing render if present; if that data has no consumer-facing purpose at all, confirm with backend owner before deleting the display code (it may still be needed for an admin view).
+4. If review count is large, `Show more reviews` pagination — don't change the underlying review-fetch contract without checking `API_SPECIFICATION.md` first.
+
+#### Готово, когда
+
+Long reviewer name doesn't collide with the rating; date never wraps mid-word; long review text is capped and expandable; no internal/admin-looking fields visible publicly; source line reads `Google reviews`, not a raw boolean pair.
+
+---
+
+### T-099 — Search toolbar: unified responsive composition
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-095
+
+#### Найдено
+
+`search/page.tsx` already uses `shell-grid` container (good) but search/filter/List-Map render as separate widgets rather than one toolbar; mobile overflow behaviour at 360/390/430px needs a fresh check post-T-100 (filters move to a sheet, which changes the toolbar's remaining width budget).
+
+#### Что сделать
+
+1. Group search input + Filters trigger + results-count + List/Map toggle into one visually unified toolbar component, shared between mobile and desktop (different internal layout, same state).
+2. Active filter chips row stays below the toolbar, only when filters are set, with a compact `Clear all`.
+3. Verify no horizontal overflow at 360/375/390/430px in both Safari and Chrome viewport emulation.
+
+#### Готово, когда
+
+Toolbar reads as one composition, not stacked widgets; List/Map toggle never clips at any tested width; desktop uses the full `shell-grid` width, not a narrower implicit column.
+
+---
+
+### T-100 — Mobile filters: real bottom sheet, shared state with desktop
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** none (parallel with T-099)
+
+#### Найдено
+
+`SearchFilters.tsx` — filter UI is a single `absolute top-full right-0 w-72` popover with no `role="dialog"`, no separate mobile branch, no body-scroll-lock. It's a shrunk desktop dropdown on mobile, exactly as flagged.
+
+#### Что сделать
+
+1. Below `md`: render filters as a bottom sheet — `Filters` header, Area/Category/Rating selects, `Reset` + `Show N salons` footer actions, swipe/backdrop/close-button dismissal, body scroll lock while open, focus trap + restore, safe-area padding.
+2. `≥md`: keep the existing popover pattern (already appropriate there per the brief).
+3. **Single source of truth**: both presentations read/write the same filter state — no parallel filter logic between the two.
+4. Touch targets ≥44px in the sheet.
+
+#### Готово, когда
+
+Mobile opens a real bottom sheet (not a shrunk popover); desktop popover unchanged in behaviour; filter state identical between the two; axe/manual accessibility check on the sheet (focus, escape, backdrop, scroll-lock) passes; `SearchFilters` tests extended for the new mobile branch.
+
+---
+
+### T-101 — Map marker clustering
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** none
+
+#### Найдено
+
+`VISUAL_BASELINE_V1.md`, T-067 verification: *"MapView, all four locales: Leaflet renders with 2000 markers"* — confirmed no clustering exists; T-063 ("Map Accessibility") was reserved and left untouched through all of V1. At hundreds/thousands of salons this is a marker cloud with no clustering.
+
+#### Что сделать
+
+1. Add clustering to the existing Leaflet stack (minimal dependency — e.g. `leaflet.markercluster` or equivalent actively-maintained option; pick the smallest one that doesn't fight React re-renders).
+2. Cluster bubbles show count; zoom/click expands/de-clusters.
+3. Selected-salon popup (thumbnail, name, area, rating, Call, Profile) — visually polish only, keep existing structure.
+4. Desktop: map uses the full `shell-grid` container width, real usable height — not a small box with empty margins either side.
+5. Confirm marker `tabIndex` behaviour (Leaflet's own default, per T-067's note) is unaffected by clustering — don't silently regress keyboard reachability; that's still T-063's proper scope if it needs deeper work.
+
+#### Готово, когда
+
+2000-marker test case renders as clusters at low zoom, no visible marker-cloud lag; popup unchanged visually except polish; desktop map fills the container; no new console errors; existing `MapView` tests extended for clustering behaviour.
+
+---
+
+### T-102 — Missing/failed image presentation polish
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-096 (gallery), T-095 (SalonCard already has a real fallback per T-065)
+
+#### Найдено
+
+`SalonCard.tsx` already has a real fallback (`Building2` icon on `bg-surface-subtle`, decorative, both no-URL and failed-load states) since T-065 — the card-level part of this is largely done. What's unverified: whether the same discipline is applied everywhere images can fail (gallery tiles, any other image spot), and whether the fallback is visually "intentional" enough per the brief (not oversized, not dominating the card).
+
+#### Что сделать
+
+1. Audit every image-rendering spot for the same `imageFailed` pattern T-065 established on `SalonCard`; extend anywhere it's missing (likely gallery tiles inside T-096's scope — coordinate, don't duplicate).
+2. Confirm placeholder sizing doesn't dominate visually relative to card/tile size.
+3. No broken-image browser UI anywhere.
+
+#### Готово, когда
+
+Every image spot in search results + salon detail handles missing/failed images with the same honest, non-dominant placeholder; no `alt`-text-only broken icon anywhere.
+
+---
+
+### T-103 — Contact CTA: count-aware layout
+
+**Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** none
+
+#### Найдено
+
+`ContactButtons.tsx` — per DEC-021, up to 4 actions exist (Call, WhatsApp, Viber, Website) but not every salon has all 4 (Website in particular is often absent, confirmed by T-093's "website leads nowhere" ticket in this same backlog). Current layout behaviour with fewer than 4 actions needs confirming before deciding what changes.
+
+#### Что сделать
+
+1. Audit current grid: does it already collapse gracefully, or does it leave an empty cell at 3 actions? Confirm exact behaviour first.
+2. Implement count-aware layout: 4 → 2×2, 3 → three equal or 2+1 full-width, 2 → two equal, 1 → full-width. Never render a button for a channel that doesn't exist (unchanged from current contract).
+3. Desktop sidebar (from T-097) needs the same logic — coordinate so this isn't built twice.
+
+#### Готово, когда
+
+3-action and 2-action and 1-action salons (real production examples, not fabricated) all render without an empty cell; 4-action layout unchanged; `ContactButtons` tests extended for 1/2/3/4-action cases.
+
+---
+
+### T-104 — Homepage: hero, categories, areas, how-it-works visual pass
+
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-095–T-103 (P0) complete and verified in production
+
+#### Найдено
+
+Deferred to P1 per the RFC — this is the piece that revisits V1's Direction B "no carousel, no full-height hero, no autoplay" stance for the hero specifically (background swap from gradient to `bg-surface-subtle` under T-062). Needs explicit re-confirmation this is intended before starting, since it's the one place P0/P1 split matters for the Direction B question, not just sequencing.
+
+#### Что сделать
+
+(P1 — detailed plan written when P0 ships and the team is ready to start this ticket, not upfront. Scope per RFC-0001/architect brief: image-led hero using real salon photos — no stock imagery, no autoplay video, no full-screen cliché; category grid hierarchy (primary/secondary sizing, tinted backgrounds); area cards made more compact; how-it-works vertical spacing tightened ~1.5–2× on mobile.)
+
+#### Готово, когда
+
+TBD at ticket start.
+
+---
+
+*Last updated: 2026-08-14*

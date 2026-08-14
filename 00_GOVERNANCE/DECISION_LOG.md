@@ -874,3 +874,42 @@ Attaching and verifying a recovery key is not built. It needs a delivery channel
 - `04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md` — three new tables to place
 
 ---
+### DEC-023 — Visual Baseline v2: desktop composition redesign, conversion-baseline reset accepted
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-14 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+
+**Context**
+
+A design review of current production screenshots (external design-architect pass over the live site) found that desktop pages — salon detail most visibly — render as a narrow mobile-width column centered in a wide viewport, and that navigation is inconsistent (real horizontal nav on home, forced hamburger on every other page). The proposed fix is a broad P0/P1 redesign sequence. Two things in that proposal conflict with decisions already on record: it reverses part of Direction B (`VISUAL_BASELINE_V1.md`: "no carousel, no full-height hero", confirmed by the user without reinterpretation) for the homepage hero, and shipping it will end the Beta Visual Baseline conversion-measurement window that has held unbroken since T-067 (2026-07-30) through T-071. The implementing session raised both conflicts before starting any code, per RFC-0001.
+
+**Decision**
+
+Proceed as **Visual Baseline v2**, a named, intentional continuation of the token/component work started in v1 — not a silent drift from it. Direction B's palette, type scale, and icon system carry forward unchanged; what changes is composition (desktop container/layout usage, salon detail structure, gallery, map, filters) and, for the homepage hero specifically only, an explicit revisit of the "no carousel/no full-height hero" stance toward an image-led treatment using real salon photography. Full scope, priority order, and per-ticket plan: RFC-0001, `06_ENGINEERING/VISUAL_BASELINE_V2.md`.
+
+**Reason**
+
+The desktop-narrow-column problem and the "reads like an MVP catalog, not a marketplace" problem share the same root files (container tokens, salon detail structure, gallery/image presentation discipline) — splitting them into a bugfix-only pass now and a "real" redesign later would mean touching the same components twice. The Product Owner chose to treat this as one deliberate v2 direction rather than defer the harder half.
+
+**Consequences**
+
+- The Beta Visual Baseline conversion-measurement window (2026-07-30 → present) ends when P0 ships; a new inception point is fixed at that point, same methodology as V1 (`beauty_web` container `State.StartedAt`, not merge time). Conversion data from before that point remains valid for its own comparisons but is no longer the "current" baseline going forward.
+- P0 ships as nine sequenced tickets (T-095–T-103), each independently verified (lint/typecheck/tests/build + responsive check) before the next starts — not one large diff. P1 (T-104, homepage) does not start until P0 is verified in production.
+- No product-model change: no booking, no fake listings/reviews, no discounts, no new brand colour, no rebrand — unchanged from both V1's and this review's own non-goals.
+- `shell-grid`/`shell-content` container tokens from V1 are reused, not replaced with a new arbitrary width.
+
+**Implementation status**
+
+[→] In progress — T-095 starting 2026-08-14
+
+**Affected documents**
+
+- `06_ENGINEERING/VISUAL_BASELINE_V1.md` — cross-referenced, not superseded
+- `06_ENGINEERING/VISUAL_BASELINE_V2.md` — new, opened by this decision
+- `07_RFC/RFC-0001-visual-baseline-v2.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-095–T-104)
+
+---
