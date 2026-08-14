@@ -4582,6 +4582,7 @@ Every image spot in search results + salon detail handles missing/failed images 
 
 **Priority:** P0 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** none
+**Status:** ✅ Done — last P0 ticket. P0 (T-095–T-103) is now complete and merged. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 

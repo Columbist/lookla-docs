@@ -142,7 +142,22 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **Files:** `frontend/components/MapView.tsx`, `frontend/components/MapView.test.ts`.
 
 ### T-103 — Contact CTA: count-aware layout
-*(pending)*
+
+**Done — last P0 ticket.** Confirmed the exact bug: `ContactButtons.tsx`'s container was an unconditional `grid grid-cols-2 gap-2` regardless of how many of the 4 possible actions (Call/WhatsApp/Viber/Website, DEC-021) actually render. At 3 actions: row 1 fills two cells, row 2 has one button and one empty cell. At 1 action: a half-width button next to an empty cell. 2 and 4 actions were already correct (`grid-cols-2` fills exactly).
+
+**One rule covers both gaps:** the container stays a constant `grid-cols-2`; only the *last* active action's own grid item gets `col-span-2`, and only when the active count is odd (1 or 3) — `activeCount % 2 === 1`. `activeKeys` is derived once, filtering the fixed `phone`/`whatsapp`/`viber`/`website` order down to whichever are actually present; `spanFull(key)` is just `key === lastActiveKey && activeCount % 2 === 1`. Website's span lives on its wrapping `<div>` (which also carries the optional warning line), not its inner `<a>` — spanning has to include the warning text, not just the button.
+
+**Shared, not duplicated:** `ContactButtons` is one component, called exactly once from `SalonDetailClient.tsx` (in the T-097 sidebar, which mobile and desktop both render — no separate mobile/desktop CTA logic exists to keep in sync).
+
+**One pre-existing test needed updating, not working around:** a T-066 test counted literal `className={BUTTON_CLASS}` occurrences (expected 4, enforcing "every channel uses the same class, no per-channel importance"). Three of four actions now build their className via a template literal (`` `${BUTTON_CLASS}${spanFull ? ' col-span-2' : ''}` ``) to add the span conditionally — the *invariant* still holds (every action still references the same `BUTTON_CLASS`, `col-span-2` is a layout addition not a new class), only the exact-literal detection method was outdated. Rewritten to count occurrences of the `BUTTON_CLASS` identifier itself (any syntactic form) instead.
+
+**Verification:** 1335/1335 tests passing (+8 new in a new `ContactButtons.test.ts`, simulating the count/order logic against fixtures for 1/2/3/4-action cases, not just checking that `col-span-2` appears somewhere), 0 fail. Lint clean. Build: CI-verified only.
+
+**Files:** `frontend/components/ContactButtons.tsx`, `frontend/components/ContactButtons.test.ts` (new), `frontend/app/[locale]/salons/[slug]/salonDetailVisual.test.ts`.
+
+---
+
+**P0 complete.** T-095 through T-103, nine tickets, all merged to `main`, all CI-green. P1 (T-104, homepage) does not start until P0 is verified in production, per RFC-0001/`VISUAL_BASELINE_V2.md`'s own conditions.
 
 ### T-104 — Homepage visual pass (P1)
 *(pending — not started until P0 ships and is verified in production)*
