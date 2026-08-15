@@ -4604,7 +4604,7 @@ Every image spot in search results + salon detail handles missing/failed images 
 
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-095–T-103 (P0) complete and verified in production
-**Status:** 🟡 In progress — hero done (2026-08-15), categories/areas/how-it-works not started. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
+**Status:** ✅ Done (2026-08-15). All of Visual Baseline v2 (P0 T-095–T-103 + P1 T-104) now merged to `main`. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 

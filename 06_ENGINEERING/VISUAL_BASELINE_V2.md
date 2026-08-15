@@ -177,7 +177,21 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 
 **Files:** `frontend/app/[locale]/page.tsx`, `frontend/lib/heroSalons.ts` (new), `frontend/lib/heroSalons.test.ts` (new), `frontend/app/[locale]/homepage.test.ts`.
 
-**Remaining in T-104 (not yet started):** category grid hierarchy (primary/secondary sizing, tinted backgrounds), area card compactness, how-it-works mobile vertical spacing (~1.5–2× tighter).
+**Categories/areas/how-it-works: done, T-104 complete.**
+
+**CategoryGrid:** re-scoped on inspection — deliberately did NOT fake a primary/secondary size hierarchy (the brief's suggestion). The API gives no real popularity signal beyond array order, and inventing one would be exactly the kind of unfounded claim this project's conventions warn against elsewhere (DEC-013/DEC-024's own "no fake activity" principle, applied here to fake importance instead of fake reviews). Fixed what was actually confirmed: cards were stark white with **no pressed state at all** — `hover:` alone communicates nothing on a touchscreen. Swapped to `bg-surface-subtle` (Direction B's existing second surface step, not a new colour) and added `active:scale-[0.97] active:bg-surface`, uniformly across all 10 cards — one systematic change, not 10 different card designs.
+
+**AreaGrid:** re-audited sizing before touching it, per the ticket's own "confirm current composition" discipline — at `p-4` + `min-h-[64px]`, the card was already close to its true two-line content height, not the oversized card the brief described. Left sizing untouched; added the same missing `active:` pressed state as CategoryGrid.
+
+**How it works:** the one genuinely confirmed, quantifiable gap — `gap-10` (40px) on a mobile single-column grid meant pure vertical accumulation between 3 stacked steps, with no layout reason (desktop's `gap-10` separates 3 *columns*, not a vertically-repeated gap). Reduced to `gap-5 md:gap-10` (exactly 2× tighter on mobile, matching the brief's own "~1.5–2×" range), plus a matching `mb-3 md:mb-4` on the icon circle — desktop untouched via the `md:` prefix on both.
+
+**Verification:** 1354/1354 tests passing (+8 net new across `CategoryGrid.test.tsx`, `AreaGrid.test.tsx`, `homepage.test.ts`), 0 fail. Lint clean. Build: CI-verified only.
+
+**Files:** `frontend/components/CategoryGrid.tsx`, `frontend/components/CategoryGrid.test.tsx`, `frontend/components/AreaGrid.tsx`, `frontend/components/AreaGrid.test.tsx`, `frontend/app/[locale]/page.tsx`, `frontend/app/[locale]/homepage.test.ts`.
+
+---
+
+**T-104 complete — all of Visual Baseline v2 (P0 + P1) now merged to `main`.** Deploy is a separate step (see the Conversion baseline section above for the P0 deploy; this P1 slice ships in the next deploy).
 
 ---
 
