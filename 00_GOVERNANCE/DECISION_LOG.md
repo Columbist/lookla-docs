@@ -949,3 +949,40 @@ DEC-013's actual goal was that a user never mistakes an aggregated review for Lo
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-098)
 
 ---
+
+### DEC-025 — Homepage hero shows real salon photos, rotated at random — not a fixed pick
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-15 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+| Supersedes | T-062's hero-photography decision (Visual Baseline v1), which was never escalated to a formal DEC at the time — recorded here instead of left as an undocumented ticket-doc note |
+
+**Context**
+
+T-062 (Visual Baseline v1) kept the homepage hero decorative-only for two separate reasons: no licensed photography asset existed (only crawled/aggregated CDN photo URLs), and showing one specific salon's photo prominently would read as editorial endorsement of that business over every other listed salon. T-104 (Visual Baseline v2) was asked to make the hero "image-led" using real salon photography. Raised before implementing, not overridden under the redesign brief's general instruction.
+
+**Decision**
+
+The hero shows a small collage of real salon photos, but the *set* is drawn at random from a pool of photographed, ≥4★-rated salons on every page load (`lib/heroSalons.ts`, Fisher-Yates shuffle) — no salon is ever "the" hero salon, and which ones appear is not editorially chosen by anyone at Lookla on any given visit.
+
+**Reason**
+
+This resolves the endorsement problem T-062 identified: rotation means no specific business is being favoured over its competitors, which was the actual fairness concern, not photography itself. It does **not** resolve the separate photo-licensing question T-062 also raised — these are still the same crawled/aggregated CDN photo URLs already used in salon listings, and this decision does not newly investigate or clear their licence for homepage/marketing use versus listing-page use. That question is open, not answered, and is not blocking this ticket only because the Product Owner weighed it and chose to proceed regardless.
+
+**Consequences**
+
+- `frontend/app/[locale]/page.tsx` fetches a pool of 24 salons (`min_rating: 4`) per request; a fetch failure degrades to an empty pool, which renders as T-062's original text-only hero, not a broken image slot.
+- All hero photos are `alt=""` (decorative) — no salon name or link is attached to them, so nothing reads as "Lookla is promoting this specific salon" even incidentally.
+- The photo-licensing question stays open. If it is ever raised as a real problem (e.g. a source platform's terms, a salon objecting to homepage use), this decision is the one to revisit — DEC-025 approved the *rotation*, not a legal clearance that doesn't exist.
+- `HeroDecoration` (the original non-photographic backdrop) is unchanged and still renders as the sole hero visual whenever the photo pool is empty.
+
+**Affected documents**
+
+- `frontend/app/[locale]/page.tsx`, `frontend/lib/heroSalons.ts`
+- `frontend/app/[locale]/homepage.test.ts`
+- `06_ENGINEERING/VISUAL_BASELINE_V2.md` (T-104)
+- `06_ENGINEERING/VISUAL_BASELINE_V1.md` — T-062's hero section should be read alongside this entry, not as still-current on its own
+
+---

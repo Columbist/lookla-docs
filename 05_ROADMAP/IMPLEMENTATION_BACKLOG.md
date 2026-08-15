@@ -4604,19 +4604,24 @@ Every image spot in search results + salon detail handles missing/failed images 
 
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-095–T-103 (P0) complete and verified in production
+**Status:** 🟡 In progress — hero done (2026-08-15), categories/areas/how-it-works not started. Full record: `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`.
 
 #### Найдено
 
 Deferred to P1 per the RFC — this is the piece that revisits V1's Direction B "no carousel, no full-height hero, no autoplay" stance for the hero specifically (background swap from gradient to `bg-surface-subtle` under T-062). Needs explicit re-confirmation this is intended before starting, since it's the one place P0/P1 split matters for the Direction B question, not just sequencing.
 
+**Hero, specifically:** a second, narrower blocker surfaced on inspection — T-062 didn't just avoid photography for restraint's sake, it explicitly rejected real salon photos as reading like editorial endorsement of one business, on top of no licensed asset existing at all. Reported before implementing; Product Owner approved a random-rotation approach (2026-08-15) that resolves the endorsement problem without resolving the separate licensing question.
+
 #### Что сделать
 
-(P1 — detailed plan written when P0 ships and the team is ready to start this ticket, not upfront. Scope per RFC-0001/architect brief: image-led hero using real salon photos — no stock imagery, no autoplay video, no full-screen cliché; category grid hierarchy (primary/secondary sizing, tinted backgrounds); area cards made more compact; how-it-works vertical spacing tightened ~1.5–2× on mobile.)
+**Hero (done):** rotating 3-photo pool (`lib/heroSalons.ts`), desktop mosaic + compact mobile accent image, empty-pool fallback to T-062's original layout, LCP-conscious (one eager+high-priority tile only).
+
+**Remaining:** category grid hierarchy (primary/secondary sizing, tinted backgrounds); area cards made more compact; how-it-works vertical spacing tightened ~1.5–2× on mobile.
 
 #### Готово, когда
 
-TBD at ticket start.
+Hero: done, see `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`. Categories/areas/how-it-works: TBD when that slice starts.
 
 ---
 
-*Last updated: 2026-08-14*
+*Last updated: 2026-08-15*

@@ -18,6 +18,8 @@ V1 fixed the Beta Visual Baseline inception point at `2026-07-30 11:39:31 Europe
 
 Deploy note: production build could not complete locally on columbxray (2GB RAM — `npm ci` inside the Docker build was killed repeatedly, root-caused to genuine memory pressure, not a fluke: disk-cache pruning, `--maxsockets=1`, and a BuildKit npm cache mount were all tried and didn't fully resolve it). Shipped instead by building the identical, fully-verified output (`npm ci` + `npm run build`, same lockfile, no shortcut) on a GitHub Actions runner and assembling the final runtime image locally from that output — a copy-only step with no install/compile, trivial even on this host. One real mistake happened and was caught within ~90 seconds: the first artifact upload silently dropped `.next/standalone/.next` (`actions/upload-artifact`'s own `include-hidden-files: false` default), which crashed the container on start; rolled back immediately, root-caused, fixed, and the corrected build was verified in a throwaway local container *before* touching the production one a second time.
 
+**Production verification (post-deploy, before P1 started):** all 6 containers healthy; `/`, `/search`, and a real salon detail page (`/salons/harris-anagnostopoulos-12608`) all return 200 through the live `beauty_web` container. The salon detail page's actual served HTML contains `max-w-shell-grid`, `grid-cols-[360px_1fr]`, and `md:sticky` — T-097's two-column desktop composition is confirmed live, not just passing in CI. This satisfies the "P0 verified in production" condition RFC-0001/this doc set for starting P1 below.
+
 ## Container tokens
 
 No new width token added at v2's foundation ticket (T-095). `shell-grid` (1152px) and `shell-content` (896px) from V1 remain; T-097 moves salon detail from `shell-content` to `shell-grid` for the page shell (reading-width sub-blocks may still use a narrower measure for line-length, at the component level, not the page level). The architect brief's suggested 1180–1280px range was evaluated against the existing 1152px token and not adopted as a new number — reusing the token system beats introducing a close-but-different magic value.
@@ -162,7 +164,20 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 **P0 complete.** T-095 through T-103, nine tickets, all merged to `main`, all CI-green. P1 (T-104, homepage) does not start until P0 is verified in production, per RFC-0001/`VISUAL_BASELINE_V2.md`'s own conditions.
 
 ### T-104 — Homepage visual pass (P1)
-*(pending — not started until P0 ships and is verified in production)*
+
+**Hero: done.** Started after confirming P0 live in production (see above). Before implementing, found a real blocker: T-062 (V1) explicitly investigated and rejected real salon photography in the hero — no licensed photo asset exists (only crawled/aggregated CDN URLs), and featuring one specific salon would read as editorial endorsement of that business. Stopped, reported the conflict, got an explicit Product Owner decision (2026-08-15) rather than overriding it under the redesign brief's general "use real photos" instruction: **rotate a random subset of photographed salons on every page load**, so no single salon is ever "the" hero salon. The photo-*licensing* question itself stays open — a separate, real question this ticket doesn't resolve, only the editorial-endorsement problem is addressed.
+
+**Implementation:** `lib/heroSalons.ts` — pure, separately-tested `selectHeroSalons(items, count, rng)` (Fisher-Yates, injectable rng for deterministic tests, defaults to `Math.random`). `page.tsx` fetches a pool of 24 salons (`min_rating: 4`) alongside the existing categories/areas calls, `.catch(() => null)` on failure like its neighbours — an empty pool degrades the hero back to exactly T-062's original centred, text-only layout, never a broken/lopsided one.
+
+**Mobile vs desktop, per the brief's own split:** mobile gets one small (h-32) accent image below the search bar, not the full collage ("mobile hero visual must be simpler"). Desktop gets a 3-photo mosaic beside the text (1 large + 2 stacked). Only the single largest desktop tile is `loading="eager"` + `fetchPriority="high"` — the one real LCP-risk addition to what was a text-only hero; every other tile stays lazy. All images `alt=""` — decorative, no salon-specific fact a screen reader user would lose (no name/link attached, consistent with T-062's original "decorative-only" characterization of hero visuals).
+
+**A T-062 test asserted "no `<img>` anywhere on the homepage"** — file-wide, correct when the hero was permanently non-photographic. Split into two: `HeroDecoration` itself re-confirmed still image-free (unchanged), and a new test confirming `HeroPhotoCollage` is the *only* place an `<img>` may appear, always decorative, always gracefully empty rather than broken — the supersession recorded inline, not silently dropped.
+
+**Verification:** 1349/1349 tests passing (+15 net new across `lib/heroSalons.test.ts` and `homepage.test.ts`), 0 fail. Lint clean. Build: CI-verified only (same reasoning as every P0 ticket on this host).
+
+**Files:** `frontend/app/[locale]/page.tsx`, `frontend/lib/heroSalons.ts` (new), `frontend/lib/heroSalons.test.ts` (new), `frontend/app/[locale]/homepage.test.ts`.
+
+**Remaining in T-104 (not yet started):** category grid hierarchy (primary/secondary sizing, tinted backgrounds), area card compactness, how-it-works mobile vertical spacing (~1.5–2× tighter).
 
 ---
 
