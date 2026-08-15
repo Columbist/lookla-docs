@@ -3063,16 +3063,18 @@ The interim manual procedure is now documented in `PRIVACY_OPERATIONS.md` §5, i
 **`(source, source_id)` is not a sufficient key.** Only Google has a stable upstream identity (`g_<placeId>_<review resource name>`, 25,332 of 26,448 rows). Treatwell derives it from content every time — `md5(f"tw:{salon_id}:{author}:{pub}:{body[:30]}")` — and Fresha falls back to the same shape when the upstream id is absent. Editing the author name or the first 30 characters of the text produces a different `source_id`, so a suppressed review returns as a new row while the old key stays dutifully suppressed.
 
 **Acceptance Criteria:**
-- [ ] A suppression record that survives deletion of the `reviews` row and outlives the source's ability to re-serve the review
-- [ ] Uses the upstream immutable id wherever the source exposes one
-- [ ] A documented stable suppression identity for each fallback path, and defined behaviour when `source_id` is null or empty
-- [ ] Old identities retained as aliases when the id strategy changes, so existing suppressions keep matching
-- [ ] Every import path consults it *before* insert — `enrichment.py` (two sites) and `treatwell.py`
-- [ ] Suppressing a review also strikes the matching element from `crawler_sources.raw_data`
-- [ ] Re-import test **mutates** the author name, the body and the rating — re-importing an identical payload only proves the hash is deterministic
-- [ ] A test that a change of id strategy does not silently unsuppress
-- [ ] Removes `authorAttribution.photoUri` and `authorAttribution.uri` from stored payloads (6,245 rows) and from future writes — these are retained today with no purpose, and the Privacy Policy was corrected in all four locales on 2026-08-06 to disclose them until this ships
-- [ ] LIA 4.1 and `PRIVACY_OPERATIONS.md` §5 updated to describe the durable mechanism once it exists
+- [x] A suppression record that survives deletion of the `reviews` row and outlives the source's ability to re-serve the review — `review_suppressions`, migration `0009`, PR #103
+- [x] Uses the upstream immutable id wherever the source exposes one — PR #103
+- [x] A documented stable suppression identity for each fallback path, and defined behaviour when `source_id` is null or empty — PR #103, "fail toward suppression" per `review_suppression.py`'s own docstring
+- [x] Old identities retained as aliases when the id strategy changes, so existing suppressions keep matching — `review_suppression_aliases`, PR #103
+- [x] Every import path consults it *before* insert — enforced structurally by `reviews_suppression_guard`, a `BEFORE INSERT` trigger on `reviews` itself (PR #103), not a call each importer has to remember
+- [x] Suppressing a review also strikes the matching element from `crawler_sources.raw_data` — `strike_from_raw_data()`, PR #162
+- [x] Re-import test **mutates** the author name, the body and the rating — PR #103
+- [x] A test that a change of id strategy does not silently unsuppress — PR #103's alias tests
+- [x] Removes `authorAttribution.photoUri` and `authorAttribution.uri` from stored payloads (6,245 rows) and from future writes — PR #162: `scrub_reviewer_identity()` on write, migration `0016` for the 6,338 rows already on disk (confirmed live before writing it); Privacy Policy updated in all 4 locales to describe the completed state, not "working to stop"
+- [x] LIA 4.1 and `PRIVACY_OPERATIONS.md` §5 updated to describe the durable mechanism once it exists — §5 rewritten, `PERSONAL_DATA_MATRIX.md` §4.1 marked shipped
+
+**Status:** ✅ Done — PR #103 (durable suppression + trigger) and PR #162 (raw_data strike + identity scrub + migration `0016`). Every acceptance criterion met. The one thing outside this ticket's own scope: no HTTP/admin endpoint calls `suppress()` yet — same gap T-047 has, tracked there, not folded in here.
 
 ---
 
