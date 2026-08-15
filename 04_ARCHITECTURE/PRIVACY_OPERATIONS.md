@@ -249,22 +249,21 @@ The public policy's Section 2 states five processing activities rely on Lookla's
 
 ---
 
-## 5. Review objection: interim removal procedure (corrected 2026-08-06)
+## 5. Review objection: durable removal (T-076, PR #103 + PR #162)
 
-This section replaces the claim in §4.1 that honouring a reviewer's objection is a single `DELETE FROM reviews`. Two facts, established by reading the schema and the crawler (see `PERSONAL_DATA_MATRIX.md` §4.1):
+This section replaces the claim in §4.1 that honouring a reviewer's objection is a single `DELETE FROM reviews`. Two facts, established by reading the schema and the crawler (see `PERSONAL_DATA_MATRIX.md` §4.1), used to make that false:
 
-1. **The review exists in two places.** The author name and text are also inside `crawler_sources.raw_data`, for 6,245 of 7,481 rows — together with a reviewer photo URI and a link to their profile, neither of which the `reviews` table imports. Deleting the `reviews` row leaves that copy.
-2. **The delete does not hold.** The crawler's insert is guarded by `ON CONFLICT (source, source_id) DO NOTHING`, which conflicts on nothing once the row is gone, so the next enrichment run reinserts the review with the same author name.
+1. **The review exists in two places.** The author name and text are also inside `crawler_sources.raw_data`, for 6,245 of 7,481 rows — together with a reviewer photo URI and a link to their profile, neither of which the `reviews` table imports. Deleting the `reviews` row alone left that copy.
+2. **The delete did not hold.** The crawler's insert is guarded by `ON CONFLICT (source, source_id) DO NOTHING`, which conflicts on nothing once the row is gone, so the next enrichment run reinserted the review with the same author name.
 
-A durable mechanism (a suppression record checked before every import) is tracked as **T-076** and is not built yet. Until it ships, every objection is honoured manually, in this order:
+Both are now fixed, and enforced structurally rather than by an operator remembering a checklist:
 
-1. Record the objection in the private log with the review's `source` and `source_id` — this is the suppression record until the table exists.
-2. `DELETE FROM reviews WHERE source = :source AND source_id = :source_id;`
-3. Remove the matching element from `crawler_sources.raw_data` for that salon, so the copy does not survive.
-4. **After the next crawler run for that salon, check the review has not returned.** If it has, repeat steps 2–3 and note the recurrence in the log — that is the signal T-076 has become urgent for this reviewer.
-5. Confirm to the objector only once step 4 has passed. Do not confirm removal on the strength of step 2 alone.
+- `app.services.review_suppression.suppress()` records a suppression matched by the upstream immutable id where the source has one (Google), or by a folded-name-plus-date fingerprint where it doesn't (Treatwell, Fresha) — see the module's own docstring for the full matching rules, including why "identical re-import" is not the test that proves it works.
+- `reviews_suppression_guard`, a `BEFORE INSERT` trigger on `reviews` (migration `0009`), checks every import path against it — not a call each importer has to remember, a thing an insert cannot bypass.
+- `suppress()` also strikes the matching element out of `crawler_sources.raw_data` for Google reviews (the only source that has anything stored there), so the second copy does not survive either.
+- `authorAttribution.uri`/`photoUri` — the reviewer's profile link and avatar — are stripped from every newly-crawled place going forward, and migration `0016` removed them from the rows already on disk. `displayName` is kept; nothing else reads or shows the other two.
 
-Until T-076 ships, the honest description of the guarantee is: removal on objection is performed manually and re-verified after the next crawl, not enforced automatically.
+**Operator action on an objection**, now: call `suppress()` (or the admin surface once one exists — none does yet, same gap T-047 has) with the review's `salon_id`, `source`, and `source_id` if the source has one. One call, no re-check-after-the-next-crawl step — the trigger and the strike are what used to require that step, and both now run every time, not once by hand.
 
 ---
 

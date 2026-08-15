@@ -410,7 +410,7 @@ rev.get("id") or md5(f"fresha:{salon_id}:{author}:{pub}:{body[:30]}")
 
 Edit the display name, or the first 30 characters of the text, and the hash changes — so a suppressed review returns as a new row with a new `source_id`, and the suppression looks like it worked because the old key is still suppressed. T-076 must therefore require: the upstream immutable id wherever the source exposes one; a documented stable suppression identity for each fallback path; defined behaviour when `source_id` is null or empty; aliases retained when the id strategy changes, so old suppressions keep matching; and a suppression record that outlives the source's ability to re-serve the review. The re-import test must mutate the author name, the body and the rating, not re-import an identical payload — that would only prove the hash is deterministic.
 
-Until T-076 ships, the SOP must not keep telling the controller that a delete is sufficient. `PRIVACY_OPERATIONS.md` is updated in this PR with the honest interim procedure: record the suppression by hand, delete the `reviews` row, strike the element from `crawler_sources.raw_data`, and **re-check after the next crawler run** — because the current guard is what restores it.
+**Shipped.** PR #103 built the durable suppression record and the `BEFORE INSERT` trigger every import path is checked against structurally; PR #162 wired the `crawler_sources.raw_data` strike into `suppress()` and stopped storing `authorAttribution.uri`/`photoUri` at all (migration `0016` scrubbed the rows already on disk). `PRIVACY_OPERATIONS.md` §5 describes the durable mechanism now in place, not the interim manual procedure this section originally required.
 
 ### 4.2 What "external delete" actually covers today
 
