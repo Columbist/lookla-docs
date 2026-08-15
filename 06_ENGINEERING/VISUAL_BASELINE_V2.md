@@ -191,7 +191,9 @@ Added `MobileGallery`: a `md:hidden` native CSS scroll-snap carousel (`overflow-
 
 ---
 
-**T-104 complete — all of Visual Baseline v2 (P0 + P1) now merged to `main`.** Deploy is a separate step (see the Conversion baseline section above for the P0 deploy; this P1 slice ships in the next deploy).
+**T-104 complete — all of Visual Baseline v2 (P0 + P1) now merged to `main`.**
+
+**Deployed:** `2026-08-15 10:39:26 Europe/Athens` (`beauty_web`'s `State.StartedAt`), via the same GitHub-Actions-build + local-assembly path established for the P0 deploy (`ops/build-artifact.yml`) — verified in a throwaway local container first, real hero photos (3 distinct salons) confirmed rendering against the live `api` service inside the compose network before and after the swap. This is a P1 deploy, not a second baseline reset — per RFC-0001/this doc's own scope, only the P0 completion resets the conversion baseline (already fixed above, at T-103's deploy); T-104 ships as a normal update against that same baseline.
 
 ---
 
