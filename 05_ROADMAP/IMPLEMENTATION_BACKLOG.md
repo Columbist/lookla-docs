@@ -4650,7 +4650,7 @@ Hero: done, see `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`. Categories/areas/ho
 
 **Priority:** P0 (first ticket of Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** RFC-0002 (Approved, DEC-026)
-**Status:** Not started.
+**Status:** ✅ Done — merged PR #170. Not yet deployed (staged with T-106/T-107/T-108, ships as one Phase 3A deploy).
 
 #### Найдено
 
@@ -4670,7 +4670,7 @@ Logo renders in header (desktop + mobile), favicon updated, no plain-text "Lookl
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-105 (logo, for header consistency in the same viewport)
-**Status:** Not started.
+**Status:** ✅ Done — merged PR #171. Not yet deployed (staged with T-105/T-107/T-108).
 
 #### Найдено
 
@@ -4690,7 +4690,7 @@ Screenshot at 1440×900 and 390×844 matches the reference composition; hero rea
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE+BE | **Epic:** EPIC-13
 **Dependencies:** None new — reuses the existing `/api/salons` listing sort
-**Status:** Not started.
+**Status:** ✅ Done — merged PR #171 (backend `min_reviews` param + `TopSalons` component). Not yet deployed (staged with T-105/T-106/T-108).
 
 #### Найдено
 
@@ -4699,6 +4699,8 @@ The homepage has no section showing actual salon listings — visitors see categ
 #### Что сделать
 
 New `TopSalons` component, placed after Popular services and before Explore by area (DEC-026's homepage order). Desktop: 4 visible cards. Mobile: horizontal carousel, not a vertical stack. Card: real photo, Open/Closed, favourite icon (real feature, confirmed present at `account/page.tsx`), name, area, rating, review count. `View all` links to the existing search/results route with the equivalent filter — omitted if no clean destination exists, per the brief's own "no dead View all" rule.
+
+**Deviation from spec, deliberate:** no favourite icon on the card. Re-checked the claim that this is "a real feature confirmed present at `account/page.tsx`" — that page only links to `/account/favorites`, a route that doesn't exist in the repo, and the whole `account/*` area sits behind the not-yet-launched accounts gate (`coming_soon` in messages.json). There's no backend favorites endpoint either. A favourite-toggle button here would point at nothing — exactly the kind of non-functional UI element this project's own discipline (and this brief) prohibits. Reused `SalonCard` as-is instead, which already omits it for the same reason.
 
 #### Готово, когда
 
