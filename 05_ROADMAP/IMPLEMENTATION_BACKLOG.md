@@ -4789,7 +4789,30 @@ Zero legacy `gray-*`/`pink-*`/`purple-*` classes, zero emoji, one radius vocabul
 
 ---
 
-*Phase 3C (T-112+: salon-detail harmonisation, footer, responsive polish) is filed once Phase 3B ships and is verified, per RFC-0002's own phasing discipline — not pre-specified in full here.*
+## Phase 3C (Visual Baseline v3, RFC-0002/DEC-026)
+
+Started before Phase 3B's own screenshot-verification gate was satisfied, same as 3B before 3A's — noted, not silently skipped (see `VISUAL_BASELINE_V3.md`).
+
+### T-112 — Header/Footer container-width token drift
+
+**Priority:** P2 | **Owner:** FE | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Investigated "salon-detail harmonisation" and "footer" per RFC-0002's Phase 3C scope: salon-detail (`SalonDetailClient.tsx`) is already clean — real work already happened there in T-066 and V2's own desktop-two-column/gallery/reviews pass, no legacy tokens, no radius drift, already on `max-w-shell-grid`. The real, concrete gap turned out to be narrower and in different files: **Header.tsx and Footer.tsx** — the two most central shared shell components — both still used the bare Tailwind `6xl`-width utility instead of `max-w-shell-grid`, the named container-width token **T-060 itself created specifically for this purpose** (same 72rem value) but never finished sweeping onto its own component. Footer additionally had two different bare widths (`4xl`/`6xl`) for its two stacked, both-centred rows — unmotivated drift, not a deliberate two-column design.
+
+#### Что сделать
+
+`Header.tsx`'s inner container and both of `Footer.tsx`'s rows → `max-w-shell-grid`.
+
+#### Готово, когда
+
+No bare `max-w-6xl`/`max-w-4xl` remains in either component; both Footer rows share one width. Done — 2 new tests (`Header.test.tsx`, `Footer.test.tsx`).
+
+---
+
+*Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112 was — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
 

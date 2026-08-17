@@ -74,4 +74,16 @@ Same outstanding note as Phase 3A: no visual/screenshot verification against a r
 
 ---
 
+## Phase 3C
+
+Started before Phase 3B's own screenshot-verification gate was satisfied — same pattern as 3B before 3A's, on the Product Owner's explicit "продолжай."
+
+### T-112 — Header/Footer container-width token drift
+
+**✅ Done.** Investigated RFC-0002's "salon-detail harmonisation" and "footer" scope directly: salon-detail (`SalonDetailClient.tsx`) turned out already clean — real work already happened there in T-066 and V2's own pass, already on `max-w-shell-grid`. The real, narrower gap was in Header.tsx and Footer.tsx instead: both still used the bare Tailwind `6xl`-width utility rather than `max-w-shell-grid`, the token T-060 itself created for exactly this purpose but never finished sweeping onto its own component. Footer additionally had two different bare widths for its two stacked rows. Both fixed to the one shared token.
+
+No further Phase 3C gap found by this same investigation — salon-detail and footer content itself (beyond the width token) were already in line. Additional Phase 3C tickets, if any, get filed the same evidence-first way, not pre-specified.
+
+---
+
 *Opened: 2026-08-17.*
