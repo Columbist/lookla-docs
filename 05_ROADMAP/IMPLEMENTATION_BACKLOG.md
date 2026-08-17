@@ -4796,7 +4796,7 @@ Started before Phase 3B's own screenshot-verification gate was satisfied, same a
 ### T-112 — Header/Footer container-width token drift
 
 **Priority:** P2 | **Owner:** FE | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-17 22:09:52 Europe/Athens (Phase 3C).
 
 #### Найдено
 

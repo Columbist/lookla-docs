@@ -84,6 +84,8 @@ Started before Phase 3B's own screenshot-verification gate was satisfied — sam
 
 No further Phase 3C gap found by this same investigation — salon-detail and footer content itself (beyond the width token) were already in line. Additional Phase 3C tickets, if any, get filed the same evidence-first way, not pre-specified.
 
+**Deployed** 2026-08-17 22:09:52 Europe/Athens, frontend-only (`build-artifact.yml` against commit `f61af81`, `docker compose up -d --no-deps web`, rollback verified, `ops/smoke.sh` 19/19). Live check: `max-w-shell-grid` appears 13× on the homepage (Header, Footer ×2, every section), zero leftover `max-w-6xl`/`max-w-4xl`. Conversion baseline not reset (same DEC-026 scoping as Phase 3B — this doesn't touch the homepage funnel).
+
 ---
 
 *Opened: 2026-08-17.*
