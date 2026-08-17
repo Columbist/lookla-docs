@@ -56,15 +56,21 @@ RFC-0002 (§Phased approach) commits to "a screenshot-based visual verification 
 
 ### T-109 — Search results heading undersized
 
-**✅ Done.** `/search`'s `<h1>` was `text-card-title` (16px) — the same scale a single `SalonCard`'s own name renders at, inside the very list this heading introduces. Now `text-section-title` (22px), matching the homepage's own list-introducing headings.
+**✅ Done, PR #173.** `/search`'s `<h1>` was `text-card-title` (16px) — the same scale a single `SalonCard`'s own name renders at, inside the very list this heading introduces. Now `text-section-title` (22px), matching the homepage's own list-introducing headings.
 
 ### T-110 — Map clusters restyled to the brand palette
 
-**✅ Done.** `leaflet.markercluster`'s default green/yellow/orange tiers (RFC-0002's own cited evidence) overridden in `globals.css` with a single-hue `--brand`/`--brand-hover`/`--brand-active` ramp. White cluster-number text, contrast computed via the existing `colorContrast.ts` (T-059's own tool, not a new one): 4.96:1 / 6.54:1 / 8.87:1 — all clear WCAG AA. Plain marker dot and popup (T-059's boundary) untouched.
+**✅ Done, PR #173.** `leaflet.markercluster`'s default green/yellow/orange tiers (RFC-0002's own cited evidence) overridden in `globals.css` with a single-hue `--brand`/`--brand-hover`/`--brand-active` ramp. White cluster-number text, contrast computed via the existing `colorContrast.ts` (T-059's own tool, not a new one): 4.96:1 / 6.54:1 / 8.87:1 — all clear WCAG AA. Plain marker dot and popup (T-059's boundary) untouched.
 
 ### T-111 — Professionals page: full Direction B migration + placeholder cleanup
 
-**✅ Done.** This page predated Visual Baseline v1 entirely — untouched by T-060/T-062/T-064/T-065. Full legacy surface (gray/pink/purple palette, gradient hero, 3 emoji, 3 different border-radii) migrated to Direction B. **Real defect found and fixed, not just restyled:** the "specialties" row was 8 `<button>`s with no `onClick` at all — fake interactivity on a page that never has a professionals list to filter (always the empty state) — the same class of defect T-009 fixed for booking buttons. Converted to plain non-interactive badges; all 8 specialties × 4 locales kept. First-ever test coverage for this page (17 tests, `mastersPageVisual.test.ts`).
+**✅ Done, PR #173.** This page predated Visual Baseline v1 entirely — untouched by T-060/T-062/T-064/T-065. Full legacy surface (gray/pink/purple palette, gradient hero, 3 emoji, 3 different border-radii) migrated to Direction B. **Real defect found and fixed, not just restyled:** the "specialties" row was 8 `<button>`s with no `onClick` at all — fake interactivity on a page that never has a professionals list to filter (always the empty state) — the same class of defect T-009 fixed for booking buttons. Converted to plain non-interactive badges; all 8 specialties × 4 locales kept. First-ever test coverage for this page (17 tests, `mastersPageVisual.test.ts`).
+
+### Phase 3B deployed
+
+Frontend-only change (no backend touched) — deployed 2026-08-17 21:51:15 Europe/Athens via the same off-host path as Phase 3A (`build-artifact.yml` against commit `b5c4b30`, `docker compose up -d --no-deps web`, rollback tags verified, `ops/smoke.sh` 19/19). Structural check on the live origin confirmed `text-section-title` on `/search`'s `<h1>`, `text-page-title`/`text-section-title` on `/masters`, and zero legacy `gray-*`/`pink-*`/`purple-*` classes. **Conversion baseline NOT reset for this deploy** — DEC-026's reset was scoped to Phase 3A's homepage changes specifically; Phase 3B touches search/map/professionals, not the homepage funnel the baseline measures.
+
+Same outstanding note as Phase 3A: no visual/screenshot verification against a reference — this ticket set didn't have one to check against (RFC-0002's own attached mockup covered homepage + logo only), so this is a lower-stakes gap than Phase 3A's, but still unverified beyond structural checks.
 
 ---
 

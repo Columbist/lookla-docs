@@ -4735,7 +4735,7 @@ Started on the Product Owner's explicit decision to proceed before Phase 3A's ow
 ### T-109 — Search results heading undersized
 
 **Priority:** P2 | **Owner:** FE | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, PR #173, deployed 2026-08-17 21:51:15 Europe/Athens (Phase 3B).
 
 #### Найдено
 
@@ -4754,7 +4754,7 @@ Exactly one `<h1>`, now at `text-section-title`. Done — no visual regression e
 ### T-110 — Map clusters use a traffic-light palette, not the brand
 
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, PR #173, deployed 2026-08-17 21:51:15 Europe/Athens (Phase 3B).
 
 #### Найдено
 
@@ -4773,7 +4773,7 @@ All three tiers use brand-family colour, monotonically darkening; contrast compu
 ### T-111 — Professionals page: full Direction B migration + placeholder cleanup
 
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, PR #173, deployed 2026-08-17 21:51:15 Europe/Athens (Phase 3B).
 
 #### Найдено
 
