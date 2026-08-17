@@ -1,6 +1,6 @@
 # Visual Baseline v2 — desktop composition and image-led marketplace feel
 
-**Status: IN PROGRESS.** Opened by RFC-0001 (Approved, DEC-023, 2026-08-14). Ticket sequence: T-095 → T-096 → T-097 → T-098 → T-099 → T-100 → T-101 → T-102 → T-103 (P0), then T-104+ (P1, homepage).
+**Status: COMPLETE (2026-08-15).** Opened by RFC-0001 (Approved, DEC-023, 2026-08-14). Ticket sequence: T-095 → T-096 → T-097 → T-098 → T-099 → T-100 → T-101 → T-102 → T-103 (P0, deployed 2026-08-14 23:39:11), then T-104 (P1, homepage, deployed 2026-08-15 10:39:26). Both deploys verified in production; no ticket in the sequence remains open.
 
 This document is the living, ticket-by-ticket record for v2 — same role `VISUAL_BASELINE_V1.md` played for v1. Each ticket section below is filled in as it lands, not written in advance.
 
