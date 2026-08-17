@@ -16,7 +16,7 @@ V2 (T-095–T-104, complete 2026-08-15) fixed desktop composition, gallery, revi
 
 ## Conversion baseline
 
-V2 fixed the baseline at `2026-08-14 23:39:11 Europe/Athens` (P0's deploy). **V3 will reset it again** (DEC-026, accepted, not accidental — under two weeks after the last reset). The new inception point is fixed at Phase 3A's production deployment completion, determined the same way (`beauty_web`'s Docker `State.StartedAt`). Not yet reset — recorded here once Phase 3A ships.
+V2 fixed the baseline at `2026-08-14 23:39:11 Europe/Athens` (P0's deploy). **V3 resets it again** (DEC-026, accepted, not accidental — under two weeks after the last reset). New inception point: **`2026-08-17 19:49:57 Europe/Athens`** (`beauty_web`'s Docker `State.StartedAt` at Phase 3A's production deploy, same methodology as V1/V2). Conversion data from before this point belongs to V2's baseline, not V3's.
 
 ---
 
@@ -40,17 +40,15 @@ V2 fixed the baseline at `2026-08-14 23:39:11 Europe/Athens` (P0's deploy). **V3
 
 ---
 
-## Phase 3A status: fully merged, not yet deployed
+## Phase 3A status: merged and deployed; visual verification still outstanding
 
-T-105/T-106/T-107/T-108 are all on `main` (PRs #170–#172). **Not deployed to production.**
+T-105/T-106/T-107/T-108 are all on `main` (PRs #170–#172) and **deployed to production** as of 2026-08-17 19:49:57 Europe/Athens (see Conversion baseline above). Deploy used the established off-host build path (`build-artifact.yml` + `build-api-image.yml`, both against the exact merged commit `8083093`), preflight-tagged rollback (`ops/deploy-preflight.sh`, verified intact post-deploy), `docker compose up -d --no-deps api web` (no local build), and the full `ops/smoke.sh` (19/19 passed) plus a direct `min_reviews` API check post-deploy.
 
 ### Outstanding: RFC-0002's own screenshot-verification gate
 
-RFC-0002 (§Phased approach) commits to "a screenshot-based visual verification pass (desktop 1440×900 + mobile 390×844 minimum) before the next phase starts." **This has not happened for Phase 3A.** Every ticket above was verified by source-level tests (lint/typecheck/`next build` via CI, plus the project's usual source-string test convention) and hand-computed CSS math for the responsive column math on T-108 — real verification, but not the visual screenshot pass the RFC itself promises.
+RFC-0002 (§Phased approach) commits to "a screenshot-based visual verification pass (desktop 1440×900 + mobile 390×844 minimum) before the next phase starts." **Still not done** — deployed on the Product Owner's explicit decision to ship first and verify live (matching V1's own precedent of a live post-deploy check), specifically because this host has no browser/screenshot tooling and too little headroom (~225Mi free RAM at the time) to install one safely alongside the live site and database. CI's `next build`, full lint, the source-string test suite, and hand-computed CSS math for T-108's responsive columns all passed — real verification, just not the visual one the RFC promises.
 
-**Why it was skipped rather than attempted and faked:** this host (`columbxray`) runs the live site, Postgres for ~6320 salons, and Xray VPN alongside this work, with ~225Mi free RAM and 4.2G disk free at the time T-108 was implemented. Installing a browser engine (Playwright/Chromium, no lighter tool exists on this host) to self-verify would risk the exact class of incident `feedback_disk_preflight` already recorded once (2026-07-13, a build dropping disk to ~400M and touching the live DB) — except with live production traffic and a live database now also on the line, not just a build. The CI `next build` job (a separate, disposable runner) already confirms the build itself is sound; what it can't confirm is that the layout actually *looks* like the reference mockup.
-
-**Before calling Phase 3A done and resetting the conversion baseline (DEC-026 point 3):** deploy via the established off-host build workflow, then run the same live-production verification V1 used post-deploy (`https://lookla.gr`, real breakpoint matrix) — this needs either a tool capable of visual screenshotting from this session, or a session/host with more headroom. Flagging this explicitly rather than deploying and marking the RFC's own gate satisfied when it wasn't checked.
+**Still needed before Phase 3B starts:** an actual look at `https://lookla.gr` (desktop + mobile) against the reference mockup, from a tool or session capable of it — this session still can't do that itself.
 
 ---
 

@@ -4650,7 +4650,7 @@ Hero: done, see `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`. Categories/areas/ho
 
 **Priority:** P0 (first ticket of Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** RFC-0002 (Approved, DEC-026)
-**Status:** ✅ Done — merged PR #170. Not yet deployed (staged with T-106/T-107/T-108, ships as one Phase 3A deploy).
+**Status:** ✅ Done — merged PR #170, deployed 2026-08-17 19:49:57 Europe/Athens (Phase 3A).
 
 #### Найдено
 
@@ -4670,7 +4670,7 @@ Logo renders in header (desktop + mobile), favicon updated, no plain-text "Lookl
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** T-105 (logo, for header consistency in the same viewport)
-**Status:** ✅ Done — merged PR #171. Not yet deployed (staged with T-105/T-107/T-108).
+**Status:** ✅ Done — merged PR #171, deployed 2026-08-17 19:49:57 Europe/Athens (Phase 3A).
 
 #### Найдено
 
@@ -4690,7 +4690,7 @@ Screenshot at 1440×900 and 390×844 matches the reference composition; hero rea
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE+BE | **Epic:** EPIC-13
 **Dependencies:** None new — reuses the existing `/api/salons` listing sort
-**Status:** ✅ Done — merged PR #171 (backend `min_reviews` param + `TopSalons` component). Not yet deployed (staged with T-105/T-106/T-108).
+**Status:** ✅ Done — merged PR #171, deployed 2026-08-17 19:49:57 Europe/Athens (Phase 3A).
 
 #### Найдено
 
@@ -4712,7 +4712,7 @@ Real salons render, meeting the ≥4.5★/≥20-review floor; no fabricated salo
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** None
-**Status:** ✅ Done — merged PR #172. Not yet deployed (staged with T-105/T-106/T-107 — Phase 3A is now fully merged, none of it deployed yet).
+**Status:** ✅ Done — merged PR #172, deployed 2026-08-17 19:49:57 Europe/Athens (Phase 3A).
 
 #### Найдено
 
