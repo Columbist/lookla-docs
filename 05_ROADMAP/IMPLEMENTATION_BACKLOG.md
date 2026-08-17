@@ -3959,7 +3959,7 @@ it should be what the Terms say.
 
 ---
 
-### T-084 — DSA notice-and-action, statements of reasons, and internal complaints
+### T-084 — DSA notice-and-action, statements of reasons, and internal complaints ⚠️ Partially done
 
 **Priority:** P0 | **Owner:** BE+FE | **Epic:** EPIC-11 | **Estimate:** 3d
 **Dependencies:** T-083. Gates publication of the Terms.
@@ -4030,6 +4030,10 @@ stored against it.
 - Where the affected person cannot be reached — an imported review with no
   contact — the system records that fact rather than silently skipping the
   notification.
+
+**Status, 2026-08-17.** Migration `0011` (undocumented in this entry until now) already built the record — reference, reporter acknowledgment, `decision`/`decision_reasons` columns, a six-month appeal endpoint. The one thing that had never existed: an endpoint that actually wrote a decision. PR #165 added `PATCH /api/admin/reports/{id}/decision` plus migration `0017` (`affected_contact_available`/`affected_notified_at`), resolving the "who is the affected person" question conservatively — only a claimed listing's own account counts as a reachable recipient, never a scraped business email.
+
+**Still open:** an appeal can be filed (`POST /api/reports/{reference}/appeal`) but nothing anywhere decides one — `report_appeals.outcome`/`decided_at` are written by no code path, so Article 20's "outcome communicated" half is still missing; the Terms' honest "we do not currently operate a formal internal complaints procedure" (§9) is correct until that closes. Article 24 transparency-reporting applicability depends on a legal classification answer this repo doesn't contain (§2.3 question 9 of the remaining-questions correspondence) — not something to guess at in code.
 
 ---
 
