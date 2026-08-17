@@ -4646,4 +4646,88 @@ Hero: done, see `docs/06_ENGINEERING/VISUAL_BASELINE_V2.md`. Categories/areas/ho
 
 ---
 
-*Last updated: 2026-08-15*
+### T-105 — Logo: SVG lotus mark + wordmark, wired through Header
+
+**Priority:** P0 (first ticket of Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** RFC-0002 (Approved, DEC-026)
+**Status:** Not started.
+
+#### Найдено
+
+`Header.tsx:96` renders the logo as plain bold text — no SVG/image asset exists anywhere in the repo. This is new-asset creation, not a swap.
+
+#### Что сделать
+
+`logo-full.svg` (symbol + wordmark), `logo-mark.svg` (symbol only), a compact mobile/header variant — line-art lotus mark, thin burgundy (`--brand`) stroke, legible at ~28–36px height, no emoji/Unicode flower. Wired centrally through `Header.tsx` for every variant (default/compact), plus favicon.
+
+#### Готово, когда
+
+Logo renders in header (desktop + mobile), favicon updated, no plain-text "Lookla" wordmark remains as the primary mark.
+
+---
+
+### T-106 — Homepage hero: one composition, not text-plus-collage
+
+**Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** T-105 (logo, for header consistency in the same viewport)
+**Status:** Not started.
+
+#### Найдено
+
+T-104's hero (small 3-photo mosaic beside text) is judged, against the reference mockup, to still read as "old hero + photos attached" rather than one composition.
+
+#### Что сделать
+
+Desktop: ~50–55% text+search left / ~45–50% one large real salon photo + floating real-salon info card (thumbnail, name, rating, review count, area) right. Mobile: separate composition (not a column-wrapped desktop version) — headline, subtitle, search, one large salon photo, card overlaid on its lower portion. Reuses `heroSalons.ts`'s existing rotation/pool, extended with a floating-card data shape if not already present.
+
+#### Готово, когда
+
+Screenshot at 1440×900 and 390×844 matches the reference composition; hero reads as one visual unit, not stacked blocks.
+
+---
+
+### T-107 — Homepage: "Top salons" section
+
+**Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE+BE | **Epic:** EPIC-13
+**Dependencies:** None new — reuses the existing `/api/salons` listing sort
+**Status:** Not started.
+
+#### Найдено
+
+The homepage has no section showing actual salon listings — visitors see categories/areas only until they leave the homepage. DEC-026 fixes the ranking criterion: `rating_google` desc, `rating_count` desc (the site's own existing default sort), floor ≥4.5★ and ≥20 reviews, no manual curation, no paid placement.
+
+#### Что сделать
+
+New `TopSalons` component, placed after Popular services and before Explore by area (DEC-026's homepage order). Desktop: 4 visible cards. Mobile: horizontal carousel, not a vertical stack. Card: real photo, Open/Closed, favourite icon (real feature, confirmed present at `account/page.tsx`), name, area, rating, review count. `View all` links to the existing search/results route with the equivalent filter — omitted if no clean destination exists, per the brief's own "no dead View all" rule.
+
+#### Готово, когда
+
+Real salons render, meeting the ≥4.5★/≥20-review floor; no fabricated salons, ratings, or review counts; mobile is a real carousel, not squeezed cards.
+
+---
+
+### T-108 — Popular services: compact row, brand line-icons
+
+**Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
+**Dependencies:** None
+**Status:** Not started.
+
+#### Найдено
+
+Current `CategoryGrid` (T-104) is already icon-based and touch-friendly but sized/spaced differently from the reference's more compact row treatment.
+
+#### Что сделать
+
+Re-pack into the reference's denser row (desktop: one row where width allows; mobile: adaptive 3-then-2 columns, per the brief's own fallback rule at 360px). Keep the existing Lucide icon system and `active:` pressed states from T-104 — this is a density/sizing pass, not a new icon system.
+
+#### Готово, когда
+
+Matches reference density at the listed breakpoints; existing category destinations and icon mappings unchanged.
+
+---
+
+*Phase 3B (T-109–T-111: search/list harmonisation, map cluster brand colours, professionals page cleanup) and Phase 3C (T-112+: salon-detail harmonisation, footer, responsive polish) are filed once Phase 3A ships and is verified, per RFC-0002's own phasing discipline — not pre-specified in full here.*
+
+---
+
+*Last updated: 2026-08-17*

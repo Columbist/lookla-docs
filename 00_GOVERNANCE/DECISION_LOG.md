@@ -986,3 +986,50 @@ This resolves the endorsement problem T-062 identified: rotation means no specif
 - `06_ENGINEERING/VISUAL_BASELINE_V1.md` — T-062's hero section should be read alongside this entry, not as still-current on its own
 
 ---
+
+### DEC-026 — Visual Baseline v3: real logo, homepage "Top salons" section, second baseline reset accepted
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-17 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+
+**Context**
+
+A follow-up design review (external design-architect pass, with attached reference mockups) of the already-shipped Visual Baseline v2 concluded the result still reads as the old Lookla with tidier spacing and a few added photos, not a visually distinct new version. The proposed fix touches three things already on record elsewhere: it introduces a real logo where none has ever existed (`Header.tsx` renders plain text, confirmed before any code was written), it adds a new homepage section ranking real salons (the same open "top vs. so-so" question the Product Owner had floated earlier in this session and left as an idea, not a ticket), and it would end the Beta Visual Baseline conversion-measurement window a second time in under two weeks, having only just been reset by DEC-023. The implementing session raised all three before starting any code, per RFC-0002.
+
+**Decision**
+
+Proceed as **Visual Baseline v3**, keeping every Visual Baseline v2 change unmodified (this is an additional layer — brand identity and homepage discovery — not a reversal). Three specific confirmations, each with the implementing session's recommended default accepted as-is:
+
+1. **A real SVG logo** (line-art lotus mark + wordmark, per the attached concept sheet) replaces the plain-text wordmark everywhere — header and favicon — as a deliberate rebrand, not a cosmetic tweak.
+2. **"Top salons" homepage section** ranked by the site's own existing definition of "best" — `rating_google` descending, `rating_count` descending as tiebreaker, the identical sort `salons.py`'s default listing already applies — with a floor of ≥4.5★ and ≥20 reviews so a single five-star, one-review listing cannot appear as a false "top" result. No manual curation, no paid placement.
+3. **The conversion-measurement baseline resets again** at Phase 3A's production deploy, same methodology as V1/V2 (`beauty_web` container `State.StartedAt`).
+
+Full scope, phase order (3A/3B/3C), and per-ticket plan: RFC-0002, `06_ENGINEERING/VISUAL_BASELINE_V3.md`.
+
+**Reason**
+
+A logo swap and a new ranked-listing section are both the kind of change that is expensive to get wrong twice — a rebrand shipped without being recognised as one, or a "top" ranking that turns out to encode something other than the site's own existing rating logic, would each need a second RFC to undo cleanly. Confirming the three open questions directly, before writing code, is cheaper than discovering after ship that one of them meant something different than assumed.
+
+**Consequences**
+
+- The conversion-measurement baseline (reset 2026-08-14 by DEC-023) ends again when Phase 3A ships; a new inception point is fixed the same way, methodology unchanged.
+- Phase 3A/3B/3C ship as sequenced tickets (T-105+), each independently verified (lint/typecheck/tests/build + responsive + screenshot check) before the next starts.
+- The Top-salons ranking criterion is a visible product decision, not a tuning parameter — a future change to the ≥4.5★/≥20-review floor or the sort itself changes which real businesses appear on the homepage and should be treated with the same weight as this decision, not adjusted casually in a later ticket.
+- No product-model change: no booking, no fake listings/reviews, no discounts, no paid placement — unchanged from V2's own non-goals.
+- The old plain-text wordmark is not deleted from history — the new SVG assets are added and wired in centrally through `Header`, not a destructive swap mid-review.
+
+**Implementation status**
+
+[→] In progress — T-105 starting 2026-08-17
+
+**Affected documents**
+
+- `06_ENGINEERING/VISUAL_BASELINE_V2.md` — cross-referenced, not superseded
+- `06_ENGINEERING/VISUAL_BASELINE_V3.md` — new, opened by this decision
+- `07_RFC/RFC-0002-visual-baseline-v3.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-105+)
+
+---
