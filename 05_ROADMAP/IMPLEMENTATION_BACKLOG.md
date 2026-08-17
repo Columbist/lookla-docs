@@ -4712,7 +4712,7 @@ Real salons render, meeting the ≥4.5★/≥20-review floor; no fabricated salo
 
 **Priority:** P0 (Visual Baseline v3, Phase 3A) | **Owner:** FE | **Epic:** EPIC-13
 **Dependencies:** None
-**Status:** Not started.
+**Status:** ✅ Done — merged PR #172. Not yet deployed (staged with T-105/T-106/T-107 — Phase 3A is now fully merged, none of it deployed yet).
 
 #### Найдено
 

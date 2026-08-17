@@ -1,6 +1,6 @@
 # Visual Baseline v3 — brand identity and homepage discovery
 
-**Status: IN PROGRESS.** Opened by RFC-0002 (Approved, DEC-026, 2026-08-17). Ticket sequence: T-105 → T-106 → T-107 → T-108 (Phase 3A), then Phase 3B (T-109–T-111), then Phase 3C (T-112+).
+**Status: IN PROGRESS.** Opened by RFC-0002 (Approved, DEC-026, 2026-08-17). Ticket sequence: T-105 → T-106 → T-107 → T-108 (Phase 3A), then Phase 3B (T-109–T-111), then Phase 3C (T-112+). Phase 3A is fully implemented and merged to `main` as of 2026-08-17 — **not yet deployed**, pending the screenshot-verification gate below.
 
 This document is the living, ticket-by-ticket record for v3 — same role `VISUAL_BASELINE_V2.md` played for v2.
 
@@ -36,7 +36,21 @@ V2 fixed the baseline at `2026-08-14 23:39:11 Europe/Athens` (P0's deploy). **V3
 
 ### T-108 — Popular services: compact row, brand line-icons
 
-*(recorded once implemented)*
+**✅ Done, PR #172.** Density pass only, no new layout system: `CategoryGrid` keeps the same 10 tiles, same Lucide icons, same `active:` pressed state from T-104. Mobile adaptive 3-then-2 via `min-[360px]:grid-cols-3` (a real Tailwind arbitrary variant, not the undefined bare "extra-small" name — the same mistake T-104's TopSalons work almost repeated, caught before commit). Desktop reaches one row at `lg:grid-cols-10`, matching the existing `.slice(0, 10)` cap. Tiles shrank `p-5`→`p-3`, `min-h-[96px]`→`min-h-[76px]`, icon `28`→`24`, all hand-computed against this project's own spacing tokens rather than guessed. Not yet deployed.
+
+---
+
+## Phase 3A status: fully merged, not yet deployed
+
+T-105/T-106/T-107/T-108 are all on `main` (PRs #170–#172). **Not deployed to production.**
+
+### Outstanding: RFC-0002's own screenshot-verification gate
+
+RFC-0002 (§Phased approach) commits to "a screenshot-based visual verification pass (desktop 1440×900 + mobile 390×844 minimum) before the next phase starts." **This has not happened for Phase 3A.** Every ticket above was verified by source-level tests (lint/typecheck/`next build` via CI, plus the project's usual source-string test convention) and hand-computed CSS math for the responsive column math on T-108 — real verification, but not the visual screenshot pass the RFC itself promises.
+
+**Why it was skipped rather than attempted and faked:** this host (`columbxray`) runs the live site, Postgres for ~6320 salons, and Xray VPN alongside this work, with ~225Mi free RAM and 4.2G disk free at the time T-108 was implemented. Installing a browser engine (Playwright/Chromium, no lighter tool exists on this host) to self-verify would risk the exact class of incident `feedback_disk_preflight` already recorded once (2026-07-13, a build dropping disk to ~400M and touching the live DB) — except with live production traffic and a live database now also on the line, not just a build. The CI `next build` job (a separate, disposable runner) already confirms the build itself is sound; what it can't confirm is that the layout actually *looks* like the reference mockup.
+
+**Before calling Phase 3A done and resetting the conversion baseline (DEC-026 point 3):** deploy via the established off-host build workflow, then run the same live-production verification V1 used post-deploy (`https://lookla.gr`, real breakpoint matrix) — this needs either a tool capable of visual screenshotting from this session, or a session/host with more headroom. Flagging this explicitly rather than deploying and marking the RFC's own gate satisfied when it wasn't checked.
 
 ---
 
