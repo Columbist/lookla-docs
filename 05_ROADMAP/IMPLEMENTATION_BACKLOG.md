@@ -2387,7 +2387,7 @@ Not recommended yet. Rotating now would abandon a mostly-clean reputation, cost 
 ### T-074 — Restrict unnecessary outbound SMTP
 **Priority:** P1 | **Owner:** OPS | **Epic:** EPIC-09 | **Phase:** Post-incident hardening
 **Dependencies:** T-072 ✅, T-073 (assessment) ✅
-**Status:** Implemented, draft PR, CI green. **Nothing applied to production** — awaiting APPROVE.
+**Status:** ✅ Done — rolled out 2026-08-05 17:56:17 Europe/Athens (see the rollout boundary section below). Re-confirmed live on the host during a 2026-08-17 backlog audit: `LOOKLA-T074-DENY` chain present, `OUTPUT` jump active, `t074-smtp-egress.service` active/enabled. This line was never updated after the actual rollout — corrected now, not a new deploy.
 
 Outbound TCP/25 is unrestricted: a connection to a public MX completes and returns a `220` banner. That was useful evidence in T-073 (the provider has not applied the egress block that usually follows an abuse finding), but it is also a capability this host does not appear to need — and it is the classic second act after an open relay, since a compromised process could send mail directly with the host's address attached.
 
@@ -2527,11 +2527,11 @@ Own chain, `OUTPUT` only, idempotent, atomic, with rollback armed before the mut
 
 **Acceptance Criteria:**
 - [x] Consumer audit completed before any rule was designed
-- [ ] Rule scoped to outbound TCP/25 only, verified against the live rules
-- [ ] 465/587 and all inbound rules provably untouched
-- [ ] Resend delivery verified still working after the change
-- [ ] Idempotent, atomic, persistent, with rollback
-- [ ] Independent review before application
+- [x] Rule scoped to outbound TCP/25 only, verified against the live rules — re-confirmed live 2026-08-17
+- [x] 465/587 and all inbound rules provably untouched — see "Outbound SMTP restriction boundary" above
+- [x] Resend delivery verified still working after the change — HTTPS to `api.resend.com:443`, verified from inside `beauty_api`
+- [x] Idempotent, atomic, persistent, with rollback — `--ensure`/`--rollout` split, generation markers, `t074-smtp-egress.service`
+- [x] Independent review before application — PR #76, merged
 
 ---
 
