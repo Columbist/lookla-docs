@@ -48,7 +48,23 @@ T-105/T-106/T-107/T-108 are all on `main` (PRs #170–#172) and **deployed to pr
 
 RFC-0002 (§Phased approach) commits to "a screenshot-based visual verification pass (desktop 1440×900 + mobile 390×844 minimum) before the next phase starts." **Still not done** — deployed on the Product Owner's explicit decision to ship first and verify live (matching V1's own precedent of a live post-deploy check), specifically because this host has no browser/screenshot tooling and too little headroom (~225Mi free RAM at the time) to install one safely alongside the live site and database. CI's `next build`, full lint, the source-string test suite, and hand-computed CSS math for T-108's responsive columns all passed — real verification, just not the visual one the RFC promises.
 
-**Still needed before Phase 3B starts:** an actual look at `https://lookla.gr` (desktop + mobile) against the reference mockup, from a tool or session capable of it — this session still can't do that itself.
+**Still needed:** an actual look at `https://lookla.gr` (desktop + mobile) against the reference mockup, from a tool or session capable of it — this session still can't do that itself. **Phase 3B started anyway, on the Product Owner's explicit decision** — this gate remains open, not silently dropped.
+
+---
+
+## Phase 3B
+
+### T-109 — Search results heading undersized
+
+**✅ Done.** `/search`'s `<h1>` was `text-card-title` (16px) — the same scale a single `SalonCard`'s own name renders at, inside the very list this heading introduces. Now `text-section-title` (22px), matching the homepage's own list-introducing headings.
+
+### T-110 — Map clusters restyled to the brand palette
+
+**✅ Done.** `leaflet.markercluster`'s default green/yellow/orange tiers (RFC-0002's own cited evidence) overridden in `globals.css` with a single-hue `--brand`/`--brand-hover`/`--brand-active` ramp. White cluster-number text, contrast computed via the existing `colorContrast.ts` (T-059's own tool, not a new one): 4.96:1 / 6.54:1 / 8.87:1 — all clear WCAG AA. Plain marker dot and popup (T-059's boundary) untouched.
+
+### T-111 — Professionals page: full Direction B migration + placeholder cleanup
+
+**✅ Done.** This page predated Visual Baseline v1 entirely — untouched by T-060/T-062/T-064/T-065. Full legacy surface (gray/pink/purple palette, gradient hero, 3 emoji, 3 different border-radii) migrated to Direction B. **Real defect found and fixed, not just restyled:** the "specialties" row was 8 `<button>`s with no `onClick` at all — fake interactivity on a page that never has a professionals list to filter (always the empty state) — the same class of defect T-009 fixed for booking buttons. Converted to plain non-interactive badges; all 8 specialties × 4 locales kept. First-ever test coverage for this page (17 tests, `mastersPageVisual.test.ts`).
 
 ---
 

@@ -4728,7 +4728,68 @@ Matches reference density at the listed breakpoints; existing category destinati
 
 ---
 
-*Phase 3B (T-109–T-111: search/list harmonisation, map cluster brand colours, professionals page cleanup) and Phase 3C (T-112+: salon-detail harmonisation, footer, responsive polish) are filed once Phase 3A ships and is verified, per RFC-0002's own phasing discipline — not pre-specified in full here.*
+## Phase 3B (Visual Baseline v3, RFC-0002/DEC-026)
+
+Started on the Product Owner's explicit decision to proceed before Phase 3A's own screenshot-verification gate was satisfied (see `docs/06_ENGINEERING/VISUAL_BASELINE_V3.md`) — noted here, not silently skipped.
+
+### T-109 — Search results heading undersized
+
+**Priority:** P2 | **Owner:** FE | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+`/search`'s one real `<h1>` (`t('results_heading')`) used `text-card-title` (16px) — the identical scale a single `SalonCard`'s own name renders at inside the very list this heading introduces. Every comparable heading elsewhere on the site sits a tier above whatever it introduces (legal/salon-detail: `text-page-title` 28px; homepage's "Top salons"/"Popular services": `text-section-title` 22px).
+
+#### Что сделать
+
+`text-card-title` → `text-section-title` — matches the homepage's own list-introducing headings, one tier below a dedicated page's `text-page-title` (this heading sits under the toolbar, which already carries the page's primary identity).
+
+#### Готово, когда
+
+Exactly one `<h1>`, now at `text-section-title`. Done — no visual regression elsewhere on the page (toolbar/filters/results grid untouched).
+
+---
+
+### T-110 — Map clusters use a traffic-light palette, not the brand
+
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+`MapView.tsx`'s clustering (T-101) never overrode `leaflet.markercluster`'s default CSS — `.marker-cluster-small/medium/large` ship literal green/yellow/orange, which reads as a severity signal ("orange = warning") that has no meaning for salon density, and is unrelated to the brand palette entirely.
+
+#### Что сделать
+
+Override the three tiers in `globals.css` with a single-hue `--brand`/`--brand-hover`/`--brand-active` ramp (darker = more salons, not "more dangerous"). Explicit white cluster-number text, computed (not guessed) to clear WCAG AA (4.5:1) against all three tiers' alpha-blended background.
+
+#### Готово, когда
+
+All three tiers use brand-family colour, monotonically darkening; contrast computed via the existing `colorContrast.ts` (same tool T-059 validated the base palette with), not eyeballed. Done — the plain marker dot and popup (T-059's own boundary) untouched.
+
+---
+
+### T-111 — Professionals page: full Direction B migration + placeholder cleanup
+
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+`masters/page.tsx` predates Visual Baseline v1 entirely — never touched by T-060/T-062/T-064/T-065. Full legacy surface: `bg-gray-50` page background, a `from-purple-50 to-pink-50` gradient hero (the exact pattern T-062 already removed from the homepage), `bg-pink-600`/`text-gray-*` throughout, three different border-radius values, and three emoji (🏠🎨💅) as the page's only iconography. Additionally: the "specialties" row rendered as 8 `<button>` elements with **no `onClick` at all** — interactive-looking controls that did nothing, on a page that never has a professionals list to filter anyway (always the empty state) — the same class of defect T-009 fixed for fake booking buttons.
+
+#### Что сделать
+
+Full Direction B token migration (surface/text/brand/border), Lucide icons (`Home`/`Building2` for the visit-type badges, `Sparkles` for the empty state, matching the homepage's icon-circle convention), `text-page-title` for the real page H1, `text-section-title` for the empty-state H2. Specialty row converted from fake `<button>`s to plain non-interactive `<span>` badges — data kept (all 8 specialties, all 4 locales), only the false affordance removed.
+
+#### Готово, когда
+
+Zero legacy `gray-*`/`pink-*`/`purple-*` classes, zero emoji, one radius vocabulary (`rounded-pill` badges, `rounded-md` panels, `rounded-full` only for the one icon circle). Done — 17 new tests (`mastersPageVisual.test.ts`, this page's first-ever test coverage), T-083's feature-flag gate around the sign-up CTA untouched.
+
+---
+
+*Phase 3C (T-112+: salon-detail harmonisation, footer, responsive polish) is filed once Phase 3B ships and is verified, per RFC-0002's own phasing discipline — not pre-specified in full here.*
 
 ---
 
