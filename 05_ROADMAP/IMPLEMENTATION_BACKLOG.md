@@ -4951,7 +4951,7 @@ Chips render from real category data; desktop photo fills the section's full hei
 ### T-119 — Hero recomposition corrections (live feedback on T-118)
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-18 17:31:42 Europe/Athens. Live-verified: width-cap wrapper, `pt-8 pb-16`, mobile card's `absolute bottom-3 right-3`, and the second blur circle's `hidden md:block` all present in the live SSR HTML.
 
 #### Найдено
 
