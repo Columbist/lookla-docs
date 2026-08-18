@@ -4838,7 +4838,7 @@ Header renders the real artwork, legible at header scale (verified via rendering
 ### T-114 — Header logo: 1.5x size
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-18 13:20:27 Europe/Athens.
 
 #### Найдено
 
