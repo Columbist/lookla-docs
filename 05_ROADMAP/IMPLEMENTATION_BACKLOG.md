@@ -4903,7 +4903,7 @@ Nav visually centred at `md`+; language switcher's baseline matches its row sibl
 ### T-117 — Mobile burger dropdown: centre the nav links too
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-18 15:13:32 Europe/Athens. Not curl-verifiable live like other changes this phase — the mobile menu is `{open && (...)}`, client-only conditional render (never in the initial SSR HTML), so confidence here rests on the pre-deploy test suite reading the real compiled source, not a live fetch.
 
 #### Найдено
 
