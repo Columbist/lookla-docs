@@ -1,10 +1,10 @@
 ---
 title: Privacy Operations — Manual SOPs and Legitimate Interest Assessments
 status: Approved
-version: 1.5
+version: 1.6
 owner: Zhuykov Andrey (data controller, hello@lookla.gr)
 reviewers: []
-last_updated: 2026-08-06
+last_updated: 2026-08-18
 related_documents:
   - 04_ARCHITECTURE/SECURITY.md
   - 04_ARCHITECTURE/DATA_FLOW.md
@@ -14,7 +14,7 @@ implementation_status: Manual/operational — backs the public Privacy Policy (f
 
 # Privacy Operations
 
-This document is the internal operational backing for the claims made in the public Privacy Policy (`frontend/app/[locale]/privacy`). The policy states specific retention targets and rights-response commitments; this document is *how* those commitments are actually met today, given that T-047/T-048 (automated deletion jobs, account-deletion workflow) have not shipped yet. It also contains the Legitimate Interest Assessments referenced by the policy's Section 2 (Purposes and legal bases), and the minor-account handling procedure referenced by Section 12 (Children).
+This document is the internal operational backing for the claims made in the public Privacy Policy (`frontend/app/[locale]/privacy`). The policy states specific retention targets and rights-response commitments; this document is *how* those commitments are actually met today. **T-047 (account-deletion/erasure workflow) and T-048 (automated deletion jobs) have both shipped** — T-047's destructive handlers landed in production 2026-08-15 (admin-triggered, no admin-panel UI yet — see Section 1's manual SOP for the path actually used today); T-048's retention engine has run on an automated monthly crontab since the same day (Section 2). Both still lean on this document for the parts genuinely unautomated (free-text review, minor-account handling, and any request routed through the manual `psql`/CLI fallback). It also contains the Legitimate Interest Assessments referenced by the policy's Section 2 (Purposes and legal bases), and the minor-account handling procedure referenced by Section 12 (Children).
 
 **Operator today:** a single person (Zhuykov Andrey, the data controller). There is no support team. Every procedure below assumes one person executes it — deliberately simple rather than assuming operational capacity that doesn't exist yet.
 
@@ -172,11 +172,17 @@ This document is the internal operational backing for the claims made in the pub
 
 ---
 
-## 2. Periodic retention cleanup (manual, until the job is scheduled)
+## 2. Periodic retention cleanup (automated since 2026-08-15)
 
-**2026-08-15 update.** T-048 built the engine this section describes running by hand — `backend/app/services/retention/policies.py` declares every clock below as data, `runner.py` runs them with a dry-run default and a per-policy cap, and `cli.py` (PR #160) is a real entrypoint: `python -m app.services.retention.cli [--apply]`. **What is still missing is the crontab line that calls it on a schedule** — deleting personal data on a timer is a production infra change held for the same confirmation as any other T2-tier change, so until that line exists, the monthly manual run below remains the actual operative process, and the CLI is available today for a controller to run by hand in its place (`docker exec beauty_api python -m app.services.retention.cli --apply`, which is strictly more complete than the `psql` steps below — it also covers tokens, the observation clock and the tombstone-anchor GC, none of which this manual procedure ever listed).
+**2026-08-18 correction.** This section previously read "manual, until the job is scheduled" — that crontab line exists now and has since the same day T-048's engine landed:
 
-**Cadence: monthly, not quarterly.** A quarterly cadence against a 12-month target allows actual retention to reach up to ~15 months in the worst case (a row that crosses the 12-month line the day after a cleanup run waits a further 3 months for the next one). A monthly cadence bounds the worst case to ~13 months, which is close enough to the stated 12-month target to be an honest match for a "target" figure rather than a guaranteed exact cutoff. Run on the **1st of every month** by the controller, as a `psql` session against production (or, preferably, `python -m app.services.retention.cli --apply` — see above):
+```
+30 3 1 * * docker exec beauty_api python -m app.services.retention.cli --apply >> /var/log/beauty_retention.log 2>&1
+```
+
+Confirmed live on the host (`crontab -l`), not just in this doc. `backend/app/services/retention/policies.py` declares every clock below as data, `runner.py` runs them with a dry-run default and a per-policy cap, and `cli.py` (PR #160) is the entrypoint the crontab line calls. It also covers tokens, the observation clock, and the tombstone-anchor GC — none of which the manual `psql` steps below ever listed, since they predate the engine. The monthly automated run is now the actual operative process; the steps below are kept as a manual audit/fallback method (verifying the automated run's counts, or running by hand if the scheduled job is ever disabled), not the primary mechanism.
+
+**Cadence: monthly, not quarterly.** A quarterly cadence against a 12-month target allows actual retention to reach up to ~15 months in the worst case (a row that crosses the 12-month line the day after a cleanup run waits a further 3 months for the next one). A monthly cadence bounds the worst case to ~13 months, which is close enough to the stated 12-month target to be an honest match for a "target" figure rather than a guaranteed exact cutoff. Runs automatically on the **1st of every month**, 03:30 Europe/Athens (after the 03:00 backup). The manual `psql` cross-check (or `python -m app.services.retention.cli` without `--apply`, for a dry-run count) below remains useful for verifying a given month's run:
 
 1. **Messages/conversations** — `SELECT id, last_message_at FROM conversations WHERE last_message_at < NOW() - INTERVAL '12 months';` review the list, then delete the conversation's `messages` rows and the `conversations` row itself for any where the associated account is already anonymized/inactive, or where both parties' last activity is >12 months old.
 2. **Availability requests / appointments** — `SELECT id, created_at FROM availability_requests WHERE created_at < NOW() - INTERVAL '12 months';` and the equivalent for `appointments.starts_at`; delete rows past the window.

@@ -555,8 +555,8 @@ Localized:
 - [x] Data retention period chosen and recorded — 2 months (event + user data), reset disabled
 - [x] Internal/developer traffic decision recorded — not configured, no stable IP, documented as an accepted limitation
 - [x] Measurement ID stored only in the production `.env`, never committed to Git or public docs — not written anywhere in this repo; will be added directly to `.env` at Stage 2 activation
-- [ ] **Not yet done:** Stage 2 Privacy/Cookie Policy changes drafted (not deployed) — needed before Stage 2 goes live, not before T-013 closes
-- [ ] **Not yet done:** DebugView validation plan finalized for the Stage 2 activation window
+- [x] Stage 2 Privacy/Cookie Policy changes — drafted **and deployed**: `privacy/content.ts`/`cookies/*` describe GA4 as optional/consent-gated in all 4 locales, name Google as recipient, state the 2-month retention from step 6, list `_ga`/`_ga_<container-id>`, and cover withdrawal/international transfers. This checkbox was never updated after Stage 2 actually went live (2026-07-23) — corrected now.
+- [x] DebugView-equivalent validation — Stage 2's activation window is long past; the live `gtag()`/`dataLayer` verification performed repeatedly across T-015/T-056/T-058/T-066 and others (consent-gating, no pre-consent send, no duplicate `page_view`, withdrawal stops measurement) covers what this item asked for, even though it wasn't run as one discrete "DebugView plan." No open validation gap remains.
 
 **Explicitly out of scope for this ticket:** any application code change, backend/database change, rebuilding or redeploying `beauty_web`, enabling GA4 for real visitors, committing a Measurement ID, T-014 Stage 2 activation itself, T-015 product events.
 
@@ -705,7 +705,7 @@ New follow-up tickets filed as a direct result of this review: **T-044** (age-co
 
 **Acceptance Criteria:**
 - [x] `/privacy` (el), `/en/privacy`, `/ru/privacy`, `/uk/privacy` return 200 (corrected from the original spec's 3-locale list — the site has 4 locales, `uk` included) — confirmed in production
-- [ ] Page is linked in footer of all layouts — **not done**: no footer component exists anywhere in the codebase today (confirmed during this task); adding one is a separate, larger UI change out of scope for this ticket. Flagging as a follow-up, not silently building an unscoped footer here.
+- [x] Page is linked in footer of all layouts — closed by T-060 (Header/Footer & Global Shell), which built the `Footer.tsx` component this ticket found didn't exist yet; `/privacy` is now one of its links. This checkbox itself was never updated when that happened — corrected now.
 - [x] Page explicitly states whether Google Analytics is in use (corrected from "mentions Google Analytics by name" — it does not exist yet, so the policy says so plainly instead)
 - [x] Page mentions contact email `hello@lookla.gr` for data requests
 - [x] Page does not use a marketing tone (factual, plain language; zero `TODO` markers remain as of the final approved version — every point that was originally undecided now has an approved MVP decision)
@@ -1752,7 +1752,7 @@ T-068 regressions introduced: 0
 Known inherited analytics defect discovered: T-069
 ```
 
-Deliberately **not** recorded as "the full checklist passed without exception": one smoke acceptance point (`search_results_view` must not fire after Back) is not met on the map path. That defect predates T-068, did not worsen, requires a separate analytics decision, and is unrelated to the client-navigation mechanism — it is owned by **T-069**. See "Open finding" below.
+Deliberately **not** recorded as "the full checklist passed without exception": one smoke acceptance point (`search_results_view` must not fire after Back) was not met on the map path at the time this ticket closed. That defect predated T-068, did not worsen, required a separate analytics decision, and was unrelated to the client-navigation mechanism — it was owned by, and closed by, **T-069**. See "Open finding" below.
 
 **Map-return-flow UX boundary marker:** `2026-07-30 15:52:12 Europe/Athens (EEST)` — from this deployment, returning from a map-opened salon preserves search state. Useful for segmenting map-path return behaviour in later analysis. This is **not** a baseline reset: the Beta Visual Baseline remains `2026-07-30 11:39:31 Europe/Athens`, since T-068 changed no GA4 taxonomy and no conversion-event shape.
 
@@ -1788,7 +1788,7 @@ Isolated Playwright, full `Map → preview → salon detail → Back` flow with 
 - [x] Modifier-click browser defaults preserved
 - [x] Live production verification — passed, except the one item below
 - [x] Independent review — **APPROVE**
-- [ ] `search_results_view` must not fire after Back — **NOT met on the map path** (fires 2×); inherited defect, owned by **T-069**, see below
+- [x] `search_results_view` must not fire after Back — was **NOT met on the map path** (fired 2×) at T-068 close; closed by **T-069** (PR #65, deployed 2026-07-30 18:26:17 Europe/Athens, live-verified). This checkbox was never updated afterward — corrected now.
 
 **Live production verification (`https://lookla.gr`, 2026-07-30, post-deploy):** 48 cards established in List first (24 → 48, scrollY 2767), switched to Map, scroll set to its 181px maximum, preview opened by keyboard, navigated to salon detail, browser Back. Results: realm probe read `alive` on the detail page (**client-side, no new document**); returned to `view=map` with Leaflet rendered; **scrollY 181 → 181 exact** against the pre-measured value; **48 cards restored** (confirmed by switching back to List); **no page-1 flash** (card-count sampled 8× during restore, never showed 24); **no repeat initial search fetch** (`/api/salons?limit=24&page=1` did not reappear — only MapView's own `/api/salons/map?` refetch on remount, pre-existing); `salon_open` fired **exactly once** with the unchanged shape and **no second fire on detail mount**; destination, locale (`en`) and query context preserved; `tel:` still a plain `<a href="tel:...">`; Ctrl+click opened a new tab with the correct destination leaving the map page intact; T-063 keyboard model intact; no horizontal overflow; zero console or page errors.
 
