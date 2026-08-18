@@ -4878,7 +4878,7 @@ Both changes merged; compose change already applied and verified live; cache beh
 ### T-116 — Header: centred desktop nav, aligned language switcher, Ukrainian shows UA
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-18 14:14:51 Europe/Athens.
 
 #### Найдено
 
