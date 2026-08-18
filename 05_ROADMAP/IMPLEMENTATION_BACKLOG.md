@@ -4825,13 +4825,32 @@ Product Owner opened a new, explicitly sector-by-sector design pass (`design/` �
 
 #### Что сделать
 
-The supplied file bundles mark+wordmark+tagline as one fixed 1920×819 lockup. Rendered it at header scale (~36-40px tall) via `cairosvg` before shipping: the tagline is illegible noise below ~120px tall, so a header variant needs the tagline cropped out, not the whole file shrunk. Computed the mark+wordmark path's real bounding box from its own coordinate data (x:36.5-1865.5, y:155.0-690.5 — no curves, straight `M`/`L`/`Z` commands only, so an exact bbox, not an eyeballed one) and built `public/logo-header.svg` as a tightly-cropped variant containing just that one path, re-verified legible via the same renderer. `public/logo-full.svg` replaced outright with the supplied file (mark+wordmark+tagline) — the real deliverable for larger contexts, superseding T-105's procedural version. `Header.tsx` now renders `<img src="/logo-header.svg" alt="Lookla" width={114} height={36} />` instead of `<Logo compact />`. `Logo.tsx`/`Logo.test.tsx` deleted — zero remaining consumers after the swap, confirmed by grep before removing.
+The supplied file bundles mark+wordmark+tagline as one fixed 1920×819 lockup. Rendered it at header scale (~36-40px tall) via `cairosvg` before shipping: the tagline is illegible noise below ~120px tall, so a header variant needs the tagline cropped out, not the whole file shrunk. Computed the mark+wordmark path's real bounding box from its own coordinate data (x:36.5-1865.5, y:155.0-690.5 — no curves, straight `M`/`L`/`Z` commands only, so an exact bbox, not an eyeballed one) and built `public/logo-header.svg` as a tightly-cropped variant containing just that one path, re-verified legible via the same renderer. `public/logo-full.svg` replaced outright with the supplied file (mark+wordmark+tagline) — the real deliverable for larger contexts, superseding T-105's procedural version. `Header.tsx` now renders `<img src="/logo-header.svg" alt="Lookla" width={114} height={36} />` instead of `<Logo compact />` (size later increased 1.5x by T-114). `Logo.tsx`/`Logo.test.tsx` deleted — zero remaining consumers after the swap, confirmed by grep before removing.
 
 **Accessibility note, deliberate:** the wordmark is vector paths now, not HTML text — T-105's own "wordmark stays real text" rationale no longer applies once the asset itself doesn't offer that option. The link's accessible name now comes entirely from the `<img>`'s `alt="Lookla"`, not from readable page text — covered by a dedicated test.
 
 #### Готово, когда
 
 Header renders the real artwork, legible at header scale (verified via rendering, not assumed); `logo-mark.svg` and `app/icon.svg` (favicon) intentionally untouched — separate sectors, not yet requested. Done — 3 new/updated tests in `Header.test.tsx`, full frontend suite green.
+
+---
+
+### T-114 — Header logo: 1.5x size
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Product Owner request: increase the header logo's display size by 1.5x.
+
+#### Что сделать
+
+`114×36` → `171×54` (exact 1.5x of both dimensions, same 1894:600 aspect ratio as `logo-header.svg`'s own viewBox — `w-auto` plus matching `width`/`height` attributes keeps it exact, not approximated). Header's own row stays `h-14` (56px) — a 54px-tall logo still fits without clipping, just with less vertical breathing room than before (1px combined top/bottom padding vs. 20px); not flagged as a problem unless the Product Owner says otherwise on seeing it live.
+
+#### Готово, когда
+
+Logo renders at the new size, aspect ratio still exact. Done — 2 tests updated/added in `Header.test.tsx` (one generalized to check the aspect ratio holds rather than hardcoding the old pixel values, one pinning the new 171×54 figures specifically).
 
 ---
 
