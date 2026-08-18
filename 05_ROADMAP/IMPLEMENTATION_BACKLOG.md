@@ -4854,6 +4854,27 @@ Logo renders at the new size, aspect ratio still exact. Done — 2 tests updated
 
 ---
 
+### T-115 — Two low-risk deploy-speed improvements
+
+**Priority:** P2 | **Owner:** INFRA | **Epic:** EPIC-09
+**Status:** ✅ Done. `docker-compose.yml` change already live (applied and verified before commit — no artifact-based redeploy needed for a compose-only change); the workflow change takes effect on its next real trigger.
+
+#### Найдено
+
+Product Owner question: why does most visible session time go into deploy, and is it Docker's fault. Answer: mostly the GH Actions build round trip (this host can't run `docker compose build` — documented 2GB RAM ceiling), not Docker itself, plus every deploy repeating the same ~10-step orchestration regardless of how small the change was.
+
+#### Что сделать
+
+**1. Bind-mount `frontend/public` into `beauty_web`, read-only.** Next's standalone server reads `public/` from disk per request, not bundled into the JS (`frontend/Dockerfile` already `COPY`s it as a separate step from the standalone output for this reason) — a static-asset-only change (swapped SVG/PNG/icon) can now take effect immediately for an already-known filename, no rebuild, no GH Actions round trip at all. Verified live before committing: edited `logo-mark.svg`'s bytes on the host, `curl` against the running container showed the new content with zero restart, then reverted cleanly. A brand-new filename still needs one cheap `docker compose up -d --no-deps web` (Next keeps a build-time manifest of known public paths). Any change touching a component still needs the normal build.
+
+**2. Two `actions/cache` layers in `build-artifact.yml`**, both keyed on `package-lock.json`'s hash: `node_modules` (skips `npm ci` outright on an unchanged lockfile — `if: steps.node_modules_cache.outputs.cache-hit != 'true'` gates the install step, since `npm ci` unconditionally reinstalls by design and caching the directory alone does nothing without that gate) and Next's own `.next/cache` incremental build cache (lets webpack skip recompiling unchanged modules). Measured on two real triggered runs on the feature branch, not estimated: cold cache 86s total; warm cache (same commit) **57s total** — "Install dependencies" skipped entirely, "Build" dropped ~41s → ~34s. **~34% reduction**, confirmed by direct measurement.
+
+#### Готово, когда
+
+Both changes merged; compose change already applied and verified live; cache behaviour confirmed by triggering the workflow twice and reading the actual step logs (cache-hit/miss lines), not assumed from the YAML alone.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
