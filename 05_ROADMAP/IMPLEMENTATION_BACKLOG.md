@@ -4875,6 +4875,31 @@ Both changes merged; compose change already applied and verified live; cache beh
 
 ---
 
+### T-116 — Header: centred desktop nav, aligned language switcher, Ukrainian shows UA
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Product Owner request, three related header fixes: (1) desktop nav links ("Salons & Studios" / "Professionals") should sit centred in the row, not flowed right next to the logo; (2) the language switcher sits visibly lower than the nav links it should align with; (3) Ukrainian's displayed code should read "UA", not "UK".
+
+Root cause of (2): `LanguageSwitcher.tsx`'s own wrapper carried a hardcoded `mt-2` — harmless in the footer (a standalone line under the copyright text) and in the header's mobile menu (its own `pt-3` wrapper already spaces it), but in the desktop header row it pushed the switcher 8px below its `items-center` siblings.
+
+#### Что сделать
+
+**Centring:** row container gained `relative`; nav's className changed from `md:ml-6` (flowed after the logo) to `md:absolute md:left-1/2 md:-translate-x-1/2` (true centre of the row regardless of how wide the logo or right-hand block are, not "centred in leftover space"). Currently safe at the 768px `md` breakpoint because the right-hand block is language-switcher-only while `user_accounts` stays disabled (T-083) — flagged in code for re-checking if that ever changes.
+
+**Alignment:** `mt-2` removed from `LanguageSwitcher.tsx` itself; moved to a wrapper `<div className="mt-2">` at Footer.tsx's own call site — the one place that actually wants the gap. Header's two call sites (desktop row, mobile menu) no longer inherit a margin that wasn't theirs.
+
+**UA label:** new `DISPLAY_LABEL` map (`{ el: 'EL', en: 'EN', ru: 'RU', uk: 'UA' }`) — only the rendered text changes; `LOCALES`, routing, `switchLocale()`, and next-intl's own locale identifier all still use `'uk'` everywhere. "UK" as rendered text reads as United Kingdom, not a language code.
+
+#### Готово, когда
+
+Nav visually centred at `md`+; language switcher's baseline matches its row siblings; Ukrainian button reads "UA" while `/uk/...` routes and `switchLocale('uk')` are untouched. Done — 7 new tests across `Header.test.tsx`, `LanguageSwitcher.test.tsx`, `Footer.test.tsx`.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
