@@ -5016,7 +5016,7 @@ A salon with a broken/expired photo shows the leaf placeholder, never blank spac
 ### T-121 — Hero carousel corrections (live feedback on T-120)
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, deployed — pending final full-suite confirmation and off-host build.
+**Status:** ✅ Done, deployed 2026-08-18 18:42:34 Europe/Athens. Live-verified structurally: exactly 5 `role="tab"` dots (mobile only — was 10 with T-120's desktop carousel), `translate-y-1/4` present, `translate-y-1/2` confirmed gone (0 matches), the swipeable wrapper's `touch-pan-y` class present. 19/19 smoke checks passed, full frontend suite 1462/1462 passed pre-deploy.
 
 #### Найдено
 
