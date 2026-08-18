@@ -4922,7 +4922,7 @@ Mobile dropdown links render centred. Done — 2 new tests, both had to work aro
 ### T-118 — Homepage hero recomposition (section-1.jpg reference)
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done.
+**Status:** ✅ Done, deployed 2026-08-18 16:39:59 Europe/Athens. Live-verified structurally: chip label + 5 `/search?category=` links, the full-bleed wrapper's exact classes, the gradient-fade classes, the brand arrow circle's classes, and 4 `loading="eager" fetchPriority="high"` images (2 per breakpoint: background + card thumbnail) all present in the live SSR HTML.
 
 #### Найдено
 
