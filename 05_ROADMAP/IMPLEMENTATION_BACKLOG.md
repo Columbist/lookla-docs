@@ -4814,7 +4814,28 @@ No bare `max-w-6xl`/`max-w-4xl` remains in either component; both Footer rows sh
 
 ---
 
-*Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112 was — not pre-specified, per RFC-0002's own phasing discipline.*
+### T-113 — Header logo: real designer artwork replaces the procedural mark
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Product Owner opened a new, explicitly sector-by-sector design pass (`design/` — real source files, starting with the header) and supplied `Lookla_Beauty_Marketplace_logo_header.svg`: professional artwork — a wine-red line-art lotus mark + serif "Lookla" wordmark + a grey "BEAUTY MARKETPLACE" tagline, all baked into vector paths (not live text). This supersedes T-105's procedurally-generated `<Logo>` component (a simple 5-petal `currentColor` mark + real HTML wordmark text), which was always a placeholder pending real design assets.
+
+#### Что сделать
+
+The supplied file bundles mark+wordmark+tagline as one fixed 1920×819 lockup. Rendered it at header scale (~36-40px tall) via `cairosvg` before shipping: the tagline is illegible noise below ~120px tall, so a header variant needs the tagline cropped out, not the whole file shrunk. Computed the mark+wordmark path's real bounding box from its own coordinate data (x:36.5-1865.5, y:155.0-690.5 — no curves, straight `M`/`L`/`Z` commands only, so an exact bbox, not an eyeballed one) and built `public/logo-header.svg` as a tightly-cropped variant containing just that one path, re-verified legible via the same renderer. `public/logo-full.svg` replaced outright with the supplied file (mark+wordmark+tagline) — the real deliverable for larger contexts, superseding T-105's procedural version. `Header.tsx` now renders `<img src="/logo-header.svg" alt="Lookla" width={114} height={36} />` instead of `<Logo compact />`. `Logo.tsx`/`Logo.test.tsx` deleted — zero remaining consumers after the swap, confirmed by grep before removing.
+
+**Accessibility note, deliberate:** the wordmark is vector paths now, not HTML text — T-105's own "wordmark stays real text" rationale no longer applies once the asset itself doesn't offer that option. The link's accessible name now comes entirely from the `<img>`'s `alt="Lookla"`, not from readable page text — covered by a dedicated test.
+
+#### Готово, когда
+
+Header renders the real artwork, legible at header scale (verified via rendering, not assumed); `logo-mark.svg` and `app/icon.svg` (favicon) intentionally untouched — separate sectors, not yet requested. Done — 3 new/updated tests in `Header.test.tsx`, full frontend suite green.
+
+---
+
+*Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
 
