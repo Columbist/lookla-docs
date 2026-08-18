@@ -4817,7 +4817,7 @@ No bare `max-w-6xl`/`max-w-4xl` remains in either component; both Footer rows sh
 ### T-113 — Header logo: real designer artwork replaces the procedural mark
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, deployed 2026-08-18 12:35:44 Europe/Athens.
+**Status:** ✅ Done, deployed 2026-08-18 12:35:44 Europe/Athens. **Correction deployed 2026-08-18 12:58:10** — Product Owner caught that the first crop dropped the "BEAUTY MARKETPLACE" tagline entirely instead of just trimming canvas around all three elements; restored, byte-identical geometry, live-verified.
 
 #### Найдено
 
