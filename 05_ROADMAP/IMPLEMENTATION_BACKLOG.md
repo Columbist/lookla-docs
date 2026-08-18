@@ -4979,6 +4979,40 @@ Photo stops at `max-w-shell-grid` on wide viewports; mobile card overlaps the ph
 
 ---
 
+### T-120 — Hero becomes a 5-salon carousel; broken-photo fallback; leaf placeholder; new favicon
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Implemented, tests written — pending final full-suite confirmation and deploy.
+
+#### Найдено
+
+Product Owner, live feedback after T-119, four items in one message:
+
+1. **Real bug** (not the "already correct" T-119 confirmation — a genuinely different case): the floating card showed *nothing* for a salon with only a single photo. Investigated live against production (curl'd the actual SSR HTML, then followed the exact `<img src="/api/media/photo/…">` the card rendered): the URL resolved fine structurally, but the underlying photo proxy 302-redirected to Google's Places Photo API and got a **400** back — the stored `photo_reference` had expired (a known Google Places API limitation: photo references aren't permanent). With `alt=""` on a failed `<img>`, browsers render *nothing* — no broken-image glyph, just blank space. Not actually specific to "exactly one photo" — any salon whose displayed photo happens to be an unmigrated, since-expired Google reference hits this, single-photo salons just happened to be the case in front of the Product Owner. `SalonCard.tsx` already had the right pattern for this (T-065's `imageFailed`/`onError`) — `HeroSalonCard` and the hero background photo never got it when T-106/T-118 introduced them.
+2. Mobile card should be centred horizontally and docked lower (`design/section-1-mobile.jpg` reference), not pinned to the bottom-right corner (T-119's treatment).
+3. New feature: the background+card composition becomes a carousel of 5 real salons, with 5-dot navigation below/over it.
+4. Two new design assets dropped: `lookla-lotus-icon.svg` (favicon) and `letter-l-leaf-logo.svg` (missing-image placeholder).
+
+#### Что сделать
+
+**Broken/missing-photo fallback, site-wide.** Same `useState`/`onError` pattern T-065 established in `SalonCard.tsx`'s `PhotoFallback`, extended to every other "photo" surface: `HeroSalonCard`'s thumbnail (`imageFailed`/`showThumb`), the new `HeroCarousel.tsx`'s background photo (`HeroPhoto` component — falls back to a `bg-gradient-to-br from-brand-soft to-accent-soft` panel, reusing `HeroDecoration`'s own palette, not an invented colour), and `SalonCard.tsx`'s own `PhotoFallback` — which switched from a generic lucide `Building2` icon to the Product Owner's `leaf-placeholder.svg`, so there's one visual language for "no photo" everywhere, not two. Root cause (expired Google Places photo references on unmigrated salons) is a backend/data problem this ticket doesn't fix — flagged separately, out of scope here.
+
+**Carousel.** `HeroVisualDesktop`/`HeroVisualMobile` (page.tsx-resident, single-salon) replaced by `components/HeroCarousel.tsx`'s `HeroCarouselDesktop`/`HeroCarouselMobile` (client components — a carousel needs interactive state). `page.tsx` now calls `selectHeroSalons(pool, 5)` instead of `1`, fetches each salon's photo list in one `Promise.all` (bounded to 5, parallel — not the sequential single-salon fetch T-118 added, since which 5 salons these are is still only known after the pool resolves, but there's no longer just one to fetch for), and builds a `HeroSlide[]` (`{ salon, cardPhoto }`) passed down. Desktop and mobile each run their **own independent** `index`/autoplay state rather than one shared via React context — only one of the two is ever visible at a time (`hidden md:block` / `md:hidden`), so nothing real is lost, and two self-contained components are far simpler than a context-sharing setup. Autoplay: 6s interval, pauses on hover/focus (desktop), skipped entirely under `prefers-reduced-motion`, dot-click always works regardless. Dots: one per slide (none for ≤1), `role="tab"`/`aria-selected`, `aria-label` is the salon's real name (not "Slide N"). Every slide gets `key={active.salon.id}` on both the photo and the card so a previous slide's `imageFailed` state can never leak onto the next salon.
+
+**Mobile card reposition.** `absolute inset-x-0 bottom-0 translate-y-1/2 flex justify-center` — centred, docked half onto/half below the photo's bottom edge, matching `section-1-mobile.jpg`; replaces T-119's `absolute bottom-3 right-3`.
+
+**Favicon.** `app/icon.svg` replaced verbatim with the Product Owner's `lookla-lotus-icon.svg`.
+
+**Placeholder asset.** `letter-l-leaf-logo.svg` → `public/leaf-placeholder.svg`, used by all three fallback sites above.
+
+#### Готово, когда
+
+A salon with a broken/expired photo shows the leaf placeholder, never blank space, on the hero card, the hero background, and any `SalonCard` grid tile. The hero rotates through up to 5 real salons with working dot navigation and autoplay (paused on hover, off under reduced-motion). The mobile card sits centred and docked lower on the photo. Favicon and placeholder assets are the Product Owner's own supplied files, not procedural approximations.
+
+**Honestly flagged:** no browser tooling on this host — implementation and the bug's root cause were verified structurally (curl against the live SSR HTML, following the actual photo URL's redirect chain to the real 400 from Google's API), not with a pixel-level visual comparison against `section-1-mobile.jpg`. Worth a live look once deployed.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
