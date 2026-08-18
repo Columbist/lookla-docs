@@ -4919,6 +4919,35 @@ Mobile dropdown links render centred. Done — 2 new tests, both had to work aro
 
 ---
 
+### T-118 — Homepage hero recomposition (section-1.jpg reference)
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Product Owner started a sector-by-sector design pass with a reference mockup (`design/section-1.jpg`, the target for the homepage hero) and named three concrete gaps against the live T-106 implementation:
+
+1. No "Popular searches" chip row under the search bar.
+2. The hero photo was a fixed-height, contained, rounded-corner tile — not full-bleed to the section's own height and right edge, and no gradient blend into the left content.
+3. The floating salon card showed the *same* photo as the background; the arrow was a bare muted-gray icon, not a filled brand-coloured circle.
+
+#### Что сделать
+
+**Popular searches chips.** Real category data (the same list `CategoryGrid` renders below, not an invented "popular searches" concept) — first 5 categories, `bg-surface`/`rounded-pill` chips linking to the same `/search?category=` destination `CategoryGrid`'s own tiles use.
+
+**Full-bleed photo.** `HeroVisual` split into `HeroVisualDesktop` (absolutely positioned, `inset-y-0 right-0`, a *sibling* of the padded content column rather than nested inside it — needed to reach the section's true top/bottom/right edges, not stop at the content column's own padding/margin) and `HeroVisualMobile` (T-106's original contained treatment, unchanged, rendered after the text content so it still stacks below it in normal flow). Height comes from the text column's own natural content height via `inset-y-0` — no hardcoded pixel value, works at any content length. Left-edge blend: `bg-gradient-to-r from-surface-subtle to-transparent` over the photo's own left third, reusing the section's own background token rather than inventing a new colour.
+
+**Second card photo + arrow circle.** `page.tsx` fetches the hero salon's own photo list (`api.salons.photos(id)`, sequential after `selectHeroSalons` resolves which salon it is — one extra request, not N, measured live at 10-95ms once warm) and resolves a URL different from the displayed background (compared against the actual `primary_photo` string, not the `is_primary` flag alone — the backend's own `_primary_photo()` falls back to `photos[0]` when nothing is flagged primary, so a flag-only check could still pick the exact on-screen photo in that edge case), falling back to the same photo when the salon only has one. `HeroSalonCard` gained an optional `photoUrl` prop for this. The arrow is now a filled `bg-brand` circle with a white glyph (`text-text-inverse`), matching the Search/Register buttons' own colour — not an invented third accent.
+
+#### Готово, когда
+
+Chips render from real category data; desktop photo fills the section's full height and bleeds to its right edge with a left-edge fade; the floating card can show a different photo than the background when one exists, with a brand-coloured arrow circle. Done — ~20 new/updated tests across `homepage.test.ts` and `HeroSalonCard.test.tsx`, full frontend suite green (1434 passed).
+
+**Honestly flagged:** no browser tooling on this host (established repeatedly this session) — implementation matches the reference mockup's described structure and was verified via source-level tests, lint, and `next build`, not a pixel-level visual comparison. Worth a live look once deployed.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
