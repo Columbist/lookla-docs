@@ -5045,7 +5045,7 @@ Desktop hero shows one static salon, no dots, no autoplay, no touch handlers. Mo
 ### T-122 — Card photo still not showing: real root cause found (unmigrated Google photo proxy); mobile chip count
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, deployed — pending final full-suite confirmation and off-host build.
+**Status:** ✅ Done, deployed 2026-08-18 19:07:26 Europe/Athens. Full frontend suite 1471/1471 passed pre-deploy, 19/19 smoke checks passed. Superseded same-day by T-123 (see below) once live re-verification found this pass's "any different photo" fallback tier still frequently broken.
 
 #### Найдено
 
@@ -5064,6 +5064,27 @@ T-120/T-121 had both *confirmed the resolution logic matched the spec* ("second 
 The card thumbnail prefers a real, working photo over a proxy URL likely to 400. Mobile "Popular searches" shows 3 chips (fits one line), desktop still shows 5.
 
 **Honestly flagged:** this doesn't close the underlying gap — 69% of non-primary photos across the hero pool are still unmigrated, and even the "prefer migrated" picker falls through to a proxy URL (and then T-120's onError placeholder) whenever a salon has zero migrated alternatives. The real fix is a backend photo-migration pass; worth its own ticket, out of scope here.
+
+---
+
+### T-123 — pickCardPhoto refinement: never choose a proxy URL, even as a last resort
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, deployed — pending final full-suite confirmation and off-host build.
+
+#### Найдено
+
+Self-caught, live, immediately after deploying T-122: T-122's own "honestly flagged" note said the *any-alternative* fallback tier would still serve a broken proxy URL "whenever a salon has zero migrated alternatives" — checked how often that actually is, right after deploying. Pulled the live homepage's card-thumbnail URL 5 times: 4 of 5 were still `/api/media/photo/{id}` proxy URLs returning a live 400. Quantified against the same 24-salon hero pool T-122 measured: only **7 of 24 salons (29%) have any migrated alternative photo at all** — the other 71% have either no alternative photo or only proxy ones. T-122's "fall back to any different photo, even unmigrated — better odds than none" reasoning was wrong in practice: for the 71% majority, that tier *was* the near-guaranteed-broken pick, not a fallback.
+
+#### Что сделать
+
+**`pickCardPhoto` tightened.** Removed the "any different photo" fallback tier entirely. Now exactly two outcomes: an already-migrated alternative photo, or the primary/background photo again (itself essentially always migrated — 19/19 in the same sample). A proxy URL is never the *chosen* card photo, full stop — reasoned from the Product Owner's own stated intent ("if there's a second picture show it, if not, the same first picture"): a photo known to fail on load isn't a usable second picture, so it doesn't count as "having one." T-120's `onError` fallback (leaf placeholder) still covers the rare case where even a migrated URL goes bad.
+
+#### Готово, когда
+
+The card thumbnail is either a real, working second photo, or visibly the same photo as the background — never a coin-flip on a proxy URL. Live re-verified: 5 consecutive homepage loads, checking the actual rendered card-thumbnail URL each time.
+
+**Honestly flagged:** still doesn't close the underlying migration gap (71% of hero-pool salons have no migrated alternative at all, so most cards will show the *same* photo as the background rather than a genuine second one) — that's the backend/data-pipeline fix this ticket still doesn't attempt.
 
 ---
 
