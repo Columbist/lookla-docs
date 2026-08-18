@@ -4948,6 +4948,37 @@ Chips render from real category data; desktop photo fills the section's full hei
 
 ---
 
+### T-119 — Hero recomposition corrections (live feedback on T-118)
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Product Owner feedback after seeing T-118 live, four real corrections:
+
+1. The section had stretched to the full viewport width — T-118's full-bleed photo bled to the actual viewport edge, past `max-w-shell-grid`, which every other section on the page stops at; the hero read as a wider container than the rest of the site.
+2. (Confirmed already correct, no code change needed: salons without a second photo already fall back to the same primary photo on the card — verified against T-118's own fallback chain.)
+3. On mobile, the card needed to dock directly onto the photo (matching desktop), not sit in a separate block below it.
+4. A gradient/transparency needed removing from the mobile hero — traced to `HeroDecoration`'s second blur circle, which had nothing opaque covering it on mobile once the card started overlapping the photo directly (point 3), and was showing through as an unwanted extra glow.
+5. The gap above the H1 headline should match the gap the subtitle already has to the search bar (`mb-8`, 32px) — the section's own top padding was `py-16` (64px), unrelated to and double that figure.
+
+#### Что сделать
+
+**Width cap.** `HeroVisualDesktop` now renders inside a dedicated `absolute inset-y-0 inset-x-0 mx-auto max-w-shell-grid` wrapper instead of anchoring directly to the section — full height via `inset-y-0` on the wrapper, but its `right-0` now lands on the same boundary every other section's content stops at, not the viewport's true edge.
+
+**Mobile card docking.** `HeroVisualMobile`'s photo container gained `relative`; the card's wrapper changed from a normal-flow `<div className="mt-3">` below the photo to `<div className="absolute bottom-3 right-3">` on top of it — one visual unit, matching desktop.
+
+**Decoration fix.** `HeroDecoration`'s second (`-bottom-28 right-0`) blur circle gained `hidden md:block` — on desktop it was already invisible (the opaque photo covers that whole quadrant regardless), so this only actually changes mobile's rendering.
+
+**Spacing.** Section's `py-16` → `pt-8 pb-16` — `pt-8` (32px) now matches the subtitle's own `mb-8` exactly; bottom padding untouched (not part of the complaint).
+
+#### Готово, когда
+
+Photo stops at `max-w-shell-grid` on wide viewports; mobile card overlaps the photo; no stray gradient/glow behind the mobile photo+card; top spacing matches the subtitle-to-search gap. Done — 4 new tests in `homepage.test.ts`, existing T-118 tests updated for the new width-cap wrapper and mobile markup, full frontend suite green.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
