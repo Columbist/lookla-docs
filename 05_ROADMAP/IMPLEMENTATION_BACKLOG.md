@@ -4900,6 +4900,25 @@ Nav visually centred at `md`+; language switcher's baseline matches its row sibl
 
 ---
 
+### T-117 — Mobile burger dropdown: centre the nav links too
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done.
+
+#### Найдено
+
+Follow-up to T-116: the mobile burger dropdown's own copy of the nav links ("Salons & Studios" / "Professionals") was still left-aligned text in a full-width row — T-116 only centred the desktop nav.
+
+#### Что сделать
+
+Added `justify-center` to the mobile nav `<Link>`'s className (was `flex items-center gap-3 ...`, text left-aligned by flex's default `justify-start`). Desktop nav untouched — it centres itself via T-116's absolute positioning, not `justify-content`, so this doesn't get layered onto it.
+
+#### Готово, когда
+
+Mobile dropdown links render centred. Done — 2 new tests, both had to work around the same comment-vs-code `indexOf` trap this project keeps hitting (the file's own top-of-file doc comment literally quotes `{open && (...)}` as prose, so a naive first-match search finds that instead of the real JSX further down — same for a second `isEnabled('user_accounts')` occurrence in the earlier desktop block).
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
