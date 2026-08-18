@@ -5042,6 +5042,31 @@ Desktop hero shows one static salon, no dots, no autoplay, no touch handlers. Mo
 
 ---
 
+### T-122 — Card photo still not showing: real root cause found (unmigrated Google photo proxy); mobile chip count
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, deployed — pending final full-suite confirmation and off-host build.
+
+#### Найдено
+
+Product Owner: the card photo still wasn't showing reliably, with the (accurate) suspicion that "the algorithm seems to count our placeholder as a photo too." Plus: on mobile, the "Popular searches" chip row wraps to 3 lines — should be 3 chips, not 5.
+
+T-120/T-121 had both *confirmed the resolution logic matched the spec* ("second photo if one exists, else the same first photo") without ever checking whether the resolved URL actually **loads** — that gap is exactly what this report caught. Investigated live: curl'd the current homepage repeatedly, pulled the actual card-thumbnail URLs being rendered, and found several in the `/api/media/photo/{id}` shape (the same live Google-proxy redirect T-120 diagnosed) rather than the permanent `https://cdn.lookla.gr/...` shape. Quantified against the real hero pool (`/api/salons?limit=24&min_rating=4`, all 24 salons' full photo lists): **132 of 190 non-primary photos (69%) are still unmigrated proxy URLs**, and a 10-URL sample of those proxy URLs came back **10/10 with a live 400** from Google's Places Photo API (expired `photo_reference`). `primary_photo` itself was 100% migrated (19/19 cdn URLs) in the same sample — so the background photo is fine, but T-118/T-120's card-photo picker (`.find(p => p.url !== primary_photo)`) took whichever non-primary photo happened to sit first in the array, migrated or not — and with 69% of the field being broken proxy URLs, it very often picked a losing one. Not the placeholder literally being "counted as a photo" — the actual mechanism is a reliability blind spot in the picker, landing on the same visible symptom (placeholder shows instead of a real second photo) the Product Owner's intuition was pointing at.
+
+#### Что сделать
+
+**`pickCardPhoto` (new, `lib/heroSalons.ts`, pure + unit-tested).** Prefers an already-migrated `cdn.lookla.gr` alternative different from the background photo; falls back to *any* different photo (even unmigrated — better odds than none) only when no migrated alternative exists; falls back to the background photo itself when the salon truly has just the one. Replaces the inline `.find()` in `page.tsx`. Doesn't fix the migration gap itself (backend/data pipeline, tracked separately, not this ticket's scope) — just has the frontend pick the reliable candidate when one's available.
+
+**Mobile chip count.** `categories.slice(0, 5)` unchanged (desktop still gets 5, there's room) — chips at index ≥3 gain `hidden md:inline-block`, a CSS-only split, not a smaller data slice, so the category set and hrefs are identical at every width, only what's visible differs.
+
+#### Готово, когда
+
+The card thumbnail prefers a real, working photo over a proxy URL likely to 400. Mobile "Popular searches" shows 3 chips (fits one line), desktop still shows 5.
+
+**Honestly flagged:** this doesn't close the underlying gap — 69% of non-primary photos across the hero pool are still unmigrated, and even the "prefer migrated" picker falls through to a proxy URL (and then T-120's onError placeholder) whenever a salon has zero migrated alternatives. The real fix is a backend photo-migration pass; worth its own ticket, out of scope here.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
