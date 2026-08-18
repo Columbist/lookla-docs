@@ -5013,6 +5013,35 @@ A salon with a broken/expired photo shows the leaf placeholder, never blank spac
 
 ---
 
+### T-121 — Hero carousel corrections (live feedback on T-120)
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, deployed — pending final full-suite confirmation and off-host build.
+
+#### Найдено
+
+Product Owner feedback after seeing T-120 live, three corrections:
+
+1. Desktop shouldn't carousel at all — mobile only.
+2. Mobile needs real touch swipe, not dot-click alone.
+3. Mobile card should overlap the photo by only a quarter of its own height, not half.
+
+(A fourth point in the same message — the card-photo fallback chain, "second photo if it exists, else the same first photo again" — was already exactly what T-118/T-120 built; confirmed unchanged, no code to fix.)
+
+#### Что сделать
+
+**Desktop reverted to static.** `HeroCarouselDesktop` replaced by `HeroDesktop` — takes a single `HeroSlide | undefined` (`heroSlides[0]`, still drawn from the same 5-salon pool `page.tsx` fetches for mobile), no `useCarousel`, no dots, no autoplay, no touch handlers. Same full-bleed photo + floating card treatment and the same T-120 broken-photo fallback, just no carousel machinery — a straight revert of the carousel-specific parts of T-120's desktop work, keeping the bug fix.
+
+**Real swipe on mobile.** `HeroCarouselMobile` → `HeroMobileCarousel`, gained `onTouchStart`/`onTouchMove`/`onTouchEnd` on the photo's wrapper div, tracked via `useRef` (no re-render per pixel of drag). A horizontal delta past `SWIPE_THRESHOLD_PX` (40px) calls `next()`/`prev()` (both added to `useCarousel`, wrap in both directions); autoplay pauses for the duration of the touch so it can't fight a mid-swipe drag. Dots and autoplay both stay, unchanged.
+
+**Card overlap reduced.** `translate-y-1/2` → `translate-y-1/4` on the mobile card's docking wrapper — a quarter of the card's own height dips below the photo instead of half. Dot-row top margin tightened `mt-10` → `mt-8` to match the smaller overhang.
+
+#### Готово, когда
+
+Desktop hero shows one static salon, no dots, no autoplay, no touch handlers. Mobile carousel responds to a real finger swipe in both directions as well as dot clicks and autoplay. Mobile card overlaps the photo by a quarter of its height, not half.
+
+---
+
 *Further Phase 3C tickets (if any) are filed once a concrete gap is found the same way T-112/T-113 were — not pre-specified, per RFC-0002's own phasing discipline.*
 
 ---
