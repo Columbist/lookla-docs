@@ -4982,7 +4982,7 @@ Photo stops at `max-w-shell-grid` on wide viewports; mobile card overlaps the ph
 ### T-120 — Hero becomes a 5-salon carousel; broken-photo fallback; leaf placeholder; new favicon
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Implemented, tests written — pending final full-suite confirmation and deploy.
+**Status:** ✅ Done, deployed 2026-08-18 18:17:02 Europe/Athens. Live-verified structurally: 10 `role="tab"` dots (5 desktop + 5 mobile) with real salon names as `aria-label`, the mobile card's new `absolute inset-x-0 bottom-0 translate-y-1/2` docking (T-119's `bottom-3 right-3` confirmed gone — 0 matches), `leaf-placeholder.svg` referenced in the live HTML (a real photo-less salon on the page), and the new favicon serving at `/icon.svg` (200, `image/svg+xml`, matches the supplied lotus asset). 19/19 smoke checks passed, full frontend suite 1456/1456 passed pre-deploy.
 
 #### Найдено
 
