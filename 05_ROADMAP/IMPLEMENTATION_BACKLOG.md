@@ -5174,6 +5174,29 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-130 — Popular services: equal tile heights, mobile toggle in brand red
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, immediately after T-129's deploy: "выровняй высоту квадратиков под одну. На мобильном кнопку сделай нашим красным цветом, как все кнопки в проекте, текст - белым" — two real issues in the just-shipped Popular services section. (1) category tiles weren't a uniform height across the grid. (2) the mobile "View all services" button used a bordered-secondary style instead of the site's actual brand-button convention.
+
+#### Что сделал
+
+**Tile height:** the tiles used `min-h-[76px]` (T-108) — a *floor*, not a fixed size. CSS Grid's default `align-items: stretch` already equalises tiles *within one row*, but a min-height floor still lets content-driven height differences show up *between rows*: two-line labels ("Skin & Face", "Lashes & Brows"...) grow taller than one-line ones, so a row that happens to contain more two-line labels ends up visibly taller than a row of short ones. Switched to a fixed `h-[96px]` — sized from `globals.css`'s own `text-body-sm` line-height math (icon 24px + `gap-2` 8px + two text lines ≈40px + `p-3` padding 24px = 96px, computed, not eyeballed), with `justify-center` absorbing the slack for one-line labels. Every tile is now the same height regardless of its row.
+
+**Mobile button colour:** replaced the bordered `bg-surface`/`text-text`/`border-border` treatment with the same primary-button pattern already used everywhere else in the project (`ComingSoon.tsx`, `Header.tsx`, `ReportButton.tsx`, `MapView.tsx`): `bg-brand text-text-inverse hover:bg-brand-hover`. The chevron icon inside it now also gets an explicit `text-text-inverse` (it sat on `currentColor` before, which would otherwise silently inherit whatever colour surrounded it once the button's own text colour changed). The desktop header toggle was explicitly out of scope — the Product Owner's ask said "на мобильном" — it stays the plain brand-coloured text link it already was.
+
+#### Готово, когда
+
+All category tiles read the same height regardless of which row they're in or how many lines their label wraps to. The mobile toggle button is filled brand red with white text and a white chevron, matching every other button on the site. 5 tests updated/added in `CategoryGrid.test.tsx` (stale T-108 min-height assertion rewritten for the fixed height; stale T-129 border assertion loosened; 3 new T-130 tests for the brand colour, the chevron colour, and the desktop-out-of-scope guarantee). Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — both changes are verified structurally (the exact Tailwind classes are present/absent where expected) and by hand-computed line-height arithmetic for the 96px figure, not pixel-checked against a real render. Worth a live look once deployed.
+
+---
+
 ### T-129 — Popular services: 8 on desktop (1 row), 6 on mobile (2 rows), expand/collapse the rest
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
