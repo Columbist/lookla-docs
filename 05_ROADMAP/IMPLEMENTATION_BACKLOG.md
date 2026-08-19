@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-130 — Popular services: equal tile heights, mobile toggle in brand red
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-19 18:03:46 Europe/Athens. Live-verified structurally against the running container (`127.0.0.1:3000/en` — the SNI multiplexer's Cloudflare-source gate, [[T-049]], rejects non-Cloudflare-source requests to `lookla.gr` even locally, so verification hit the container directly): exactly 14 tile links carry `h-[96px]`, zero remaining `min-h-[76px]`; the mobile "View all services" button carries `bg-brand text-text-inverse ... hover:bg-brand-hover`, its chevron carries `text-text-inverse`; the desktop toggle's own chevron does not (confirms it stayed out of scope, unstyled). 19/19 smoke checks passed, full frontend suite 1488/1488 passed pre-deploy.
 
 #### Найдено
 
