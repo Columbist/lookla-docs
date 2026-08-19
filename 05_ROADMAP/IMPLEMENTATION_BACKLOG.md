@@ -5120,6 +5120,33 @@ Tapping the hero photo (mobile or desktop) navigates to the salon, same as tappi
 
 ---
 
+### T-127 — T-126 correction: only the mobile slide links; desktop-photo Link was breaking the card's own click/hover
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, tests green — pending deploy.
+
+#### Найдено
+
+Product Owner, live feedback right after T-126 shipped:
+
+1. Photo-data bug (previous ticket) — leave it for now.
+2. Links: only the **mobile** slide should link — the ask never covered the desktop background photo, and it shouldn't link there.
+3. The **card** should be fully clickable everywhere, on every device — but it wasn't: hovering the salon name specifically, and some other spots inside the card, didn't work. T-126's own change was visible in the markup (the whole card still wrapped in one `<Link>`, unchanged) but something broke regardless.
+
+#### Что сделал
+
+T-126's first pass had made the *desktop* background photo a `<Link>` too (a broader read of the ask than intended), using `className="contents"` so it wouldn't affect layout — a full-bleed anchor with no box of its own, sitting directly underneath and fully overlapping the card. `display: contents` on an interactive element (`<a>`, `<button>`) has real, documented cross-browser inconsistencies in hit-testing and `:hover` — different engines have historically disagreed about how an element with no box participates in pointer/focus interaction, especially when another interactive element (the card) visually overlaps it. That match — a large `display: contents` anchor placed directly under the exact element reported as having broken hover — is the most likely explanation, though it can't be proven from this host without real browser testing.
+
+Fix: reverted `HeroPhoto` to plain, unlinked markup (no `Link`, no `locale` prop, no `onClick`) — used as-is on desktop, exactly like before T-126. `HeroMobileCarousel` now wraps `HeroPhoto` in an ordinary, conventionally-sized `<Link className="block w-full h-56 rounded-md shadow-resting overflow-hidden">` instead — a normal anchor with its own real box (not `display: contents`), which carries none of the same interactive-element risk. The card (`HeroSalonCard`) itself needed no change — re-confirmed it was always one `<Link>` wrapping its full contents on both breakpoints; the bug was the sibling element sitting under it, not the card's own markup.
+
+#### Готово, когда
+
+Desktop background photo is not a link. Mobile slide links to the salon (unchanged from T-126's actual intent). Card hover/click work consistently across every inner element, on every device. 6 tests rewritten in `HeroCarousel.test.ts` (the `display: contents` assertions replaced with assertions for their absence), full frontend suite green.
+
+**Honestly flagged:** the causal mechanism (display:contents anchor breaking a sibling's `:hover`) is a well-reasoned diagnosis, not a confirmed one — no browser tooling on this host to actually reproduce the broken hover state before or verify its absence after. Worth a live check once deployed.
+
+---
+
 ### T-123 — pickCardPhoto refinement: never choose a proxy URL, even as a last resort
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
