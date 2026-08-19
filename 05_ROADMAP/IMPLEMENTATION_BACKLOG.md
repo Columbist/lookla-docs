@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-131 — Top salons: tighter gap under Popular services, carousel on every breakpoint, "View all" always top-right
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-19 18:40:14 Europe/Athens. Live-verified structurally against the running container (`127.0.0.1:3000/en` — [[T-049]]'s Cloudflare-source gate rejects `:443` verification even locally, same as T-130): `pt-0 pb-12` present on the section (no `py-12` left on it), the carousel-width class string present, zero real `grid-cols-4` occurrences in the TopSalons markup (the one match found is AreaGrid's own unrelated `md:grid-cols-4`, a different section), and exactly one rendered `>View all<` link, unconditionally classed (no `hidden sm:`/`sm:hidden` gating), pointing at `/en/search`. 19/19 smoke checks passed, full frontend suite 1490/1490 passed pre-deploy.
 
 #### Найдено
 
