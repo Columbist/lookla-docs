@@ -5147,6 +5147,31 @@ Desktop background photo is not a link. Mobile slide links to the salon (unchang
 
 ---
 
+### T-128 — Real root cause of the broken card click/hover found: an invisible full-width sibling div, live since T-119
+
+**Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
+**Status:** ✅ Done, tests green — pending deploy.
+
+#### Найдено
+
+T-127's `display: contents` theory turned out to be wrong — the Product Owner reported the same broken click/hover on the card's upper portion (the salon name specifically) *after* T-127 removed the desktop photo Link entirely, meaning the real cause predated T-126 and had nothing to do with it. Root-caused properly this time: walked the Product Owner through a `document.elementFromPoint()` console diagnostic pointed at the dead zone, which identified the actual top-most element intercepting the click — the hero's own text-content wrapper div.
+
+`page.tsx`'s hero section renders the photo/card inside an `absolute` wrapper, then (as a later sibling) a text-content wrapper: `<div className="relative mx-auto px-4 ${hasHero ? 'max-w-shell-grid' : ...}">`. This **outer** div spans the section's *full* width (`max-w-shell-grid` — the same width the photo occupies) — only its **inner** child (`md:max-w-[50%] md:mx-0 md:text-left`) is actually capped to the left half and holds the visible headline/search/chips. The outer div's own box, empty and invisible on its right half, still fully exists there — a plain block element occupies its whole width regardless of where its content renders. Being `position: relative` and later in DOM order than the photo's `absolute` wrapper, it painted on top of the photo and the upper portion of the card for hit-testing purposes, even though nothing was visibly there. The card's own lower portion (arrow, address) sat below this div's bottom edge and was never covered — matching exactly what was reported ("upper part broken, including the name; some other spots too").
+
+This has been live since T-119 introduced the width-capped wrapper — not something T-126/T-127 introduced or could have fixed.
+
+#### Что сделал
+
+`pointer-events-none` on the outer wrapper div; `pointer-events-auto` on the inner column (the one holding the real interactive content — search bar, category chips) to restore its own clickability, since `pointer-events: none` is inherited by default. Unconditional — applies whether or not a hero photo exists (`hasHero` only governs the width/alignment classes, not the pointer-events fix).
+
+#### Готово, когда
+
+Nothing above the photo/card can silently intercept a click meant for them, on any device. 2 new tests in `homepage.test.ts` confirming the exact `pointer-events-none`/`pointer-events-auto` split and that it isn't gated behind `hasHero`.
+
+**Honestly flagged:** confirmed this time via a live `elementFromPoint()` diagnostic run by the Product Owner in their own browser, not just structural HTML review — the diagnosis behind this fix is solid, not a guess. Still worth a live re-click to confirm the fix itself lands correctly once deployed.
+
+---
+
 ### T-123 — pickCardPhoto refinement: never choose a proxy URL, even as a last resort
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
