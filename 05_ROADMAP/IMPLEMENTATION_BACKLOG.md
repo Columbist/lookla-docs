@@ -5174,6 +5174,31 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-131 — Top salons: tighter gap under Popular services, carousel on every breakpoint, "View all" always top-right
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, immediately after T-130: Popular services and Top salons sit on the same background with no visual separator (unlike the Areas section further down, which gets its own `bg-surface-subtle`) — both sections used identical `py-12`, so the shared boundary read as one doubled, un-anchored gap. Separately: Top salons should become a carousel on desktop too (it was a static 4-column grid there, carousel only on mobile), and its "View all salons" link — link to the search page, already correct — should sit top-right on every breakpoint, not just desktop-and-up with a second copy below the grid on mobile.
+
+#### Что сделал
+
+**Gap:** `TopSalons`'s section changed from `py-12` (48px top + 48px bottom) to `pt-0 pb-12` — `CategoryGrid`'s own `pb-12` is now the *entire* gap between the two sections, not half of a doubled one, landing back on the same 48px rhythm every other section already uses. Scoped to just this one boundary; `CategoryGrid`'s own padding and the Areas section's `py-12` (which has a real colour boundary, so the doubling was never visible there) are untouched.
+
+**Carousel everywhere:** removed the static `hidden md:grid md:grid-cols-4` desktop grid entirely. The one horizontal scroll-snap carousel that used to be mobile-only (`md:hidden`, T-096's mechanism, still no JS carousel library) now runs at every breakpoint, showing all fetched salons (was capped to 4 on desktop) instead of just the first 4. Card width narrows in steps as the viewport grows (`w-[72%] sm:w-[46%] md:w-[31%] lg:w-[23%]`) — each step still peeks a fraction of the next card to signal it scrolls, the same affordance the original mobile-only 72% already relied on, just carried through instead of stopping at `md`.
+
+**"View all salons":** the desktop-only header link (`hidden sm:inline-flex`) and the separate below-grid mobile link (`sm:hidden mt-4`) collapse into one link in the header, top-right, unconditionally visible — same destination as before (`/search`), no behaviour change beyond position.
+
+#### Готово, когда
+
+Top salons visibly sits closer to Popular services, without a stray doubled gap. Desktop can now scroll the salon row horizontally the same way mobile already could, seeing all fetched salons, not just 4. "View all salons" appears exactly once, top-right, on every screen width. 5 tests updated/added in `TopSalons.test.tsx` (grid-cols assertion replaced with a carousel-width assertion, `view all` link-count/no-breakpoint-gating test added). Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the card-width steps are a reasoned progression (matching the established mobile 72% pattern, not exact pixel math against the container's real rendered width) and the gap fix is verified structurally (`pt-0 pb-12` present, `py-12` gone from this one section), not pixel-checked against a real render. Worth a live look once deployed, especially the `sm`/`md` peek widths on real tablet-width devices.
+
+---
+
 ### T-130 — Popular services: equal tile heights, mobile toggle in brand red
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
