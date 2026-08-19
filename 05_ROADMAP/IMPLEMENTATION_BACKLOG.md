@@ -5097,7 +5097,7 @@ The card thumbnail prefers a real, working photo over a proxy URL likely to 400.
 ### T-126 — Hero photo becomes a real link too; a real cross-salon photo-data bug found
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, tests green — pending deploy.
+**Status:** ✅ Done, deployed 2026-08-19 14:44:37 Europe/Athens. Live-verified structurally on both breakpoints: photo is `<a class="contents" href="/salons/...">` wrapping the `<img>`, the card is a separate sibling `<a>` to the same href (not nested), and the desktop gradient overlay carries `pointer-events-none`. 19/19 smoke checks passed, full frontend suite 1478/1478 passed pre-deploy.
 
 #### Найдено
 
