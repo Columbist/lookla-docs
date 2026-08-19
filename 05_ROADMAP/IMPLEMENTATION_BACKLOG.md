@@ -5174,6 +5174,33 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-129 — Popular services: 8 on desktop (1 row), 6 on mobile (2 rows), expand/collapse the rest
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, tests green — pending deploy.
+
+#### Найдено
+
+Product Owner, next design sector: Popular services should show 8 categories on desktop (one row) and 6 on mobile (two rows), with a "View all services" control that expands the rest in place — same header slot/style Top salons' own "View all" uses on desktop (title left, link+arrow right), but as a real button below the grid on mobile, not a text link. Expanding centres the trailing (not-full-row) tiles rather than left-aligning them.
+
+#### Что сделал
+
+**`CategoryGrid` is now a client component** (`useState` for `expanded`) and owns its own `<section>`+`<h2>` — the same shape `TopSalons` already established — instead of the bare grid `page.tsx` used to wrap in its own section. `title`/`viewAllLabel`/`viewLessLabel` are now props, translated in `page.tsx` (`popular_services`/`view_all_services`/`view_less_services`, new keys, all 4 locales).
+
+**Two flat breakpoint tiers**, not the old five-step graduation (T-108) — `MOBILE_VISIBLE = 6` over `grid-cols-3` (exactly 2 rows), `DESKTOP_VISIBLE = 8` over `md:grid-cols-8` (exactly 1 row). The collapsed count *is* the column count on each tier by design — no separate "how many fit" calculation needed.
+
+**Two toggles, one shared `expanded` state**, both `<button>`s (not `<Link>`s — neither navigates, both expand the grid in place): the desktop one lives in the header row next to the title (`hidden md:inline-flex`, same text+chevron treatment `TopSalons`' real "View all" link uses, `ChevronDown` rotating 180° instead of a fixed `ChevronRight`, since "collapse again" is a real second state a navigation link never has); the mobile one is a real bordered button below the grid (`md:hidden`, explicit Product Owner request — a button, not a text link, since the header row itself is hidden at that width).
+
+**The remainder renders as a centred `flex flex-wrap justify-center` row, not more grid rows** — the Product Owner's explicit ask ("с выравниванием кубиков посередине"): a trailing partial row (4 left over on mobile, 2 on desktop) reads as centred, not left-aligned with a ragged gap on the right, which continuing the same grid would produce for any remainder that doesn't divide evenly by the column count.
+
+#### Готово, когда
+
+Desktop shows exactly 8 tiles in one row with a "View all services" link+chevron in the header; clicking it reveals the remaining tiles as a centred row and the link becomes "Show less". Mobile shows exactly 6 tiles in two rows with a bordered button below; tapping it does the same, centred at 3 columns. 24 new/updated tests in `CategoryGrid.test.tsx`, `homepage.test.ts` updated for the heading moving into the component, full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the "reads as centred" claim is verified structurally (the exact flex/justify-center classes are present, and the tile-width `calc()` values were computed by hand for each column count/gap, not eyeballed), not pixel-checked against a real render. Worth a live look once deployed.
+
+---
+
 ### T-123 — pickCardPhoto refinement: never choose a proxy URL, even as a last resort
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
