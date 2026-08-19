@@ -5150,7 +5150,7 @@ Desktop background photo is not a link. Mobile slide links to the salon (unchang
 ### T-128 — Real root cause of the broken card click/hover found: an invisible full-width sibling div, live since T-119
 
 **Priority:** P1 | **Owner:** FE | **Epic:** EPIC-13
-**Status:** ✅ Done, tests green — pending deploy.
+**Status:** ✅ Done, deployed 2026-08-19 16:20:20 Europe/Athens. Live-verified structurally: `relative mx-auto px-4 pointer-events-none max-w-shell-grid` on the outer wrapper, `pointer-events-auto max-w-shell-reading mx-auto text-center md:max-w-[50%] md:mx-0 md:text-left` on the inner column, both present in the live SSR HTML exactly as written. 19/19 smoke checks passed, full frontend suite 1480/1480 passed pre-deploy.
 
 #### Найдено
 
