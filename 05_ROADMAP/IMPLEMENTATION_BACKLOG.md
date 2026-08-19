@@ -5118,6 +5118,8 @@ Tapping the hero photo (mobile or desktop) navigates to the salon, same as tappi
 
 **Honestly flagged:** the cross-salon photo mismatch is real production data, not a frontend bug — deliberately left unfixed pending the Product Owner's direction (delete the two bad photos for this salon specifically, and/or investigate the crawler/import pipeline for how many other salons might be affected).
 
+**Correction (2026-08-19, Product Owner):** the "cross-salon" finding above was wrong — a false positive. Both points were clarified: (1) what showed on the card wasn't random, it was this same salon's real 7th photo, with photos 2–6 being blank placeholders, which is what made it look arbitrary; (2) the "vintage, unrelated barbershop" decor (records/mustache wall art) is *also this same salon* — photos 7–10 of its own series, not a different business. The visual style mismatch alone was never strong enough evidence of a data bug on its own, and shouldn't have been reported as one without a stronger signal (e.g., address/name cross-check). No code was ever changed based on the false finding — `pickCardPhoto` (T-122/T-123) was correct throughout and needed no revisiting.
+
 ---
 
 ### T-127 — T-126 correction: only the mobile slide links; desktop-photo Link was breaking the card's own click/hover
