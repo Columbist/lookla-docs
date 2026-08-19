@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-129 — Popular services: 8 on desktop (1 row), 6 on mobile (2 rows), expand/collapse the rest
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, tests green — pending deploy.
+**Status:** ✅ Done, deployed 2026-08-19 17:35:49 Europe/Athens. Live-verified structurally (`/en`, since the default `el` locale renders the heading in Greek): exactly 14 category tile links in the collapsed SSR HTML (8 desktop `md:grid-cols-8` + 6 mobile `grid-cols-3`), header button "View all services" with `aria-expanded="false"` in the right slot next to the `<h2>`, matching mobile button below the grid. 19/19 smoke checks passed, full frontend suite 1485/1485 passed pre-deploy.
 
 #### Найдено
 
