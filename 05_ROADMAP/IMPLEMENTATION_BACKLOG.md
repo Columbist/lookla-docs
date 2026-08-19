@@ -5123,7 +5123,7 @@ Tapping the hero photo (mobile or desktop) navigates to the salon, same as tappi
 ### T-127 — T-126 correction: only the mobile slide links; desktop-photo Link was breaking the card's own click/hover
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ✅ Done, tests green — pending deploy.
+**Status:** ✅ Done, deployed 2026-08-19 15:10:09 Europe/Athens. Live-verified structurally: zero `class="contents"` left anywhere in the page; desktop photo is back to a plain `<img>` with no anchor wrapper; mobile photo is `<a class="block w-full h-56 rounded-md shadow-resting overflow-hidden">`. 19/19 smoke checks passed, full frontend suite 1478/1478 passed pre-deploy.
 
 #### Найдено
 
