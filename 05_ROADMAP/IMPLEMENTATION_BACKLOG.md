@@ -5094,6 +5094,32 @@ The card thumbnail prefers a real, working photo over a proxy URL likely to 400.
 
 ---
 
+### T-126 — Hero photo becomes a real link too; a real cross-salon photo-data bug found
+
+**Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ✅ Done, tests green — pending deploy.
+
+#### Найдено
+
+Product Owner, two items:
+
+1. On mobile, the carousel's slide (the photo itself) should lead to the salon page the same way the card already does — tapping the photo, not just the small card, should navigate. Also: the card must stay fully clickable everywhere, not regress while adding this.
+2. A specific salon (`alex-men-s-hair-club-15771`) showed a second card photo that "doesn't belong to the salon" — investigated: `pickCardPhoto` correctly resolved to a migrated `cdn.lookla.gr` photo (its own logic isn't at fault), but two of that salon's *stored* photos (`.../photos/15771/5b91896c01e6.jpg`, `.../photos/15771/83c741f3c977.jpg`) are visually a completely different, unrelated barbershop (vintage/rustic decor — records on the wall, mustache wall art) — not the modern minimalist space the salon's own primary photo and other genuine photos show. The mismatch is baked into the storage path itself (`/photos/15771/...`), so this happened upstream, during crawl/import, not at display time.
+
+#### Что сделал
+
+**Photo click-through (both breakpoints).** `HeroPhoto` (`components/HeroCarousel.tsx`) now wraps its content in a real `<Link>` to the same salon, using `className="contents"` so the link takes itself out of the box model entirely — every existing size/position class on the `<img>` or the fallback panel still governs layout exactly as before, only the clickability changed. Fires the same `salon_open` analytics event the card fires, same shape. Kept as a sibling of `HeroSalonCard`'s own `<Link>`, never nested inside it (nested `<a>` is invalid HTML) — verified in tests. The desktop gradient-fade overlay (`bg-gradient-to-r from-surface-subtle`) gained `pointer-events-none` — it used to sit over the left third of the photo for free since nothing under it was clickable; now it would have silently eaten clicks in that zone without the fix. The card itself needed no change — it was already one `<Link>` wrapping its full contents on both breakpoints, confirmed by re-reading the existing component, not assumed.
+
+**Photo-data bug — investigated, not auto-fixed.** Downloaded and visually compared this salon's own photos: primary photo and one other clearly show a real, modern minimalist space matching the business; two others clearly show a different, vintage-styled barbershop. Spot-checked 5 other unrelated salons' own second photos the same way (download + view) — all 5 matched their own business's décor, no second instance found in that sample. Given the small sample size this doesn't rule out a wider problem, and root-causing *how* the mismatch happened (crawler association bug vs. a one-off) needs access to the import pipeline's own logs/logic, not just the photo table — flagged to the Product Owner rather than silently deleting or hiding data.
+
+#### Готово, когда
+
+Tapping the hero photo (mobile or desktop) navigates to the salon, same as tapping the card. No click dead-zones introduced by decorative overlays. 12 new/updated tests in `HeroCarousel.test.ts`, full frontend suite green (1478/1478, was 1471).
+
+**Honestly flagged:** the cross-salon photo mismatch is real production data, not a frontend bug — deliberately left unfixed pending the Product Owner's direction (delete the two bad photos for this salon specifically, and/or investigate the crawler/import pipeline for how many other salons might be affected).
+
+---
+
 ### T-123 — pickCardPhoto refinement: never choose a proxy URL, even as a last resort
 
 **Priority:** P1 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
