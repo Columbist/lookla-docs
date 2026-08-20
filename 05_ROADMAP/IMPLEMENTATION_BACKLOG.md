@@ -5174,6 +5174,31 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-139 — Bigger real salon pools for the hero rotation and Top salons
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner: "добавь в рандомный выбор лучших салонов и того что крутится на главном развороте побольше салонов, сейчас их совсем мало, по пальцам сосчитать, если обновлять страницу, выходят одни и те же" — both the hero's random rotation and Top salons feel too small and repetitive across reloads.
+
+#### Что сделал
+
+**Measured against the real production API before changing anything** (not guessed): `selectHeroSalons` further filters the hero pool down to salons with a `primary_photo` before shuffling. At the old `limit: 24`, a live sample showed only ~19 of those 24 actually have one — a 5-item shuffle drawn from ~19 candidates (C(19,5) ≈ 11.6k combinations) is small enough that a handful of page refreshes really can re-show overlapping sets, matching the report exactly. This wasn't a data shortage: the `min_rating >= 4` floor alone matches 5920 of 6320 total salons in the live DB (checked via the API's own `total` field, cross-checked against a deliberately narrow filter to confirm `total` really does respect filters and isn't a stale/unconditional count). The fix is a wider slice of that pool, not a lower quality bar.
+
+**`heroPool`:** `limit: 24` → `100`. At ~83% of a sampled 100-row page having a `primary_photo` (also measured live), that's roughly 83 real shuffle candidates instead of ~19 — a ~4.4x increase in genuine variety, not just a bigger number for its own sake.
+
+**`topSalonsPool`:** `limit: 15` → `40`. Same complaint extended to this carousel (it's circular and autoplays, T-133/T-134, so a small pool laps quickly). 4402 salons meet the exact `>=4.5 rating, >=20 reviews` floor live — no shortage of real data to draw from. Still real data only, never padded to exactly 40.
+
+#### Готово, когда
+
+Reloading the homepage a few times in a row shows a genuinely different set of hero salons and Top salons far more often, not the same handful reshuffled. 2 test assertions updated in `homepage.test.ts` for the new limit numbers. Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the fix is verified structurally (the new limit numbers are present in source) and the sizing decision is backed by live measurements against the real API (not a render-level check that variety actually *looks* different across reloads). Worth spot-checking with a few real reloads once deployed.
+
+---
+
 ### T-138 — Explore by area: more natural non-English section titles
 
 **Priority:** P3 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
