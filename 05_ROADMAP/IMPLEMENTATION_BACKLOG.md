@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-138 — Explore by area: more natural non-English section titles
 
 **Priority:** P3 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 17:30:39 Europe/Athens. Live-verified on the real public URL in all three touched locales: `/` (default `el`) shows "Σαλόνια ανά περιοχή", `/ru` shows "Салоны по районам", `/uk` shows "Салони за районами". 19/19 smoke checks passed, full frontend suite 1529/1529 passed pre-deploy.
 
 #### Найдено
 
