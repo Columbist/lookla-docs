@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-132 — Top salons carousel: exact 3/4-card counts, red arrow controls on grey circles
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 11:41:34 Europe/Athens. Live-verified structurally against the real public URL this time (`https://lookla.gr/en`, not just the container — closing the loop on T-131's caching question): exact card-width class present (8 salon cards × the one class string), zero leftover T-131 percentage-peek widths, exactly one `>View all<` link. The arrow buttons themselves don't appear in the static SSR HTML by design (`canScrollLeft`/`canScrollRight` both start `false` until client JS measures the real DOM post-mount — a curl can't execute that) — confirmed the wiring is real by finding "Scroll left"/"Scroll right" (the new translated `aria-label` prop values) serialized into the page's own hydration payload. 19/19 smoke checks passed, full frontend suite 1499/1499 passed pre-deploy.
 
 #### Найдено
 
