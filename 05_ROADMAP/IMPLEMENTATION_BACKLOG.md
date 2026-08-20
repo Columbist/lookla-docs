@@ -5174,6 +5174,31 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-137 — Explore by area: uncapped pool, 5/6-card layouts, both breakpoints expand
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, right after T-136: mobile's expand-in-place was confirmed working correctly, but it needs to reveal *all* real districts, not just the 8-item pool T-136 assumed was the whole set. Also: 3 tiles per row on mobile (was 2), 5 tiles per row on desktop (was 8), and desktop's own "View all areas" control should expand in place too, the same way mobile's does — not navigate away, which is what T-136 built it as.
+
+#### Что сделал
+
+**The real cap was one line, in a different file.** `lib/areaGrid.ts`'s `selectPopularAreas` capped the result at `DISPLAY_LIMIT = 8` — the backend's own `GET /api/areas` was never capped (`routers/categories.py` returns every Attica district with `salon_count > 0`, sorted, no `limit`/pagination at all), so the fix was removing that one frontend-side `.slice(0, DISPLAY_LIMIT)` call, not adding a new fetch. The full real pool (however many districts currently have salons) now reaches `AreaGrid` unchanged.
+
+**Desktop control changes from a Link to a real expand `<button>`.** T-136 built it as a navigation `<Link>` to `/search` specifically *because* `DESKTOP_VISIBLE` was set to match the then-capped whole pool exactly — there was nothing to expand into. Now that the pool is uncapped, that assumption no longer holds: desktop genuinely has real overflow beyond its own collapsed count, so building a fake/no-op toggle would have been backwards — instead the Link is gone entirely (along with the `viewAllHref` prop it needed), replaced by the same expand-`<button>` shape `CategoryGrid`'s own desktop toggle already uses. Mobile's toggle is untouched — it was already a real expand button in T-136, only its collapsed count changes.
+
+**Collapsed counts and remainder styling, mirroring T-129's own established pattern exactly.** `MOBILE_VISIBLE`: 4 (`grid-cols-2`) → 6 (`grid-cols-3`, still exactly 2 rows). `DESKTOP_VISIBLE`: 8 (`grid-cols-8`) → 5 (`grid-cols-5`, still exactly 1 row). Desktop now has its own `desktopRest`/centred-`flex-wrap`-remainder block, the same shape mobile's already had in T-136 — needed because, unlike T-136, `desktopRest.length` is no longer guaranteed to be zero.
+
+#### Готово, когда
+
+Both breakpoints' "View all areas" controls expand in place to reveal the entire real district pool, not just a fixed 8. Mobile shows 3 tiles per row, desktop 5. 9 tests rewritten/added in `AreaGrid.test.tsx`, 2 in `lib/areaGrid.test.ts` for the cap removal. Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the collapsed counts, remainder widths, and toggle wiring are verified structurally, not pixel-checked against a real render. Worth a live look once deployed, especially confirming the desktop remainder (a genuinely new code path this ticket, not just a smaller version of T-136's) reads as centred rather than ragged with a real large district pool.
+
+---
+
 ### T-136 — Explore by area: real per-district icons, 8/4-card layouts, desktop link + mobile expand
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
