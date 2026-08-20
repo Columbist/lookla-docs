@@ -5174,6 +5174,27 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-138 — Explore by area: more natural non-English section titles
+
+**Priority:** P3 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner: the Russian `home.popular_areas` string ("Изучите по районам", a literal imperative-verb translation of the English "Explore by area") reads as clumsy/calque-y — asked for a more natural, human phrasing across all non-English locales, not just Russian.
+
+#### Что сделал
+
+Every other homepage section title (`top_salons_title`, `popular_services`) is a plain noun phrase in every locale, not an imperative verb — `popular_areas`'s el/ru/uk translations were the odd ones out, literally carrying over English's "Explore..." verb construction instead of matching that established pattern. Switched all three to noun phrases naming what's actually shown ("salons, by district"), the same shape as their sibling titles: `ru` "Изучите по районам" → "Салоны по районам", `uk` "Досліджуйте за районами" → "Салони за районами", `el` "Εξερευνήστε ανά περιοχή" → "Σαλόνια ανά περιοχή". The English string itself (`en.json`'s "Explore by area") is untouched — it's the Product Owner's own literal wording from the original T-136 request, not something reported as awkward.
+
+#### Готово, когда
+
+All three non-English section titles read as natural, idiomatic phrases, matching the plain noun-phrase style every sibling section title already uses. No test asserted the literal old strings (only non-emptiness), so no test changes were needed beyond confirming the existing suite still passes.
+
+**Honestly flagged:** translation quality is judged by me, not a native-speaker review — reasoned from matching the established sibling-title pattern (a verifiable, mechanical consistency check) rather than a subjective claim that these three phrasings are definitively the most natural option in each language.
+
+---
+
 ### T-137 — Explore by area: uncapped pool, 5/6-card layouts, both breakpoints expand
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
