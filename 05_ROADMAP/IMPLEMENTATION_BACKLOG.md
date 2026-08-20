@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-136 — Explore by area: real per-district icons, 8/4-card layouts, desktop link + mobile expand
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 16:35:55 Europe/Athens. Live-verified against the real public URL (`https://lookla.gr/en`): "Explore by area" title present, "View all areas" appears twice (desktop link + mobile button, both server-rendered, mobile hidden only via CSS not JS), 8 real district icon `<img>` sources on the live homepage (`athens-center`, `glyfada`, `kallithea`, `kifissia`, `marousi`, `nea-ionia`, `peristeri`, `piraeus` — the current real top-8 pool, none needed the MapPin fallback), 8 desktop tiles at `h-20`, 4 mobile tiles at `h-[117px]` (the collapsed default, matching expectation). Directly fetched `/area-icons/glyfada.svg` from production and confirmed its `stroke` is the real `--brand` hex (`#a62e5c`), not the design asset's original off-brand value. 19/19 smoke checks passed, full frontend suite 1528/1528 passed pre-deploy (after catching and fixing a real regression in a pre-existing analytics test — see below).
 
 #### Найдено
 
@@ -5195,9 +5195,11 @@ Product Owner: rename the "Popular Areas" section to "Explore by area", add real
 
 **Section renamed and now owns its own layout.** `home.popular_areas`'s value changed to "Explore by area" (and equivalents in all 4 locales) rather than adding a new key — it was only ever used at this one call site. `AreaGrid` now owns its own `<section className="bg-surface-subtle py-12">` (the same shape `CategoryGrid`/`TopSalons` already use), not a bare grid `page.tsx` wrapped in its own section — needed so the header row's two different controls and the grid below them can share one `expanded` state.
 
+**Caught a real pre-existing test regression along the way.** `lib/analytics.test.ts` had a T-015-era test asserting exactly one `onClick`/`trackEvent` call site in this file — true when there was only one tile implementation, false the moment this ticket introduced two intentional, non-nested tile layouts (desktop row, mobile stack), each with its own real click. Rather than loosen the test to something meaningless, inlined `trackEvent` directly at each tile (removing a `select()` helper that added indirection without benefit, matching how every other component in this codebase calls `trackEvent` inline) and rewrote both that test and `AreaGrid.test.tsx`'s own assertions to expect exactly two real, non-nested call sites — with the reasoning for why that's correct now spelled out in the test itself, not just fixed silently.
+
 #### Готово, когда
 
-Desktop shows exactly 8 icon+name+count tiles in one row with "View all areas" top-right leading to `/search`. Mobile shows exactly 4 icon/name/bare-number tiles with a top-right button that expands to reveal the rest in place, matching Popular services. An area without a bespoke icon still shows a real, recognisable pin glyph, never a broken image. 25 tests rewritten in `AreaGrid.test.tsx`, `homepage.test.ts` updated for the heading/background checks moving into the component. Full frontend suite green.
+Desktop shows exactly 8 icon+name+count tiles in one row with "View all areas" top-right leading to `/search`. Mobile shows exactly 4 icon/name/bare-number tiles with a top-right button that expands to reveal the rest in place, matching Popular services. An area without a bespoke icon still shows a real, recognisable pin glyph, never a broken image. 25 tests rewritten in `AreaGrid.test.tsx`, `homepage.test.ts` updated for the heading/background checks moving into the component, `analytics.test.ts` corrected for the two-tile-layout regression above. Full frontend suite green.
 
 **Honestly flagged:** no browser tooling on this host — the two tile heights (80px, 117px) are computed from `globals.css`'s real line-height values, not eyeballed, and the icon/backend-slug cross-check was a real diff (`comm -23`/`comm -13` against the actual `area_metadata.py` source), not an assumption — but none of it is pixel-checked against a real render. Worth a live look once deployed, especially the two visually distinct tile layouts at their real breakpoints.
 
