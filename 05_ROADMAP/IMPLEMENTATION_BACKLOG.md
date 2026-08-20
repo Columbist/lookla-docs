@@ -5174,6 +5174,33 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-132 — Top salons carousel: exact 3/4-card counts, red arrow controls on grey circles
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, right after T-131's deploy, reported not seeing the carousel change live — separately investigated and confirmed via a direct public-URL curl (bypassing any local assumption) that T-131's HTML *was* genuinely being served correctly (`pt-0 pb-12` present, the carousel-width classes present, exactly one unconditional "View all" link, zero remaining `hidden sm:inline-flex`) — `cache-control: private, no-cache, no-store, max-age=0, must-revalidate` and `cf-cache-status: DYNAMIC` on the live response rule out both browser and Cloudflare caching as the origin-side cause, so this looks like a client-side stale view on the Product Owner's end, not a failed deploy. Regardless, real new requirements arrived in the same message: keep exactly 4 cards visible on desktop (not the T-131 percentage "peek" sizing), exactly 3 visible on mobile, and add real red arrow buttons on grey circles at both edges — on desktop *and* mobile — for scrolling, alongside (not instead of) mobile's existing native touch scroll.
+
+#### Что сделал
+
+**Exact card counts, no more peek.** T-131's `w-[72%] sm:w-[46%] md:w-[31%] lg:w-[23%]` (a percentage progression that always left a sliver of the next card showing, as the "there's more" signal) is replaced by two exact fractions: `w-[calc((100%-1.5rem)/3)]` (3 cards, 2× `gap-3` = 1.5rem) below `md`, `md:w-[calc((100%-3rem)/4)]` (4 cards, 3× `gap-4` = 3rem) at `md`+. No partial card at the edge any more — the new arrow buttons are the scrollability signal instead.
+
+**`TopSalons` is now a client component** (`'use client'`) — a real scroll-position state and a ref to the track are both required for working arrow buttons, neither exists in a server component. `canScrollLeft`/`canScrollRight` are measured from the actual DOM (`scrollLeft`/`scrollWidth`/`clientWidth` against `trackRef`, with a 4px epsilon against sub-pixel rounding), re-measured on `scroll` and `resize`, both real event listeners — never a guess or a fixed "always show" default. Both arrows start hidden (`useState(false)`) until the first post-mount measurement runs, which is also correct for SSR (no JS, no scrolling, no arrows).
+
+**Two real `<button>`s** (not `<Link>`s — they scroll in place, they don't navigate), `ChevronLeft`/`ChevronRight` in `text-brand` (the site's red) on a `bg-surface-subtle` circle (the grey neutral token, not white `bg-surface` or the brand colour itself) with `shadow-elevated`/`border-border` for definition against whatever photo sits behind them, `w-11 h-11` (44px — the same touch-target floor used elsewhere in the project). Each click scrolls `clientWidth * 0.9` via `scrollBy({ behavior: 'smooth' })` — 90% of the visible track rather than a fixed card-count jump, so it doesn't need to know how many cards are visible at the current width (3 vs 4) and doesn't leave a rounding-sliver stall at the edge a full-width jump could. New `home.scroll_left`/`home.scroll_right` translation keys (all 4 locales) supply real accessible names via `aria-label` — the icons themselves stay decorative (the button's own label is the accessible name, per the project's own `Icon` contract).
+
+**Mobile touch scroll untouched.** The track keeps the exact same `overflow-x-auto snap-x snap-mandatory` it already had — no `onTouchStart/Move/End` handlers were added, no scroll-behaviour override. The arrows sit on top of that as an addition, matching the Product Owner's explicit "на мобилке скрол работает по тачу, так и должно быть."
+
+#### Готово, когда
+
+Desktop shows exactly 4 full cards at rest, mobile exactly 3, both scrollable further via visible red-on-grey arrow buttons at the edges (hidden once there's nothing left to scroll in that direction) as well as native touch drag on mobile. 9 new tests in `TopSalons.test.tsx` (exact-width assertion, client-component/ref/state checks, arrow button styling, localized aria-labels, real DOM-measured gating, touch-handlers-untouched, real `scrollBy` call). Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the arrow styling/positioning and the exact-fraction widths are verified structurally (the exact Tailwind classes and DOM-measurement logic are present), not pixel-checked against a real render; the live-caching question above is inference from response headers, not a confirmed root cause on the Product Owner's device — worth asking them to hard-refresh/retest in a private window once this ships, to close the loop either way.
+
+---
+
 ### T-131 — Top salons: tighter gap under Popular services, carousel on every breakpoint, "View all" always top-right
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
