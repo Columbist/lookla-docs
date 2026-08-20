@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-133 — Top salons carousel: circular, 15 salons, uniform card height, precisely-placed always-on arrows
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 12:25:15 Europe/Athens. Live-verified against the real public URL (`https://lookla.gr/en`): 15 unique `/salons/...` card links (the real result of the new `limit: 15`, not padded), `min-h-[44.8px]` present on all 15 (the height fix reaching every card), the link text now literally reads "View all salons", and — since the arrows are unconditional now — both `<button aria-label="Scroll left"/"Scroll right">` elements are directly visible in the raw SSR HTML with the exact expected class strings (`left-0`/`right-0` + translate, `rounded-full bg-surface-subtle`), not just inferred from a hydration payload the way T-132's conditionally-rendered arrows had to be. 19/19 smoke checks passed, full frontend suite 1503/1503 passed pre-deploy.
 
 #### Найдено
 
