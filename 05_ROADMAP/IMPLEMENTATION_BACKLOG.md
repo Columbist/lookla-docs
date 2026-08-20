@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-135 — Top salons carousel: step by exactly one card, fix the mobile edge-clip bug
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 14:11:25 Europe/Athens. Page loads clean (200) on the real public URL post-deploy; unlike prior TopSalons tickets this one has no new markup/class to grep for in static HTML — the whole fix is client-side scroll behaviour (a measured click-time step, not a rendered attribute), so structural curl verification can't meaningfully confirm it the way it could for T-131–T-134. 19/19 smoke checks passed, full frontend suite 1512/1512 passed pre-deploy; correctness here rests on the 3 T-135 tests and the reasoning about scroll-snap settling, not a live structural check.
 
 #### Найдено
 
