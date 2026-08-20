@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-137 — Explore by area: uncapped pool, 5/6-card layouts, both breakpoints expand
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 17:02:16 Europe/Athens. Live-verified against the real public URL (`https://lookla.gr/en`): exactly 5 desktop tiles (`h-20`) and 6 mobile tiles (`h-[117px]`) in the collapsed default, `grid-cols-5` present once, `grid-cols-3` present, and — most directly — both real toggle `<button>`s found in the raw SSR HTML with their exact expected classes (`hidden md:inline-flex...` desktop, `md:hidden inline-flex...` mobile), no leftover navigation `<Link>` for "View all areas". 19/19 smoke checks passed, full frontend suite 1529/1529 passed pre-deploy (after two rounds of fixing a pre-existing analytics test that assumed a single `onClick={toggle}` — first found in T-136's own regression fix, then again here once desktop gained a second toggle).
 
 #### Найдено
 
