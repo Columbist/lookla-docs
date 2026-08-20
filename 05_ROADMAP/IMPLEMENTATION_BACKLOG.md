@@ -5174,6 +5174,35 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-136 — Explore by area: real per-district icons, 8/4-card layouts, desktop link + mobile expand
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner: rename the "Popular Areas" section to "Explore by area", add real per-district icons from a new design asset (`design/athens_area_icons/` — 46 SVGs, one per Athens/Attica district that currently has salons, plus a sprite/CSV/preview sheet), and restructure the layout: desktop shows exactly 8 tiles in one row (icon left, the existing two-line name+count block right — "сначала идет иконка, далее две строчки как сейчас уже есть"), with "View all areas" top-right. Mobile shows exactly 4 tiles (icon on top, name below, a bare salon-count number below that — a different, more compact layout from desktop), also with a top-right link — but on mobile that link expands to reveal the rest, matching Popular services' (CategoryGrid, T-129) behaviour.
+
+#### Что сделал
+
+**Icons.** Copied the 46 SVGs into `public/area-icons/{slug}.svg`, recoloured from the design asset's own `#B52D58` to the site's real `--brand` hex (`#a62e5c`, close but not byte-identical in the source files) so they match every other brand-red element on the site exactly, not approximately. Cross-checked the icon slugs against `backend/app/data/area_metadata.py`'s own docstring ("46 districts with active salons ... 12 additional ... 0 active salons currently") — confirmed all 46 icons exactly cover the 46 districts that can actually appear (`salon_count > 0` is required to surface on the homepage at all), and the 12 uncovered districts genuinely have zero salons today. Any area slug outside the known 46 — one of those 12, or a real future district — falls back to a generic `MapPin`, the same defensive pattern `CategoryGrid`'s own `ICONS[cat.slug] || Sparkles` already uses, not an assumption that the icon set stays exhaustive forever.
+
+**Two distinct tile layouts, by design, not by accident.** `DesktopTile`: icon left, the pre-existing two-line name/count block right, in a row — `h-20` (80px) computed from the 48px icon (which governs row height over the shorter text block either way, so this holds whether or not the count line renders) plus `p-4`'s 32px padding, not eyeballed. `MobileTile`: icon, name, then a *bare* count number (no "salons" word) stacked vertically — a genuinely different, more compact layout, not a narrower version of the desktop one. `h-[117px]`, computed the same way (icon + two text lines + gaps + padding = 116.4px, rounded up) — and here the fixed height is load-bearing, not just tidy: unlike the desktop row (where the icon always exceeds the text block's height regardless of whether the count line shows), the mobile stack's natural height genuinely shrinks when the count line is absent, so a `min-h` floor would have reproduced T-130's exact bug on this new component.
+
+**Desktop control is a real navigation `<Link>`, not a toggle.** `DESKTOP_VISIBLE = 8` is already the entire pool `lib/areaGrid.ts`'s own `DISPLAY_LIMIT` caps areas to — there is never a "rest" to expand into on desktop, so building an expand button there would be exactly the "no dead control" mistake T-129's own CategoryGrid work explicitly avoided. "View all areas" instead leads to `/search`, the same pattern `TopSalons`' "View all salons" link already established (T-131).
+
+**Mobile control is a real expand `<button>`, in the header, not below the grid.** Unlike `CategoryGrid`'s own mobile button (T-129, explicitly placed below the grid per that ticket's ask), this one sits in the same top-right slot as the desktop link — the Product Owner's explicit ask this time. Only renders when `mobileRest.length > 0`. The remainder (up to 4 more) renders as its own centred `flex flex-wrap` row rather than continuing the 2-column grid, matching T-129's reasoning: the remaining count isn't guaranteed to be even (a short real pool, or the 8-item static `FALLBACK_AREAS` list, are both possible), so a centred trailing row is correct even though the common case (exactly 8 total) happens to divide evenly.
+
+**Section renamed and now owns its own layout.** `home.popular_areas`'s value changed to "Explore by area" (and equivalents in all 4 locales) rather than adding a new key — it was only ever used at this one call site. `AreaGrid` now owns its own `<section className="bg-surface-subtle py-12">` (the same shape `CategoryGrid`/`TopSalons` already use), not a bare grid `page.tsx` wrapped in its own section — needed so the header row's two different controls and the grid below them can share one `expanded` state.
+
+#### Готово, когда
+
+Desktop shows exactly 8 icon+name+count tiles in one row with "View all areas" top-right leading to `/search`. Mobile shows exactly 4 icon/name/bare-number tiles with a top-right button that expands to reveal the rest in place, matching Popular services. An area without a bespoke icon still shows a real, recognisable pin glyph, never a broken image. 25 tests rewritten in `AreaGrid.test.tsx`, `homepage.test.ts` updated for the heading/background checks moving into the component. Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the two tile heights (80px, 117px) are computed from `globals.css`'s real line-height values, not eyeballed, and the icon/backend-slug cross-check was a real diff (`comm -23`/`comm -13` against the actual `area_metadata.py` source), not an assumption — but none of it is pixel-checked against a real render. Worth a live look once deployed, especially the two visually distinct tile layouts at their real breakpoints.
+
+---
+
 ### T-135 — Top salons carousel: step by exactly one card, fix the mobile edge-clip bug
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
