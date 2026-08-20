@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-134 — Top salons carousel: 5 cards on desktop, 5-second autoplay
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 13:18:07 Europe/Athens. Live-verified against the real public URL (`https://lookla.gr/en`): the 5-up width class present on all 15 cards, zero leftover 4-up width, both `aria-label="Scroll left"`/`"Scroll right"` buttons present. 19/19 smoke checks passed, full frontend suite 1509/1509 passed pre-deploy.
 
 #### Найдено
 
