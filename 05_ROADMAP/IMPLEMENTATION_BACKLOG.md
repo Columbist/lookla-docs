@@ -5174,6 +5174,31 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-134 — Top salons carousel: 5 cards on desktop, 5-second autoplay
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, straightforward follow-up after T-133: 5 cards visible on desktop (was 4), and turn on autoplay at a 5-second interval.
+
+#### Что сделал
+
+**5 desktop cards.** `md:w-[calc((100%-3rem)/4)]` (4 cards, 3× `gap-4`) → `md:w-[calc((100%-4rem)/5)]` (5 cards, 4× `gap-4` = 4rem) — same exact-fraction approach T-132/T-133 already established, just one more card. Mobile's 3-up sizing is untouched.
+
+**Autoplay, reusing the existing circular step.** A new `AUTOPLAY_MS = 5000` interval calls the *same* `scrollByDirection(1)` the arrow buttons already call — one code path, so autoplay wraps circularly at the end exactly like a manual click does, not a second implementation that could drift from it. Pauses on hover (`onMouseEnter`/`onMouseLeave`), keyboard focus (`onFocus`/`onBlur` — bubbles from any focused card or arrow), and touch (`onTouchStart`/`onTouchEnd`) — placed on the outer wrapper that contains both the track and the arrow buttons, so hovering an arrow pauses it too, not just hovering a card. Disabled entirely under `prefers-reduced-motion: reduce` and when there's only 0-1 salons to advance through — the exact same convention `HeroCarousel`'s own autoplay already established, not a second one invented for this component.
+
+**Test fallout, worth calling out honestly.** Three T-131/T-132-era tests broke on contact with this ticket, all for the same reason — they asserted the *absence* of things that are now genuinely, deliberately present: "no setInterval/autoplay" (autoplay is real now), a bare case-insensitive `autoplay` word match (now legitimately appears in comments describing the feature, a false positive against the English word rather than an HTML attribute), and "no touchstart/touchend handlers" (T-134 added them, for pause/resume — not swipe navigation, which still doesn't exist). All three rewritten to check what they actually meant to guard (no Swiper/Slider library, no literal HTML `autoplay=` attribute, no `onTouchMove`-driven custom drag) rather than deleted.
+
+#### Готово, когда
+
+Desktop shows exactly 5 full cards at rest. The carousel advances on its own every 5 seconds, wrapping circularly, and stops the moment a real person hovers, tabs into, or touches it — resuming once they're done. 7 new tests in `TopSalons.test.tsx`, 3 old ones corrected rather than silently left red or deleted. Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the pause/resume wiring and the 5-up width are verified structurally (the exact handlers, constant, and Tailwind class are present in source), not confirmed against a real timer/hover interaction in a browser. Worth a live look once deployed, especially that hovering an arrow (not just a card) actually pauses it.
+
+---
+
 ### T-133 — Top salons carousel: circular, 15 salons, uniform card height, precisely-placed always-on arrows
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
