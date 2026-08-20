@@ -5174,6 +5174,35 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-133 — Top salons carousel: circular, 15 salons, uniform card height, precisely-placed always-on arrows
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, after confirming T-132's carousel finally rendered live: five real refinements in one message. (1) make the carousel circular. (2) fetch 15 salons instead of 8, with images still lazy-loaded as they scroll into view. (3) equalise card heights — noticeably uneven across the row. (4) both arrows should always be visible (not hidden at the edges), positioned vertically on the seam between the photo and the text info block (not the card's vertical centre) and horizontally with the circle's centre exactly on the card's edge (not inset from it), on mobile as well as desktop. (5) the "View all salons" link text still hadn't changed — a real miss from T-131: that ticket only ever repositioned the link, the visible copy itself was still the old `view_all` string ("View all"), never updated to say "salons".
+
+#### Что сделал
+
+**Circular navigation.** `scrollByDirection` now checks the real scroll position at click time: past the last card, `next()` calls `scrollTo({ left: 0 })` instead of doing nothing; before the first, `prev()` wraps to `scrollTo({ left: maxScrollLeft })`. Both arrows are unconditionally rendered now — T-132's `canScrollLeft`/`canScrollRight` visibility state is gone entirely, since a circular track never has "nothing left in that direction." Touch-drag itself still clamps at the real edges (native browser behaviour) — the wrap only applies to arrow clicks, not raw swipe-past-the-edge, which would need cloned DOM items to fake seamlessly and wasn't asked for.
+
+**15 salons, still lazy.** `page.tsx`'s `api.salons.list({ limit: 8, ... })` → `limit: 15` — real data only, however many actually clear the same 4.5-star/20-review floor, never padded to exactly 15. `SalonCard`'s `<img loading="lazy">` was already there since T-065/T-120 — nothing to change, confirmed still intact.
+
+**Uniform card height — a real bug found, not just a styling gap.** `SalonCard`'s name heading used `line-clamp-2`, and an old T-055 comment claimed this "reserves a uniform 2-line height for every card" — untrue: `line-clamp` only *caps* height at 2 lines, it doesn't *reserve* space for a shorter one-line name, so short names rendered visibly shorter than long ones. Added `min-h-[44.8px]` — computed from `globals.css`'s own `.text-card-title` (16px, line-height 1.4 → 16×1.4×2 = 44.8px), not eyeballed. Combined with T-132's now-fixed per-breakpoint card width (photo height = width × 0.75, identical across a row) and the address/rating rows already being genuinely fixed-height, every card in the row is now provably the same total height, not just the same width.
+
+**Arrows always on, precisely placed.** Vertical position: measured live off the real first card's rendered width via a ref (`firstCardRef`) and the same 4:3 aspect-ratio math SalonCard's own photo frame uses (`width × 0.75` = photo height = the seam), stored in `seamTop` state, re-measured on `resize` — a fixed pixel guess would only be correct at one viewport width, since the card width (and therefore the photo height) is responsive. Horizontal position: `left-0`/`right-0` plus a half-width `translate`, not T-132's `left-2`/`right-2` inset — the circle's centre now sits exactly on the row's edge, half floating past it, on both mobile and desktop.
+
+**"View all salons" — the actual copy, this time.** `home.view_all` updated in all 4 locales to genuinely say "salons" (`"View all salons"` / `"Δείτε όλα τα σαλόνια"` / `"Смотреть все салоны"` / `"Дивитися всі салони"`), not just repositioned.
+
+#### Готово, когда
+
+The carousel loops both directions via the arrows, shows up to 15 real salons with lazily-loaded images, every card is visibly the same height, both arrow buttons are always present and sit on the photo/info seam with their centre on the card's edge on every breakpoint, and the link genuinely reads "View all salons" (localized). 15 tests updated/added across `TopSalons.test.tsx`, `homepage.test.ts`. Full frontend suite green.
+
+**Honestly flagged:** no browser tooling on this host — the seam-position math and the uniform-height claim are verified structurally (the exact aspect-ratio arithmetic and computed `min-h` are present in source, and reasoned from `globals.css`'s real line-height values) and via the live JSON-embedded translation strings, not pixel-checked against a real render. The circular behaviour is scoped to arrow clicks only, not raw touch-drag past the edge (an honest, reasoned scope decision, not an oversight) — worth a live look and an explicit callout of that scope once deployed.
+
+---
+
 ### T-132 — Top salons carousel: exact 3/4-card counts, red arrow controls on grey circles
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
