@@ -5177,7 +5177,7 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 ### T-139 — Bigger real salon pools for the hero rotation and Top salons
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
-**Status:** ⏳ Coded, tests green locally, not yet deployed.
+**Status:** ✅ Done, deployed 2026-08-20 17:51:35 Europe/Athens. Live-verified with the strongest check available for this specific ticket — not just a config-number check, but the actual behaviour the report was about: fetched the real homepage 3 separate times and compared the hero's rendered salon each time. All three were genuinely different real salons (`addstyling-10355`, `ar-barbershop-10772`, `rea-spa-institouto-aisthetikes-15682`) — direct live proof the shuffle now draws from real variety, not the same handful. Top salons' own 40-item set was (correctly, by design — DEC-026's fixed no-manual-curation ranking) identical across the same two fetches; that ticket's fix was pool *size* against the circular carousel's lap length, not set identity, and that isn't something a same-instant reload check can demonstrate either way. 19/19 smoke checks passed, full frontend suite 1529/1529 passed pre-deploy.
 
 #### Найдено
 
