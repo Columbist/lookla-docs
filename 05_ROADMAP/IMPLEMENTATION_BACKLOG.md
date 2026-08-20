@@ -5174,6 +5174,29 @@ Nothing above the photo/card can silently intercept a click meant for them, on a
 
 ---
 
+### T-135 — Top salons carousel: step by exactly one card, fix the mobile edge-clip bug
+
+**Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
+**Status:** ⏳ Coded, tests green locally, not yet deployed.
+
+#### Найдено
+
+Product Owner, after T-134: the carousel should page one card at a time, not a whole batch — and separately, a real bug on mobile: paging with the arrow buttons could leave an edge card only partially visible in the viewport instead of always landing on whole cards.
+
+#### Что сделал
+
+**Both symptoms traced to the same root cause.** T-132/T-133's step was `el.clientWidth * 0.9` — 90% of the visible track width, which (a) moves by roughly a whole page of cards, not one, and (b) is not guaranteed to be an exact multiple of (card width + gap). Native CSS `scroll-snap` is supposed to settle on the nearest snap point after a JS-driven smooth scroll, but a step that lands mid-way between two snap points close to a boundary is exactly the condition that can make a browser settle short, clipping the edge card — the real cause of the reported mobile symptom, not a separate bug.
+
+**`getCardStepPx()`** replaces the ratio: measures the real first card's rendered width (`firstCardRef`, already in place since T-133 for the arrow seam position) plus the track's actual computed gap (`getComputedStyle(el).columnGap` — reads the live `gap-3`/`md:gap-4` value rather than hardcoding either number here, so it can't drift out of sync with the CSS). Every arrow click and every autoplay tick (same `scrollByDirection` function, unchanged call site) now moves by exactly one card, and that distance is by construction an exact multiple of the real snap-point spacing — so scroll-snap always has a boundary to settle on precisely, not just approximately.
+
+#### Готово, когда
+
+Clicking an arrow (or waiting for an autoplay tick) advances exactly one card. On mobile, after any number of arrow-driven pages in either direction, every card visible in the viewport is whole — never a sliver of the next/previous one. 3 tests updated/added in `TopSalons.test.tsx` confirming the ratio step is gone and the new measured-step function is real.
+
+**Honestly flagged:** no browser tooling on this host — the fix is verified structurally (the exact measurement code is present, the old ratio is confirmed gone) and reasoned from how CSS scroll-snap settling actually works, not confirmed against a real mobile viewport. Worth a live check on an actual phone once deployed, specifically after several button-driven pages in a row.
+
+---
+
 ### T-134 — Top salons carousel: 5 cards on desktop, 5-second autoplay
 
 **Priority:** P2 | **Owner:** FE/DESIGN | **Epic:** EPIC-13
