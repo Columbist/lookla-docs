@@ -1,6 +1,6 @@
 ---
 title: RFC — Owner-facing Team (staff) screen
-status: Draft
+status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
@@ -9,14 +9,14 @@ related_documents:
   - 05_ROADMAP/FUTURE_FEATURES.md
   - 00_GOVERNANCE/DECISION_LOG.md
   - 06_ENGINEERING/DEVELOPMENT_STANDARDS.md
-implementation_status: Pending approval
+implementation_status: Approved — DEC-027
 ---
 
 # RFC-0003 — Owner-facing Team (staff) screen
 
 Date: 2026-08-22
 Requested by: implementing session, following T-140/142/143/144/145 (OwnerShell restyle epic) — the design reference (`design/lookla-owner-portal-runnable/`) specs a "Team" nav item for salon accounts that has no backend today; `FUTURE_FEATURES.md` already lists "Staff profiles" as a candidate ("Data exists in DB") but unapproved.
-Status: Draft
+Status: Approved
 
 ---
 
@@ -102,10 +102,8 @@ None for Phase 1. Phase 2 depends on this RFC's Decision picking a conflict rule
 
 ## Decision
 
-[To be filled by Product Owner after review]
-
-Decision: APPROVED / REJECTED / DEFERRED
-Reason:
-Conditions (if any):
-Decision ID: DEC-NNN
-Date:
+Decision: APPROVED (Phase 1 only)
+Reason: Phase 1 (read-only) closes a real, low-risk visibility gap immediately. Phase 2 (owner-writable) needs a conflict rule named before any code touches the write path — see DEC-027.
+Conditions (if any): Phase 2 requires a follow-up decision naming one of the three candidate conflict rules before implementation begins.
+Decision ID: DEC-027
+Date: 2026-08-22

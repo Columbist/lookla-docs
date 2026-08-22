@@ -1,6 +1,6 @@
 ---
 title: RFC — Owner-facing Reviews screen (read-only)
-status: Draft
+status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
@@ -9,14 +9,14 @@ related_documents:
   - 05_ROADMAP/FUTURE_FEATURES.md
   - 07_RFC/RFC-0003-owner-team-staff-management.md
   - 00_GOVERNANCE/DECISION_LOG.md
-implementation_status: Pending approval
+implementation_status: Approved — DEC-028
 ---
 
 # RFC-0004 — Owner-facing Reviews screen (read-only)
 
 Date: 2026-08-22
 Requested by: implementing session, following RFC-0003 (Team) — same audit-before-code process applied to the design reference's other unbuilt `salonOnly`-adjacent screen.
-Status: Draft
+Status: Approved
 
 ---
 
@@ -98,10 +98,8 @@ None.
 
 ## Decision
 
-[To be filled by Product Owner after review]
-
-Decision: APPROVED / REJECTED / DEFERRED
-Reason:
-Conditions (if any):
-Decision ID: DEC-NNN
-Date:
+Decision: APPROVED
+Reason: No open question remains — a visibility ticket over existing, already-verified data, same shape as T-142/T-143. See DEC-028.
+Conditions (if any): None.
+Decision ID: DEC-028
+Date: 2026-08-22

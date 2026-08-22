@@ -1,6 +1,6 @@
 ---
 title: RFC — Owner-facing Insights (profile views, contact actions)
-status: Draft
+status: Approved
 version: 1.0
 owner: Product Owner (columb@europe.com)
 reviewers: []
@@ -11,14 +11,14 @@ related_documents:
   - 07_RFC/RFC-0003-owner-team-staff-management.md
   - 07_RFC/RFC-0004-owner-reviews-visibility.md
   - 00_GOVERNANCE/DECISION_LOG.md
-implementation_status: Pending approval
+implementation_status: Approved — DEC-029
 ---
 
 # RFC-0005 — Owner-facing Insights (profile views, contact actions)
 
 Date: 2026-08-22
 Requested by: implementing session, following RFC-0003 (Team) and RFC-0004 (Reviews) — the third and last of the design reference's unbuilt cabinet screens.
-Status: Draft
+Status: Approved
 
 ---
 
@@ -107,10 +107,8 @@ None for the core dashboard. "Response rate" specifically depends on the `MESSAG
 
 ## Decision
 
-[To be filled by Product Owner after review]
-
-Decision: APPROVED / REJECTED / DEFERRED
-Reason:
-Conditions (if any):
-Decision ID: DEC-NNN
-Date:
+Decision: APPROVED — Option B (first-party event mirror)
+Reason: Matches the project's existing cost/simplicity bias: no external credential, no quota ceiling, immediate availability. See DEC-029.
+Conditions (if any): Response rate stays out of scope until the MESSAGING capability ships (separate decision).
+Decision ID: DEC-029
+Date: 2026-08-22

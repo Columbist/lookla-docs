@@ -1033,3 +1033,117 @@ A logo swap and a new ranked-listing section are both the kind of change that is
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-105+)
 
 ---
+
+### DEC-027 — Owner-facing Team (staff) screen: Phase 1 (read-only) approved now, Phase 2 (owner-writable) deferred pending a conflict rule
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Status | APPROVED (Phase 1 only) |
+| Decided by | Product Owner |
+
+**Context**
+
+RFC-0003 documented that `staff` already exists in the database (crawler-populated, same freshness pattern as `Review`, T-048) but has zero API exposure anywhere and no ownership link — an owner cannot see their own listed staff today, and a naive owner-write feature would put the crawler and an owner on the same rows with no rule for which wins.
+
+**Decision**
+
+Approve **Phase 1** (read-only: `staff` added to the owner-facing salon response, a read-only Team tab on OwnerShell) — same size/risk class as T-143, no open question to resolve first.
+
+**Phase 2** (owner-writable) is **not** approved by this decision — none of RFC-0003's three candidate conflict rules (claim-and-freeze / owner-only additions / full override on claim) has been picked. Implementation of Phase 2 requires a follow-up decision naming which rule applies before any code touches the write path.
+
+**Reason**
+
+Phase 1 closes a real, low-risk visibility gap immediately. Phase 2's risk (silent overwrite between the crawler and an owner) is exactly the kind of ambiguity RFC-0003 was written to surface before code, not resolve by default inside an implementing ticket.
+
+**Consequences**
+
+- Phase 1 ships as the next ticket in the OwnerShell sequence (T-146).
+- `staff` stays crawler-only-writable until a follow-up decision names a Phase 2 conflict rule.
+
+**Implementation status**
+
+[→] In progress — Phase 1 only
+
+**Affected documents**
+
+- `07_RFC/RFC-0003-owner-team-staff-management.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-146)
+
+---
+
+### DEC-028 — Owner-facing Reviews screen (read-only) approved
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+
+**Context**
+
+RFC-0004 documented that reviews are already collected, translated, and shown publicly, but not exposed anywhere inside the owner cabinet — and that, unlike Team, the design reference itself proposes no owner-write control on this screen, so there is no conflict-of-authority question to resolve first.
+
+**Decision**
+
+Approve as specified in RFC-0004: a paginated `GET /api/owner/salons/{id}/reviews` plus a read-only Reviews tab (average rating, star-distribution bars, review feed). "Top themes" stays dropped — no backing computation exists. Per-review "Report an issue" (the optional `review_id` addition to `reports`) is approved as part of the same ticket, not deferred, since RFC-0004 sized it as a small, independent addition rather than a separate open question.
+
+**Reason**
+
+No open question remains after RFC-0004 — this is a visibility ticket over existing, already-verified data, the same shape as T-142/T-143.
+
+**Consequences**
+
+- Ships as the next ticket in the OwnerShell sequence (T-147).
+- "Top themes" is explicitly not built; a future request for it needs its own RFC (it would be new invented scope, not visibility of existing data).
+
+**Implementation status**
+
+[→] In progress
+
+**Affected documents**
+
+- `07_RFC/RFC-0004-owner-reviews-visibility.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-147)
+
+---
+
+### DEC-029 — Owner-facing Insights: Option B (first-party event mirror) approved
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-22 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+
+**Context**
+
+RFC-0005 documented that the underlying events (`salon_open`, `contact_action`) already exist and already flow correctly into GA4 (T-015, shipped 2026-07-23), but nothing queries them back out for a per-salon owner dashboard — and laid out two architecturally different ways to close that gap.
+
+**Decision**
+
+Approve **Option B** — a first-party `salon_events`-shaped table, written server-side alongside the existing `trackEvent()` call sites, read by a new aggregate endpoint for the cabinet's Insights tab (14-day profile-views trend, contact-actions-by-channel breakdown). Option A (GA4 Data API) is not approved — no external credential, no reporting-lag/quota dependency for a screen inside the product itself, per RFC-0005's own recommendation.
+
+"Response rate" stays out of scope — blocked on the `MESSAGING` capability's own separate launch decision, unrelated to this one.
+
+**Reason**
+
+Matches this project's existing cost/simplicity bias (documented repeatedly elsewhere in this session's own working notes): no new external dependency, no quota ceiling, immediate availability, at the cost of a second pipeline to keep PII-consistent with T-015's existing allowlist/denylist design — a bounded, internal maintenance cost rather than an external one.
+
+**Consequences**
+
+- Ships as the next ticket in the OwnerShell sequence (T-148).
+- The three existing T-015 instrumentation call sites (`SalonCard.tsx`, `MapView.tsx`, `ContactButtons.tsx`) gain a second, non-blocking write alongside their existing `trackEvent()` call — T-015's PII-shape discipline (allowlist/denylist) must be carried forward into this second path, not re-derived.
+- GA4 remains the system of record for site-wide/product analytics; `salon_events` exists only to power this one per-salon owner-facing view and is not a general-purpose analytics replacement.
+
+**Implementation status**
+
+[→] In progress
+
+**Affected documents**
+
+- `07_RFC/RFC-0005-owner-insights.md`
+- `06_ENGINEERING/ANALYTICS_EVENTS.md` (cross-referenced, not superseded — T-015's GA4 path is unchanged)
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-148)
+
+---
