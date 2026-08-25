@@ -2770,18 +2770,17 @@ Sitemap: https://lookla.gr/sitemap.xml
 ### T-044 — Age-confirmation control at registration (18+)
 **Priority:** P0 | **Owner:** FE/BE | **Estimate:** 1h | **Epic:** EPIC-05
 **Dependencies:** T-017
+**Status:** ✅ Completed 2026-08-25
 
-**Description:** T-017's Privacy Policy states an MVP age policy (approved by architect review, 2026-07-16): the public directory is browsable by anyone without an account; account registration, in-app messaging, availability requests, and appointments are intended only for users 18+; Lookla does not knowingly provide these features to children. The policy text is now live, but no enforcement exists yet — `POST /api/auth/register` has no age/date-of-birth field and no confirmation checkbox exists on the registration form.
+**Description:** T-017's Privacy Policy states an MVP age policy (approved by architect review, 2026-07-16): the public directory is browsable by anyone without an account; account registration, in-app messaging, availability requests, and appointments are intended only for users 18+; Lookla does not knowingly provide these features to children. The policy text was live for weeks with no enforcement — `POST /api/auth/register` had no age/date-of-birth field and no confirmation checkbox existed on the registration form. Found unaddressed (unchecked acceptance criteria, despite everything else on the page having shipped) during an unrelated sweep for open backlog items, 24.08–25.08.
 
-**Required:**
-- Add an "I confirm I am 18 or older" checkbox (or equivalent) to the registration form, required to submit.
-- Backend: reject registration if the confirmation is missing (do not need to collect/store an actual birthdate — a confirmation checkbox is sufficient for the approved MVP policy; do not over-engineer a full age-verification/ID-check system, which was explicitly not requested).
+**Done, exactly as scoped — a checkbox, not a birthdate:** `RegisterIn.age_confirmed: bool = False` (`backend/app/routers/auth.py`) — `POST /register` refuses with 400 when it's false, before any other validation. `RegisterForm.tsx` gained a required checkbox wired to the same field, native HTML `required` blocking submission client-side same as the existing email/password fields. No birthdate collected or stored anywhere — the acceptance criteria's own "do not over-engineer" note is enforced structurally in `test_registration_age_confirmation.py`'s own assertion that `User` has no birthdate-shaped column.
 
-**Already done (not blocking this ticket):** the manual minor-account-handling procedure referenced by the Privacy Policy's Children section is documented and operational — `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §3 (trigger, reviewer, verification, 5-business-day action target, disposition of messages/appointments/salon-owner claims tied to the account, logging). This ticket is only the missing UI/backend confirmation checkbox — the process for what happens *after* a minor is identified already exists independent of it.
+**Already done (not blocking this ticket):** the manual minor-account-handling procedure referenced by the Privacy Policy's Children section is documented and operational — `docs/04_ARCHITECTURE/PRIVACY_OPERATIONS.md` §3 (trigger, reviewer, verification, 5-business-day action target, disposition of messages/appointments/salon-owner claims tied to the account, logging). This ticket was only the missing UI/backend confirmation checkbox — the process for what happens *after* a minor is identified already existed independent of it.
 
 **Acceptance Criteria:**
-- [ ] Registration form requires an explicit 18+ confirmation before submission
-- [ ] Backend rejects registration requests missing the confirmation
+- [x] Registration form requires an explicit 18+ confirmation before submission
+- [x] Backend rejects registration requests missing the confirmation
 
 ---
 
