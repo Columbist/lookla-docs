@@ -1181,11 +1181,12 @@ The scope question RFC-0006 posed (known-first vs. both-at-once) was resolved by
 
 **Implementation status**
 
-[→] In progress
+[✓] Done — deployed and applied 2026-09-01 (PRs #237, #238, #239). Migration `0023` live, api/web/crawler all redeployed. Real result: 186 photos replaced across 185 salons, 14 salons given a website they didn't have on file, 1,337 superseded aggregator photos soft-hidden (`is_active=false`), not deleted.
 
 **Affected documents**
 
 - `07_RFC/RFC-0006-website-sourced-photos.md`
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-169)
+- `AI_CONTEXT.md` (data figures, schema version)
 
 ---
