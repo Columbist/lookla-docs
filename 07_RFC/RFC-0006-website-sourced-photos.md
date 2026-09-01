@@ -1,16 +1,16 @@
 ---
 title: RFC — Replace aggregator photos with salon-website photos
-status: Draft
-version: 1.0
+status: Approved
+version: 1.1
 owner: Product Owner (columb@europe.com)
 reviewers: []
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 related_documents:
   - 04_ARCHITECTURE/SECURITY.md
   - 06_ENGINEERING/RISK_REGISTER.md
   - 07_RFC/RFC-0005-owner-insights.md
   - 00_GOVERNANCE/DECISION_LOG.md
-implementation_status: Draft — awaiting Product Owner decision
+implementation_status: Approved — DEC-030
 ---
 
 # RFC-0006 — Replace aggregator photos with salon-website photos
@@ -155,8 +155,8 @@ Full data: `images_from_gpt/round2b_websites_v1.csv`, `images_from_gpt/round2b_i
 
 ## Decision
 
-Decision: PENDING
-Reason: —
-Conditions (if any): —
-Decision ID: —
-Date: —
+Decision: APPROVED — use the verified subset of the completed pilot as real data; mechanics per this RFC's original recommendation
+Reason: The pilot in practice already delivered full-population coverage on both halves at zero incremental cost (the interactive-ChatGPT method substituted for a paid search API run entirely) — the Decision 1 scope question ("known websites first, defer search-discovery") is moot once the search-discovery data already exists and has been individually verified. Approved for actual use: the 210 known-website salons with a verified non-aggregator photo candidate (stream 2a), and the 14 newly-discovered, live-verified own-site domains (stream 2b) — every other candidate from either stream (dead/broken domains, wrong-category businesses, aggregator-sourced pages) is excluded, not imported. Mechanics per the original recommendation: download + re-host in R2, soft-replace (deprioritize, not delete) existing aggregator photos via a new `photos.is_active` flag, `photos.source='website'` on every inserted row, `PhotoOut`/frontend surfacing of `source` so replacements are visibly marked.
+Conditions: a fresh, ongoing automated search-discovery pipeline (funding Serper/OpenAI web-search per the earlier cost analysis) is *not* approved by this decision — only the already-completed, already-verified manual pilot's output is. A future ticket needing to discover websites for the remaining ~3,905 salons with no match starts a new Change Request, informed by this pilot's real 0.36% hit rate.
+Decision ID: DEC-030
+Date: 2026-09-01

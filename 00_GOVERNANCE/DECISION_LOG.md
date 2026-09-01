@@ -1147,3 +1147,45 @@ Matches this project's existing cost/simplicity bias (documented repeatedly else
 - `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-148)
 
 ---
+
+### DEC-030 — Website-sourced salon photos: pilot output approved for use
+
+| Field | Value |
+|---|---|
+| Date | 2026-09-01 |
+| Status | APPROVED |
+| Decided by | Product Owner |
+
+**Context**
+
+RFC-0006 proposed replacing aggregator-sourced (Google/Treatwell/Fresha) salon photos with photos from salons' own websites, phased to avoid an uncosted search-vendor commitment: known-website salons (2,577) first, search-discovery for the remaining ~4,319 deferred to a follow-up once priced. In practice, the Product Owner had the search-discovery half piloted anyway via a zero-cost method (an interactive ChatGPT session, not a paid API) — that pilot ran to full population coverage on both halves (2,477 known-website salons for photos, all 3,919 unknown-website salons for search+photos), with every result independently live-verified in this session rather than taken on trust (see RFC-0006's "Pilot Results" and "Full-Population Follow-Up" sections for the verification methodology and numbers).
+
+**Decision**
+
+Approve using the pilot's **verified-clean subset** as real production data: 210 known-website salons with a confirmed non-aggregator photo candidate, and 14 newly-discovered, live-verified salon websites (with photos) among the 3,919 that had none on file. Every other candidate — dead/broken domains, wrong-category businesses (hotels, restaurants, a supermarket chain, a gym, etc.), and aggregator-sourced pages returned when the pilot was pointed at an already-known booking-platform URL — is excluded outright, not imported.
+
+Mechanics approved per RFC-0006's original recommendation: download and re-host each accepted photo in R2 (matching the existing `professional_portfolio` pattern), soft-replace existing aggregator photos via a new `photos.is_active` flag rather than deleting them, tag every inserted row `photos.source = 'website'`, and surface `source` through `PhotoOut` and the frontend so a website-sourced photo is visibly marked, not just internally tagged.
+
+**Not approved by this decision:** an ongoing, funded, automated search-discovery pipeline (the Serper.dev/OpenAI web-search vendor options RFC-0006 priced at ~$45–52) for the ~3,905 salons still without a match. The manual pilot's real, full-population hit rate — 14/3,919 (0.36%) — is the evidence a future Change Request for that would need to start from, not a reason to fund it by default.
+
+**Reason**
+
+The scope question RFC-0006 posed (known-first vs. both-at-once) was resolved by circumstance rather than needing a fresh choice: the harder, costlier half turned out to already be done, for free, and independently verified to the same bar the RFC's own Decision 2 mechanics assumed would be needed regardless of source. Approving the verified output is not the same as approving the method as an ongoing pipeline — the Conditions above draw that line explicitly.
+
+**Consequences**
+
+- Implementation ships as a new ticket extending T-088's `website.py`/`website_run.py` machinery and `services/r2.py`, not as a copy of the manual pilot process.
+- A migration adds `photos.is_active` (default `true`) — existing rows are unaffected; soft-replace only touches a salon's own aggregator photos at the moment a website photo is accepted for it.
+- `salons.website` gets set for the 14 stream-2b salons (only where currently empty, matching `website_run.py`'s existing conservative-write convention for phone numbers).
+- Raw pilot data (`images_from_gpt/*.csv`) stays local/gitignored — real production `salon_id`s and third-party raw output, not committed.
+
+**Implementation status**
+
+[→] In progress
+
+**Affected documents**
+
+- `07_RFC/RFC-0006-website-sourced-photos.md`
+- `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` (T-169)
+
+---
