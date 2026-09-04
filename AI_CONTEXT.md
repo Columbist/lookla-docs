@@ -1,343 +1,107 @@
-# AI_CONTEXT.md — Lookla Project Context
-**Entry point for AI assistants (Claude, GPT, Copilot, etc.)**
+# AI_CONTEXT.md — точка входа
 
-> Read this file first. It gives you the current state of the project in under 3 minutes.
-> After reading this file, consult the documents listed in "Where to start."
+**Читается первой — человеком или ассистентом.** Даёт состояние проекта за три минуты.
 
----
+**Проверено против работающей системы 2026-09-01.** Каждое утверждение здесь снято с живого API, живой базы или задеплоенного кода — не с документации и не по памяти. Часть фактов проверяется автоматически: `backend/tests/test_ai_context_is_current.py` падает, когда этот файл расходится с системой. Что не проверяется автоматически — помечено ниже.
 
-## Project
-
-**Name:** Lookla
-**Type:** Beauty discovery marketplace for Greece
-**URL:** lookla.gr
-**Owner:** Andrey (columb@europe.com)
-**Documentation repo:** github.com/Columbist/lookla-docs (public)
-**Full monorepo:** github.com/Columbist/lookla-platform (private)
+> **Как читать остальной корпус.** В `docs/` около 180 тысяч слов, и большая их часть — **история**, а не описание настоящего: журнал решений, 84 тикета бэклога, сохранённые ревью. История ценна и не подлежит правке задним числом. Но отвечать на вопрос «как оно сейчас» по ней нельзя. Настоящее описывают только файлы, помеченные как проверяемые: этот и `06_ENGINEERING/AUDIT_2026_08_STATE.md`.
 
 ---
 
-## What Lookla is
+## Что такое Lookla
 
-A multilingual directory of beauty salons, barbershops, spas, and independent professionals in Greece. Clients search by area, category, and language. The platform serves users in Greek, English, Russian, and Ukrainian.
+Справочник салонов красоты и мастеров в Греции, `lookla.gr`. Посетитель ищет салон, читает карточку и связывается с бизнесом сам.
 
-Current data: ~6300 salons, aggregated from public sources (crawlers). No fake data. No paid listings.
+> Lookla показывает справочную информацию и помогает перейти к прямому контакту с салоном. Lookla не принимает и не подтверждает записи, не является стороной договора и не принимает платежей.
 
----
+**Это не то, чем проект был в июле.** До 2026-08-12 он строился как платформа с аккаунтами, перепиской, клеймом карточек и подписками. Всё это существует в коде и **выключено** — см. следующий раздел. Возврат запланирован и идёт по порядку: клейм → аккаунты и переписка → платежи.
 
-## Current Phase
+## Что работает, а что выключено
 
-**Implementation Freeze v1.0.** All documentation is final. Development begins.
-
-All documentation phases are complete and have passed a consistency audit (2026-07-09):
-- Product decisions approved (DEC-001 through DEC-017)
-- UX specifications approved (page specs, UX flows, wireframe requirements)
-- Technical architecture approved (backend, frontend, DB schema, API spec, security, performance)
-- Engineering execution documentation approved (epics, backlog, milestone, risks, release checklist, testing strategy)
-- Architecture Review completed + consistency audit resolved
-- Backlog finalized: 36 tasks (T-001–T-036), ~40h total
-
-**From this point:** Architecture changes require an RFC in `07_RFC/`. No documentation changes without Product Owner approval.
-
-**Start development at:** T-001 (Alembic), T-036 (robots.txt), T-033 (Redis rate limits) — these three are independent and can be done in any order.
-
-**Critical blockers (resolve before touching any other code):**
-1. T-001 — Alembic empty baseline + stamp (NOT --autogenerate on existing DB)
-2. T-036 — robots.txt before any SEO traffic
-3. T-033 — slowapi→Redis before any rate limit testing
-
----
-
-## What is Approved (source of truth)
-
-### Governance
-| Document | What it defines |
-|---|---|
-| `00_GOVERNANCE/PROJECT_CHARTER.md` | **Highest authority.** All rules. Read first. |
-| `00_GOVERNANCE/DECISION_LOG.md` | All official decisions (DEC-001 to DEC-017) |
-
-### Product
-| Document | What it defines |
-|---|---|
-| `01_PRODUCT/PRODUCT_SCOPE.md` | What Lookla IS and IS NOT |
-| `01_PRODUCT/PRODUCT_VISION.md` | Why Lookla exists, differentiators |
-| `01_PRODUCT/PRODUCT_TERMINOLOGY.md` | Official dictionary |
-| `01_PRODUCT/MVP_DEFINITION.md` | Approved MVP scope + all Q decisions |
-| `01_PRODUCT/MVP_SCOPE_LOCK.md` | **Locked boundary — WILL HAVE / WILL NOT HAVE** |
-
-### UX / Design
-| Document | What it defines |
-|---|---|
-| `03_PAGES/HOME.md` | Homepage spec (language switcher placement, area grid) |
-| `03_PAGES/SEARCH.md` | Search page spec (area filter, verified label) |
-| `03_PAGES/SALON.md` | Salon detail spec (contact CTAs, review labels, badge) |
-| `03_PAGES/ADMIN.md` | Admin panel spec |
-| `03_PAGES/CONTACT.md` | Contact page spec (new page) |
-| `03_PAGES/ABOUT.md` | About page spec (new page) |
-| `02_DESIGN/UX_FLOWS.md` | 4 MVP user flows with edge cases |
-| `02_DESIGN/WIREFRAME_REQUIREMENTS.md` | 8 wireframe layouts (ASCII) with annotations |
-
-### Technical Architecture
-| Document | What it defines |
-|---|---|
-| `04_ARCHITECTURE/BACKEND_ARCHITECTURE.md` | Service boundaries, layers, modules, job scheduling |
-| `04_ARCHITECTURE/FRONTEND_ARCHITECTURE.md` | Next.js structure, routing, components, hooks, i18n, SEO |
-| `04_ARCHITECTURE/DATABASE_SCHEMA.md` | All entities, attributes, relationships, indexes |
-| `04_ARCHITECTURE/API_SPECIFICATION.md` | Every endpoint: method, route, request, response, errors |
-| `04_ARCHITECTURE/SECURITY.md` | Auth, CSRF, rate limits, bot protection, GDPR |
-| `04_ARCHITECTURE/PERFORMANCE.md` | Core Web Vitals targets, caching, image pipeline |
-| `04_ARCHITECTURE/DATA_FLOW.md` | How data moves: read, write, analytics, translation flows |
-| `04_ARCHITECTURE/AI_STRATEGY.md` | AI features postponed; translation is infrastructure only |
-| `04_ARCHITECTURE/FEATURE_FLAGS.md` | Features in code but hidden from users |
-
-### Engineering
-| Document | What it defines |
-|---|---|
-| `06_ENGINEERING/AUDIT.md` | Full technical audit (§27: implementation readiness) |
-| `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` | Commit format, branching, naming, testing, DoD |
-| `06_ENGINEERING/RISK_REGISTER.md` | 20 technical/product/legal/infra risks; 2 Critical, 6+ High |
-| `06_ENGINEERING/RELEASE_CHECKLIST.md` | Pre-launch gate with [BLOCKER] items |
-| `06_ENGINEERING/TESTING_STRATEGY.md` | Unit, integration, UI, performance, manual smoke tests |
-
-### Engineering Execution (Roadmap)
-| Document | What it defines |
-|---|---|
-| `05_ROADMAP/EPICS.md` | 10 epics, ~10.5 dev-days total |
-| `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` | 32 tasks (T-001–T-032) with hours, owners, AC |
-| `05_ROADMAP/MILESTONE_M01.md` | M-01 scope, exit criteria, deployment steps |
-
-### Architecture Review
-| Document | What it defines |
-|---|---|
-| `08_REVIEWS/ARCHITECTURE_REVIEW.md` | Cross-doc contradictions, overengineering, underengineering, SPOFs, MVP violations |
-
----
-
-## All Decisions (DEC-001 to DEC-017)
-
-| ID | Decision |
-|---|---|
-| DEC-001 | Private project, no monetization, no advertising |
-| DEC-002 | Documentation-first: no implementation without approved docs |
-| DEC-003 | No fake data, reviews, ratings, or activity |
-| DEC-004 | Every feature requires evidence of user need |
-| DEC-005 | AI product features postponed |
-| DEC-006 | Stripe exists in code; must not be user-facing |
-| DEC-007 | Monorepo: docs live with code |
-| DEC-008 | MVP success = 500 contact interactions in 90 days |
-| DEC-009 | Primary persona: P-02 (ru/uk) → P-01 (el) → P-03 (expat); tourists last |
-| DEC-010 | Location hierarchy: Country→Region→City→District; replace "City" filter |
-| DEC-011 | el/en/ru mandatory for MVP; uk ships at lower QA priority |
-| DEC-012 | Athens metropolitan area first |
-| DEC-013 | Google reviews: label "Source: Google Reviews / Imported: Yes / Original: No" |
-| DEC-014 | Replace ✓ with text: "Information reviewed" (admin) or "Owner verified" (claimed) |
-| DEC-015 | No booking stubs; only real CTAs: "Call salon" / "WhatsApp" / "Visit website" |
-| DEC-016 | View/call/WhatsApp = anonymous; Favorites = registration required |
-| DEC-017 | GA4 + Search Console required before launch |
-
----
-
-## Current Phase: Engineering Execution (Complete)
-
-All engineering execution documents were approved 2026-07-09. Development can begin immediately.
-
-### New documents in this phase
-
-| Document | What it defines |
-|---|---|
-| `05_ROADMAP/EPICS.md` | 10 engineering epics; complexity, acceptance criteria, DEC mapping |
-| `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` | 32 tasks (T-001–T-032); priority, owner, hours, acceptance criteria |
-| `05_ROADMAP/MILESTONE_M01.md` | M-01 scope, exit criteria, critical path, deployment steps |
-| `06_ENGINEERING/RISK_REGISTER.md` | 20 risks across 6 categories; Critical/High risks identified |
-| `06_ENGINEERING/RELEASE_CHECKLIST.md` | Pre-launch gate; all [BLOCKER] items must pass |
-| `06_ENGINEERING/TESTING_STRATEGY.md` | Unit, integration, API contract, UI, performance, manual smoke |
-| `08_REVIEWS/ARCHITECTURE_REVIEW.md` | 5 cross-document contradictions; overengineering, SPOFs, 6 MVP violations |
-
-### Architecture Review key findings
-
-| ID | Severity | Finding |
+| Возможность | Состояние | Чем закрыто |
 |---|---|---|
-| CONTRADICTION-01 | BLOCKER | `is_verified` has two meanings; resolve via LEFT JOIN on `salon_owners` |
-| CONTRADICTION-02 | HIGH | `GET /api/areas` not in BACKEND_ARCHITECTURE.md router list |
-| CONTRADICTION-03 | HIGH | No data backfill plan for `address_district` |
-| UNDER-01 | BLOCKER | Alembic missing; required before any schema change |
-| UNDER-04 | BLOCKER | No Privacy Policy; required before GA4 deployment |
-| MVP-V01–V06 | BLOCKER | 6 live violations of approved decisions |
+| Поиск, каталог, карточка салона | **работает** | — |
+| Контакт: «Позвонить», WhatsApp, сайт | **работает** — обычные ссылки, уводят с сайта | — |
+| Импортированные отзывы | **работает**, с именем автора | — |
+| Жалоба на карточку или отзыв | **работает** | — |
+| GA4 | **работает**, скрипт не рендерится до согласия | — |
+| Регистрация и аккаунты | **выключено** — API отвечает 404 | `feature_user_accounts` |
+| Переписка | **выключено** — 404 | `feature_messaging` |
+| Клейм и правка карточки владельцем | **выключено** — 404 | `feature_owner_claim` |
+| Приватное превью `/account` (T-150) | **выключено** — 404 | `feature_account_preview` |
+| Регистрация мастера через API (T-153) | **выключено** — 404 | `feature_professional_registration` |
+| Платежи | **выключено** — 404 | `feature_payments` |
+| Бронирование, запросы на время | **удалено**, не выключено (T-082) | — |
 
-### Phase: Technical Architecture
+Переключатели: `backend/app/core/capabilities.py`, все шесть по умолчанию `false`. **Запрет стоит на API, интерфейс следует за ним** — спрятанная кнопка никогда ничего не выключала (T-082 существовал именно поэтому). Вход (`/login`, обновление сессии, восстановление пароля) **не выключен**: он нужен клейму, который возвращается первым.
 
-### What's been specified
+**На этом конкретном сервере** несколько из этих переключателей включены через `.env` для приватного превью операторa (`owner_claim`, `account_preview`, `messaging`, `professional_registration` — `/dashboard`, `/account`, T-140–T-153), не проиндексировано и не в публичной навигации. Таблица выше — состояние **по умолчанию в коде**, не runtime-состояние этого хоста; так его проверяет и `test_ai_context_is_current.py` — против дефолтных значений `Settings`, не против `.env`.
 
-| Layer | Document | Key content |
-|---|---|---|
-| Backend | BACKEND_ARCHITECTURE.md | 13 routers, 4 services, layered architecture, 12 must-not-change items |
-| Frontend | FRONTEND_ARCHITECTURE.md | App Router structure, 15 MVP changes enumerated |
-| Database | DATABASE_SCHEMA.md | 9 entities, indexes, 2 new columns required (DEC-010) |
-| API | API_SPECIFICATION.md | All endpoints: request/response/errors; 1 new endpoint (`GET /api/areas`) |
-| Security | SECURITY.md | Auth flow, bot protection layers, GDPR requirements |
-| Performance | PERFORMANCE.md | Core Web Vitals targets, image pipeline, caching strategy |
+## Последние изменения (01.09.2026)
 
-### Engineering assumptions made during architecture
+T-169 (RFC-0006/DEC-030) — фото с собственных сайтов салонов вместо агрегаторов. `photos.source='website'` (миграция `0023` добавила `photos.is_active` — старое фото не удаляется, а гасится, когда его заменяет фото с сайта; `PhotoOut`/фронтенд теперь отдают `source`, на карточке салона — метка «С сайта салона», если хоть одно фото оттуда). Данные для замены собраны вручную (пилот через ChatGPT, не платный API — см. RFC-0006 "Pilot Results"), каждая находка перепроверена этой же сессией живым HTTP до применения. Итог первого прохода: 186 фото у 185 салонов заменены, 14 салонов получили впервые известный сайт (были без него), 1337 старых фото с агрегаторов погашены (не удалены). Новый `crawler/beauty_crawler/spiders/website_photos_apply.py` — код для повторного использования, не разовый скрипт (пере-проверяет каждую строку через `classify_website`/`same_site`/`robots_allows` перед записью, `--apply`-флаг, dry-run по умолчанию).
 
-1. `address_district` and `address_region` columns must be added to `salons` table (DEC-010)
-2. `GET /api/areas` endpoint does not exist yet — must be created for area filter
-3. Athens district → `address_city` mapping is needed as a backend dict during DEC-010 transition
-4. slowapi rate limits must be connected to Redis (one-line config fix)
-5. `useMe()` hook should be extracted to `hooks/useMe.ts` (replaces 4× inline duplication)
-6. `localePrefix()` utility should be extracted to `lib/locale.ts` (replaces 8× inline duplication)
-7. GA4 tracking ID must be added to `NEXT_PUBLIC_GA4_ID` env var
-8. Privacy Policy page (`/privacy`) must be created before MVP launch (GDPR)
-9. Cookie consent banner required for GDPR when GA4 is active
-10. Hero photo on salon detail must use `next/image` with `priority={true}` for LCP
+Заодно, при первом за долгое время реальном прогоне CI (биллинг GitHub Actions чинился с начала месяца) — два предсуществующих пробела в `test_alembic_target_guard.py`, не связанных с T-169: у `professionals` (T-165, 0022) и `photos` (0023 сам) не было заглушки в фикстуре "домиграционной" схемы — обе таблицы, как и большинство таблиц в этой базе, старше начала слежения Alembic (см. `0001_baseline.py`), и первая миграция, которая их трогает, не может собраться с нуля без такой заглушки. Починено, проверено на реальном throwaway Postgres.
 
----
+T-170 (02.09.2026) — счёт Google Places API за август (€89.83) оказался на 98.5% повторной оплатой уже известных салонов: `save_place()`'s ветка "это дубликат" (найден по телефону/имени, не по `google_place_id`) не сохраняла факт, что place_id уже разобран — при каждом следующем проходе по той же ячейке сетки то же место снова выглядело новым. 2 398 платных Place Details, 37 новых салонов сохранено. Починено: любой исход теперь пишется в `crawler_sources`. Фото/отзывы Google в текущих запросах не участвуют (field mask их не включает) — 43k/26k в базе исторические, не текущий расход.
 
-## Pre-Launch Implementation Checklist
+T-171 (02.09.2026) — `api_usage_log` (миграция `0024`): раз нет доступа к Google Cloud Billing API с этого хоста, краулер сам считает свои платные вызовы и оценивает расход по ставке с последнего реального счёта (не по прайс-листу — Places API тарифицируется по объёму и не всегда совпадает со списочной ценой). Оценка — в ежедневном Telegram-отчёте.
 
-**Ordered by dependency (from AUDIT.md §27.5):**
+## Последние изменения (25–26.08.2026)
 
-### Step 1 — Data
-- [ ] Define Athens district → `address_city` mapping (backend)
-- [ ] Add `address_district` column to salons table
-- [ ] Update `/api/salons` area filter to use district mapping
+13 тикетов подряд, T-156–T-168, все смёржены в `main` и задеплоены — багфиксы и доработки owner-кабинета по прямым замечаниям оператора (не из бэклога). Полный список решений и обоснований — `PROJECT_MEMORY` (внутренняя память ассистента, не в этом репозитории) и коммиты `main` за эти два дня. Кратко:
 
-### Step 2 — Backend
-- [ ] Add `GET /api/areas` endpoint (district list with salon counts)
-- [ ] Connect slowapi to Redis
-- [ ] Add admin inline salon edit (phone, address) to `PATCH /api/admin/salons/{id}`
+- **Публичный сайт:** кнопка «Позвонить» больше не растягивает номер текстом; часы работы не печатают `null`; избранное — карточки салонов (`SalonCard`), не текстовый список; галерея снова открывает фото в полноэкранном просмотре (T-096 сознательно убирал его — решение пересмотрено по прямому запросу оператора) и не обрезает «ещё фото» в произвольную высоту.
+- **Owner-кабинет:** глобальный `Header` показывает аккаунт/выход для залогиненного визитора вне `/account`; привязка существующего салона принимает вставленную ссылку, а не ID (которого нигде не видно); боковое меню — один общий источник (`components/owner/ownerNav.ts`) вместо 8 разошедшихся копий; сессия обновляется тихо каждые 10 мин (`SilentSessionRefresh`), не разлогинивает через 15 мин простоя; язык кабинета реально переключает интерфейс сайта, не только язык писем.
+- **Мультиязычность:** описание салона и bio мастера — все 4 языка (el/en/ru/uk) и на чтение, и на запись (были read-gap'ы: колонки писались, `GET` их не отдавал), плюс кнопка «Перевести на другие языки» (`POST /api/owner/salons/{id}/translate-description`, `POST /api/masters/me/translate-bio` — оба через уже существующий `translate_batch`, GPT-4o-mini, ничего не сохраняют сами). Specialty мастера — мультиселект (миграция `0022`, `specialty`→`specialties`).
+- **Два живых бага вне исходного списка**, найдены тестами и живой проверкой: коллизия JWT при выпуске токенов в одну и ту же секунду (нет `jti`) — падал refresh; 500 на публичной странице мастера с реальным расписанием (типизация `AvailabilityOut`).
+- **Процессный инцидент:** после мержа T-165 миграция `0022` не была применена к прод-БД (`docker compose build/up` миграции не гоняет) — любой `GET/PUT` на профиль мастера падал 500 до тех пор, пока это не поймали живой проверкой и не применили миграцию вручную. Урок закреплён: после мержа с новой миграцией сверять `alembic_version` в БД с `ls backend/alembic/versions/ | tail -1`, не полагаться на `smoke.sh` — он эту дыру не ловит.
 
-### Step 3 — Salon Detail (highest user impact)
-- [ ] Remove booking stubs (DEC-015)
-- [ ] Add contact CTAs: "Call salon", "WhatsApp", "Visit website" (DEC-015)
-- [ ] Replace ✓ badge with text label (DEC-014)
-- [ ] Add review section header: "Source: Google Reviews / Imported: Yes / Original: No" (DEC-013)
-- [ ] Wire GA4 contact click events (DEC-017)
+## Данные
 
-### Step 4 — Search
-- [ ] Update area filter label City → Area in all 4 locales (DEC-010)
-- [ ] Populate area filter with Athens districts
-- [ ] Update verified label on SalonCard
-
-### Step 5 — Homepage
-- [ ] Move LanguageSwitcher to header
-- [ ] Rename CityGrid → AreaGrid with Athens districts (DEC-010)
-
-### Step 6 — Analytics
-- [ ] Create GA4 property; obtain tracking ID
-- [ ] Add GA4 script to root layout
-- [ ] Verify `contact_action` events fire
-- [ ] Verify Google Search Console
-- [ ] Add cookie consent banner
-- [ ] Create `/privacy` page with GA4 disclosure
-
-### Step 7 — New pages
-- [ ] Create `/[locale]/about`
-- [ ] Create `/[locale]/contact`
-- [ ] Add About + Contact links to footer
-
-### Step 8 — Admin
-- [ ] Admin inline edit form for phone/address
-- [ ] Verify admin email excluded from GA4
-
-### Step 9 — Pre-launch gate
-- [ ] `/pricing` not in navigation (DEC-006 compliance)
-- [ ] Manual QA of J-01 and J-02 journeys in production
-- [ ] PageSpeed Insights on salon detail page: LCP < 2.5s
-- [x] Verify GIN index on salons FTS tsvector — Deferred to T-037 (deprecated endpoint, no M-01 blocker)
-
----
-
-## Known Mismatches (implementation ≠ documentation)
-
-| Mismatch | Decision | Status |
-|---|---|---|
-| ✓ badge means "admin reviewed" not "owner verified" | DEC-014 | ⬜ Fix pending |
-| Reviews show without "Source: Google" label | DEC-013 | ⬜ Fix pending |
-| City filter says "City" but returns districts | DEC-010 | ⬜ Fix pending |
-| Booking stub buttons visible on salon page | DEC-015 | ⬜ Fix pending |
-| `/pricing` page may be linked in navigation | DEC-006 | ⬜ Verify pending |
-| Language switcher in footer only (not header) | HOME.md spec | ⬜ Fix pending |
-
----
-
-## Technical Risks
-
-| Risk | Severity | Mitigation |
-|---|---|---|
-| No database migrations (Alembic) | High | Every schema change is ad-hoc; add before `address_district` column |
-| 10 SQL-only tables without ORM models | Medium | Limits type safety; add ORM models for `reports`, `salon_owners`, `claiming_tokens` |
-| Zero test coverage | High | Add tests for `is_bot()`, `_batch_open_now()`, auth flow before changing them |
-| `SalonDetailClient.tsx` god component | Medium | Split for MVP is recommended; required for future maintainability |
-| slowapi in-process (resets on restart) | Low | Connect to Redis (one-line fix) |
-| Translation call blocks request thread 1–3s | Low | Acceptable for MVP; Celery async for post-MVP |
-| No Privacy Policy page | High (pre-launch) | Required for GDPR + GA4; must be created |
-
----
-
-## What NOT to do
-
-- Do not implement features without an approved RFC in `07_RFC/`
-- Do not mark any document `Approved` without Product Owner confirmation
-- Do not resolve mismatches by silently changing code or docs — report them
-- Do not expose Stripe, subscriptions, or monetization to users (DEC-006)
-- Do not add fake data or fake activity signals (DEC-003)
-- Do not add geo search "near me" UI (tourists deprioritized per DEC-009)
-- Do not add AI-generated content or AI ranking (DEC-005)
-- Do not change the `is_bot()` regex without a test proving the change doesn't break it
-- Do not change JWT auth mechanism (httpOnly cookies) without a security review
-- Do not commit `.env` files to git
-
----
-
-## Next Milestone
-
-**M-01 — MVP Athens Launch**
-Status: **In Progress — Technical Architecture approved; Development starting**
-Reference: `05_ROADMAP/ROADMAP.md`
-Launch gate: `01_PRODUCT/MVP_SCOPE_LOCK.md`
-Pre-launch checklist: See above (9 steps, 25+ items)
-
-After M-01 launches (500 contact interactions measured in 90 days): plan M-02 based on GA4 evidence.
-
----
-
-## Where to Start
-
-**For a developer starting implementation:**
-1. `08_REVIEWS/ARCHITECTURE_REVIEW.md` — read all BLOCKER findings first
-2. `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` — pick up from T-001 (Alembic)
-3. `04_ARCHITECTURE/API_SPECIFICATION.md` — understand every endpoint
-4. `04_ARCHITECTURE/DATABASE_SCHEMA.md` — understand the data model
-5. `06_ENGINEERING/DEVELOPMENT_STANDARDS.md` — how to write code and commits
-6. `06_ENGINEERING/RELEASE_CHECKLIST.md` — know what "done" looks like for launch
-
-**For a product/UX designer:**
-1. `01_PRODUCT/MVP_SCOPE_LOCK.md` — what's in scope
-2. `02_DESIGN/WIREFRAME_REQUIREMENTS.md` — wireframe briefs
-3. `03_PAGES/SALON.md` — the conversion page (most important)
-
-**For any AI assistant entering this project:**
-1. Read this file (done)
-2. Read `00_GOVERNANCE/PROJECT_CHARTER.md` — the rules
-3. Read `01_PRODUCT/MVP_SCOPE_LOCK.md` — the boundary
-4. Read `04_ARCHITECTURE/API_SPECIFICATION.md` — what the API does
-
----
-
-## Tech Stack (brief)
-
-| Layer | Technology |
+| | |
 |---|---|
-| Frontend | Next.js 14 (App Router), Tailwind CSS, next-intl |
-| Backend | FastAPI (Python 3.12), SQLAlchemy (sync), PostgreSQL 16 |
-| Infrastructure | Docker Compose, Nginx, Cloudflare, R2 CDN |
-| Task queue | Celery + Redis (crawlers only) |
-| AI | OpenAI gpt-4o-mini (translation infrastructure; DEC-005) |
-| Payments | Stripe (configured; not user-facing per DEC-006) |
-| Auth | Cookie-based JWT (HS256) + Google OAuth (RS256) |
-| Analytics | GA4 + Google Search Console (DEC-017; not yet installed) |
+| активных салонов | 6 903 |
+| отзывов | 26 531 |
+| услуг | 1 602 — **но только у 41 салона** |
+| пользователей | 6 |
+| зарегистрированных мастеров | 1 (тестовая запись оператора, не публична — `is_active=false`) |
+| схема | Alembic `0024` |
 
----
+Источники каталога: Google Places, Vrisko, Treatwell, Foursquare и — с 13.08.2026 — собственные сайты салонов. Описания есть у 6 133 салонов, координаты у 6 886, часы у 5 575, фото у 5 057 (из них 186, у 185 салонов, теперь с `source='website'` — T-169, 01.09; ещё 1 337 старых фото с агрегаторов погашены `is_active=false`, не удалены). Телефон у 6 391 активных (6 430 по всем салонам, включая неактивные — знаменатели разные, и это уже один раз выглядело потерей данных).
 
-*Last updated: 2026-07-09 (Implementation Freeze v1.0 — consistency audit complete, 36 tasks finalized)*
-*Update this file whenever phase changes or a major decision affects project state.*
+Сайт указан у 2 593 салонов (из них 14 — добавлены T-169, ранее не было известного сайта). Соцссылок — **4 053** у 2 689 салонов.
+
+`website_crawl_results` хранит исход по каждому салону с сайтом: прочитано 1 677, домен не отвечает у 180, ошибка HTTP у 176 (**из них 403 — сайт жив и закрыт только для нашего бота, мёртвым его считать нельзя**, см. T-093), редирект на чужой домен 29 (T-094).
+
+## Технически
+
+Монорепо `github.com/Columbist/lookla-platform` (приватный). Документация также в `github.com/Columbist/lookla-docs` (публичный).
+
+Backend — FastAPI + SQLAlchemy + Postgres 16, `docker compose`. Frontend — Next.js, четыре локали (el, en, ru, uk). Краулер — Scrapy + Celery. Деплой: `ops/deploy.sh` (T-040, 24.08) — бэкап, `docker compose build`, тег по git SHA, health check, `smoke.sh`, автооткат при сбое, лог в `ops/deploy.log`; подключён и к ручному запуску, и к GH Actions "Deploy Production". Голый `docker compose build`+`up -d --no-deps` вручную — только для не-прод экспериментов. **Никогда pm2.**
+
+Тесты: ≈1000 backend (часть требует настоящий Postgres через `TEST_DATABASE_URL` и **падает, а не пропускается**, если его нет на CI), 1746 frontend-тестов / 326 сьютов. CI гоняет три задания — backend, frontend, crawler — на **каждый** PR, независимо от базовой ветки. GH Actions billing не работает с 24.08 и **всё ещё не починен** ("recent account payments have failed or your spending limit needs to be increased") — не блокер: сборки и деплой идут локально на хосте через `ops/deploy.sh` (`docker compose build` прямо на сервере, ~9 минут на оба сервиса, работает без OOM с 24.08 — см. `06_ENGINEERING/AUDIT_2026_08_STATE.md`), CI на PR при этом не запускается вовсе, а не "падает" — мерж 25–26.08 шёл по решению оператора без CI, на реальных прогонах тестов локально.
+
+**Хост:** 2 vCPU, 3.8 ГБ RAM (апгрейд 24.08, было 2 ГБ), GPU нет. На нём же Postgres, Redis, API, web, два краулера, nginx и Xray VPN. Локальные модели сюда не поместятся; мощность добавим, когда появится что запускать.
+
+## Юридическое — больше не блокирует разработку
+
+С 2026-08-12 порядок обратный: юридическая часть **следует** из построенного функционала и оформляется по итогам каждого публичного релиза. Порядок закрытия вопроса: как это оформили похожие сервисы → более глубокий поиск по другим → юрист как failover, со списком нерешённого.
+
+Условия **опубликованы** (`/terms`) по решению оператора DEC-020, без заключения юриста. Раскрытие по ст. 5 печатается на странице: имя, географический адрес, `admin@lookla.gr`. Гейт не снят — принимает два основания, обзор или DEC-020.
+
+**Открыто:** T-084 — процедуры DSA (ст. 14 признана неудовлетворённой, послаблений по размеру нет; самое трудное в том, что отзывы импортированные и уведомлять об удалении часто некого).
+
+## Куда смотреть дальше
+
+| Вопрос | Файл |
+|---|---|
+| Что есть в системе прямо сейчас, подробно | `06_ENGINEERING/AUDIT_2026_08_STATE.md` |
+| Персональные данные: что где лежит и что с этим делают | `04_ARCHITECTURE/PERSONAL_DATA_MATRIX.md` |
+| Принятые решения | `00_GOVERNANCE/DECISION_LOG.md` — **история** |
+| Тикеты | `05_ROADMAP/IMPLEMENTATION_BACKLOG.md` — **история**, 84 записи |
+| Что осталось юристу | `07_LEGAL/T-045_REMAINING_QUESTIONS.md` |
+
+## Что здесь не проверяется автоматически
+
+Честно, чтобы не создавать ложной уверенности. Тест сверяет с системой: список возможностей и их состояние, номер схемы, порядки величин по данным. **Не сверяет:** прозу о том, чем проект является, порядок возврата возможностей, юридический раздел и ссылки на файлы. Эти части стареют молча — как этот файл, простоявший месяц с описанием продукта, которого уже не было.

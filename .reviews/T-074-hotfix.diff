@@ -1,0 +1,123 @@
+diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
+index f361554..6187a41 100644
+--- a/backend/tests/test_t074_apply.py
++++ b/backend/tests/test_t074_apply.py
+@@ -703,3 +703,93 @@ def test_the_rollback_is_a_noop_when_nothing_is_installed(tmp_path):
+     )
+     assert result.returncode == 0, result.stderr
+     assert "nothing to roll back" in result.stdout
++
++
++# ─────────── the heredoc executes what it contains (hotfix regression) ───────
++# The rollback heredoc is deliberately unquoted so $GENERATION, $STATE_DIR and
++# $CHAIN are injected. That also means backticks and $(...) inside it run while
++# the rollback is being written. A comment containing `--ensure` did exactly
++# that on every rollout, and nothing caught it: bash -n only parses, and the
++# stub-based tests never looked at stderr.
++
++
++def test_a_rollout_dry_run_produces_no_errors_at_all(tmp_path):
++    """
++    The regression this file exists for, asserted the way it actually showed up.
++
++    Checking for the string "command not found" alone would be too narrow — a
++    different accidental substitution can succeed silently and print nothing.
++    An empty stderr and a zero exit are what prove the heredoc contained only
++    text.
++    """
++    env, log = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    result = subprocess.run(  # noqa: S603
++        ["bash", str(APPLY), "--interface", IFACE, "--rollout", "--dry-run"],
++        env=env, capture_output=True, text=True, cwd=tmp_path,
++    )
++    assert result.returncode == 0, result.stderr
++    assert result.stderr == "", f"rollout wrote to stderr: {result.stderr!r}"
++    assert "command not found" not in result.stdout + result.stderr
++
++    # A dry run must read and never mutate.
++    calls = _calls(log)
++    assert not any("iptables-restore" in c for c in calls), "dry run applied something"
++    assert not any(c.split()[1:2] == ["-I"] for c in calls if "iptables" in c)
++
++
++def test_the_generated_rollback_parses_and_keeps_its_explanation(tmp_path):
++    env, _ = _make_env(tmp_path)
++    _with_lock(env, tmp_path)
++    script = _generated_rollback(tmp_path, env)
++    subprocess.run(["bash", "-n", str(script)], check=True)  # noqa: S603
++
++    text = script.read_text()
++    # The substitution ate the sentence it appeared in, so the explanation
++    # vanishing is itself a symptom worth pinning.
++    assert "reconciles onto a" in text, "the explanatory comment was consumed"
++    assert "ensure mode" in text
++
++
++def test_the_heredoc_body_contains_no_unescaped_backticks():
++    """
++    Guard the class, not just the instance.
++
++    Searching the output for "command not found" catches only substitutions
++    that fail. One that succeeds — a stray `date` or `hostname` in prose —
++    would corrupt the generated script quietly. Backticks simply have no place
++    in an unquoted heredoc, so none are allowed.
++    """
++    body = APPLY.read_text(encoding="utf-8")
++    start = body.index("<<ROLLBACK_EOF") + len("<<ROLLBACK_EOF")
++    end = body.index("\nROLLBACK_EOF", start)
++    heredoc = body[start:end]
++
++    assert "`" not in heredoc, (
++        "backticks in an unquoted heredoc are executed while it is written"
++    )
++    for line in heredoc.splitlines():
++        assert "$(" not in line or "\\$(" in line, (
++            f"unescaped command substitution in the heredoc: {line.strip()}"
++        )
++
++
++def test_only_the_intended_variables_are_injected():
++    # Everything else must be escaped, or the rollback silently inherits values
++    # from whatever shell wrote it.
++    import re as _re
++
++    body = APPLY.read_text(encoding="utf-8")
++    start = body.index("<<ROLLBACK_EOF") + len("<<ROLLBACK_EOF")
++    heredoc = body[start:body.index("\nROLLBACK_EOF", start)]
++
++    injected = {
++        m.group(1) for m in _re.finditer(r"(?<!\\)\$\{?([A-Za-z_][A-Za-z0-9_]*)", heredoc)
++    }
++    # LOCK_FILE is injected on purpose: the rollback must take the same lock
++    # the rollout used, and resolving it independently could pick a different
++    # path and defeat the serialisation.
++    allowed = {"GENERATION", "STATE_DIR", "CHAIN", "LOCK_FILE"}
++    assert injected <= allowed, (
++        f"unexpected variables injected into the rollback: {sorted(injected - allowed)}"
++    )
+diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
+index 5a9f466..a0b0c14 100755
+--- a/ops/t074/apply_t074.sh
++++ b/ops/t074/apply_t074.sh
+@@ -178,6 +178,11 @@ log "backup: $BACKUP"
+ log "generation: $GENERATION"
+ 
+ ROLLBACK="$GEN_DIR/rollback.sh"
++# NOTE: this heredoc is deliberately UNQUOTED so that $GENERATION, $STATE_DIR
++# and $CHAIN are injected. That also means backticks and $(...) inside it are
++# executed while the rollback is being written — a comment containing
++# `some-flag` once ran that flag as a command during every rollout. Write plain
++# prose here; a test asserts no unescaped backticks remain.
+ cat > "$ROLLBACK" <<ROLLBACK_EOF
+ #!/usr/bin/env bash
+ # T-074 rollback for generation $GENERATION.
+@@ -222,7 +227,7 @@ if [[ -z "\$current" || "\$current" != "\$GENERATION" ]]; then
+ fi
+ 
+ # Teardown is derived from the LIVE ruleset, never from the bridge recorded
+-# when this rollout ran. After a Docker restart `--ensure` reconciles onto a
++# when this rollout ran. After a Docker restart, ensure mode reconciles onto a
+ # new bridge without touching the marker or this timer, so a rollback pinned to
+ # the old bridge would remove the host jump, fail to find the container one,
+ # flush the chain, and then fail to delete it because the live jump still

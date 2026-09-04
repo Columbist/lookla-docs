@@ -1,0 +1,583 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 8c3a82a..5a03788 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -12,6 +12,27 @@ jobs:
+     defaults:
+       run:
+         working-directory: backend
++    # T-079: the concurrent-claim guarantee rests on SELECT ... FOR UPDATE,
++    # which SQLite neither supports nor needs — it serialises writes on its
++    # own, so that test would pass there whether or not the lock is taken.
++    # A real Postgres is the only thing that can prove it. The test fails
++    # rather than skips when TEST_DATABASE_URL is missing on CI, so removing
++    # this service breaks the build instead of quietly dropping the test.
++    services:
++      postgres:
++        image: postgres:16-alpine
++        env:
++          POSTGRES_PASSWORD: postgres
++          POSTGRES_DB: lookla_test
++        ports:
++          - 5432:5432
++        options: >-
++          --health-cmd "pg_isready -U postgres -d lookla_test"
++          --health-interval 5s
++          --health-timeout 5s
++          --health-retries 10
++    env:
++      TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/lookla_test
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-python@v5
+diff --git a/backend/app/routers/owner.py b/backend/app/routers/owner.py
+index 3f134f8..a7d400e 100644
+--- a/backend/app/routers/owner.py
++++ b/backend/app/routers/owner.py
+@@ -19,6 +19,26 @@ from app.services.email import send_email
+ router = APIRouter(prefix="/api/owner", tags=["owner"])
+ 
+ 
++def _lock_salon(db: Session, salon_id: int) -> bool:
++    """
++    Serialise everything that decides ownership of one salon.
++
++    Both claim endpoints read `salon_owners` and then write on the strength of
++    what they read, so both must hold the same lock or the read is stale by
++    the time the write lands. With the lock only in `verify`, a `request`
++    running concurrently could still pass the ownership guard against an
++    uncommitted claim and issue a token that outlives it.
++
++    The lock is on the salon row, so it serialises claims for that salon and
++    nothing else. SQLite has no FOR UPDATE and needs none — it serialises
++    writes on its own — so the clause is added only on Postgres.
++    """
++    sql = "SELECT id FROM salons WHERE id = :sid"
++    if db.bind.dialect.name == "postgresql":
++        sql += " FOR UPDATE"
++    return db.execute(text(sql), {"sid": salon_id}).first() is not None
++
++
+ # ─── Claim ────────────────────────────────────────────────────────────────────
+ 
+ class ClaimIn(BaseModel):
+@@ -27,9 +47,11 @@ class ClaimIn(BaseModel):
+ 
+ @router.post("/claim/request")
+ async def request_claim(body: ClaimIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+-    salon = db.query(Salon).filter(Salon.id == body.salon_id).first()
+-    if not salon:
++    # Taken before the ownership guard, not after: the guard's answer is only
++    # good while this lock is held.
++    if not _lock_salon(db, body.salon_id):
+         raise HTTPException(404, "Salon not found")
++    salon = db.query(Salon).filter(Salon.id == body.salon_id).first()
+ 
+     # `salon_owners` has no `id` column — its primary key is composite
+     # (user_id, salon_id) — so selecting `id` here raised UndefinedColumn and
+@@ -63,22 +85,57 @@ async def request_claim(body: ClaimIn, user: User = Depends(get_current_user), d
+ 
+ @router.post("/claim/verify")
+ def verify_claim(salon_id: int, token: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
++    # T-079. A token stays valid while someone else claims the salon, so this
++    # must re-check ownership at verification time — and re-checking with a
++    # plain SELECT is not enough, because two concurrent verifications can both
++    # observe no owner and both insert. `ON CONFLICT DO NOTHING` does not save
++    # us either: the only uniqueness is the composite (user_id, salon_id), so
++    # two *different* users for one salon is a perfectly valid row pair.
++    #
++    # The salon row is therefore locked first — the same lock `request` takes,
++    # so the two cannot interleave either. See `_lock_salon`.
++    if not _lock_salon(db, salon_id):
++        raise HTTPException(404, "Salon not found")
++
++    # Ownership is checked BEFORE the token, and the order is load-bearing.
++    # A successful claim burns every outstanding token for the salon, so a
++    # loser arriving afterwards has no live token left — checking the token
++    # first would answer "invalid or expired code", which is true but
++    # misleading: their code was fine, somebody else got there first. The
++    # claim state of a salon is already public (`is_owner_claimed`), so
++    # answering 409 before validating the code discloses nothing new.
++    if db.execute(text(
++        "SELECT 1 FROM salon_owners WHERE salon_id = :sid LIMIT 1"
++    ), {"sid": salon_id}).first():
++        db.execute(text("""
++            UPDATE claiming_tokens SET used_at = CURRENT_TIMESTAMP
++            WHERE salon_id = :sid AND used_at IS NULL
++        """), {"sid": salon_id})
++        db.commit()
++        raise HTTPException(409, "Salon already claimed")
++
+     ct = db.execute(text("""
+         SELECT id FROM claiming_tokens
+         WHERE user_id = :uid AND salon_id = :sid AND token = :token
+-          AND used_at IS NULL AND expires_at > NOW()
++          AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+     """), {"uid": user.id, "sid": salon_id, "token": token.upper()}).first()
+ 
+     if not ct:
+         raise HTTPException(400, "Invalid or expired verification code")
+ 
+     # Mark used
+-    db.execute(text("UPDATE claiming_tokens SET used_at = NOW() WHERE id = :id"), {"id": ct.id})
++    db.execute(text("UPDATE claiming_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = :id"), {"id": ct.id})
+     # Link owner
+     db.execute(text("""
+         INSERT INTO salon_owners (user_id, salon_id) VALUES (:uid, :sid)
+         ON CONFLICT DO NOTHING
+     """), {"uid": user.id, "sid": salon_id})
++    # Every other outstanding token for this salon can now only produce a
++    # second owner, so none of them survives the claim.
++    db.execute(text("""
++        UPDATE claiming_tokens SET used_at = CURRENT_TIMESTAMP
++        WHERE salon_id = :sid AND used_at IS NULL
++    """), {"sid": salon_id})
+     # Mark verified
+     db.execute(text("UPDATE salons SET is_verified = true WHERE id = :id"), {"id": salon_id})
+     # Update user role
+diff --git a/backend/tests/test_owner_claim_verify_race.py b/backend/tests/test_owner_claim_verify_race.py
+new file mode 100644
+index 0000000..a0875f3
+--- /dev/null
++++ b/backend/tests/test_owner_claim_verify_race.py
+@@ -0,0 +1,404 @@
++"""
++T-079: a claim token stays valid while somebody else claims the salon.
++
++`claim/verify` inserted into `salon_owners` without re-checking ownership.
++`ON CONFLICT DO NOTHING` does not help: the only uniqueness is the composite
++(user_id, salon_id), so two *different* users for one salon is a valid pair.
++Two people request a claim on an unclaimed salon, the first verifies and
++becomes owner, and the second's token — still unused, still unexpired — adds
++a second owner row and returns success.
++
++The sequential case is covered here against SQLite. The concurrent case is
++not: SQLite serialises writes on its own, so it would "pass" whether or not
++the code takes a row lock, and would prove nothing about `FOR UPDATE`. That
++case runs against a real Postgres and is guarded so it cannot quietly turn
++into a skip on CI — a test that vanishes is not a test that passed.
++"""
++import os
++import threading
++import time
++
++import pytest
++from fastapi import Request
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, text
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from app.main import app
++from app.core.database import get_db, Base
++from app.core.deps import get_current_user
++from app.models.salon import Salon
++from app.models.user import User
++
++SALON = 1
++FIRST = 10
++SECOND = 11
++TOKEN_A = "AAA111"
++TOKEN_B = "BBB222"
++
++CLAIMING_TOKENS_DDL = {
++    "sqlite": """
++        CREATE TABLE claiming_tokens (
++            id         INTEGER PRIMARY KEY AUTOINCREMENT,
++            user_id    INTEGER NOT NULL,
++            salon_id   INTEGER NOT NULL,
++            token      VARCHAR NOT NULL,
++            expires_at TIMESTAMP NOT NULL,
++            used_at    TIMESTAMP,
++            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++            UNIQUE (user_id, salon_id)
++        )
++    """,
++    "postgresql": """
++        CREATE TABLE claiming_tokens (
++            id         SERIAL PRIMARY KEY,
++            user_id    INTEGER NOT NULL,
++            salon_id   INTEGER NOT NULL,
++            token      VARCHAR NOT NULL,
++            expires_at TIMESTAMPTZ NOT NULL,
++            used_at    TIMESTAMPTZ,
++            created_at TIMESTAMPTZ DEFAULT NOW(),
++            UNIQUE (user_id, salon_id)
++        )
++    """,
++}
++
++
++def _seed(engine):
++    """One unclaimed salon, two users, and a live token for each."""
++    dialect = engine.dialect.name
++    Base.metadata.create_all(engine)
++    with engine.begin() as conn:
++        conn.execute(text(CLAIMING_TOKENS_DDL[dialect]))
++
++    session = sessionmaker(bind=engine)()
++    session.add(Salon(id=SALON, name="Up for grabs", slug="up-for-grabs", is_active=True))
++    session.add(User(id=FIRST, email="first@example.com", role="user"))
++    session.add(User(id=SECOND, email="second@example.com", role="user"))
++    session.commit()
++    session.close()
++
++    future = "CURRENT_TIMESTAMP + interval '1 hour'" if dialect == "postgresql" \
++        else "datetime('now', '+1 hour')"
++    with engine.begin() as conn:
++        for uid, tok in ((FIRST, TOKEN_A), (SECOND, TOKEN_B)):
++            conn.execute(text(
++                f"INSERT INTO claiming_tokens (user_id, salon_id, token, expires_at) "
++                f"VALUES (:u, :s, :t, {future})"
++            ), {"u": uid, "s": SALON, "t": tok})
++
++
++def _owner_count(engine) -> int:
++    with engine.begin() as conn:
++        return conn.execute(text(
++            "SELECT count(*) FROM salon_owners WHERE salon_id = :s"
++        ), {"s": SALON}).scalar()
++
++
++def _live_tokens(engine) -> int:
++    with engine.begin() as conn:
++        return conn.execute(text(
++            "SELECT count(*) FROM claiming_tokens WHERE salon_id = :s AND used_at IS NULL"
++        ), {"s": SALON}).scalar()
++
++
++# ─────────────────────────── sequential, on SQLite ───────────────────────────
++
++
++@pytest.fixture
++def client():
++    engine = create_engine(
++        "sqlite:///:memory:",
++        connect_args={"check_same_thread": False},
++        poolclass=StaticPool,
++    )
++    _seed(engine)
++    session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    def override_get_db():
++        db = session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    current = {"id": FIRST}
++
++    def override_user():
++        session = session_local()
++        try:
++            return session.get(User, current["id"])
++        finally:
++            session.close()
++
++    app.dependency_overrides[get_db] = override_get_db
++    app.dependency_overrides[get_current_user] = override_user
++
++    test_client = TestClient(app)
++    test_client.engine = engine
++    test_client.act_as = lambda uid: current.__setitem__("id", uid)
++    try:
++        yield test_client
++    finally:
++        test_client.close()
++        app.dependency_overrides.pop(get_db, None)
++        app.dependency_overrides.pop(get_current_user, None)
++        engine.dispose()
++
++
++def _verify(client, uid, token):
++    client.act_as(uid)
++    return client.post(f"/api/owner/claim/verify?salon_id={SALON}&token={token}")
++
++
++def test_the_first_verification_claims_the_salon(client):
++    r = _verify(client, FIRST, TOKEN_A)
++    assert r.status_code == 200, r.text
++    assert _owner_count(client.engine) == 1
++
++
++def test_a_second_token_cannot_add_a_second_owner(client):
++    assert _verify(client, FIRST, TOKEN_A).status_code == 200
++
++    r = _verify(client, SECOND, TOKEN_B)
++
++    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
++    assert _owner_count(client.engine) == 1, "a second owner row was created"
++
++
++def test_claiming_burns_every_other_outstanding_token(client):
++    assert _live_tokens(client.engine) == 2
++    assert _verify(client, FIRST, TOKEN_A).status_code == 200
++
++    assert _live_tokens(client.engine) == 0, (
++        "a token that can now only produce a second owner survived the claim"
++    )
++
++
++def test_the_refused_token_is_burned_too(client):
++    assert _verify(client, FIRST, TOKEN_A).status_code == 200
++    assert _verify(client, SECOND, TOKEN_B).status_code == 409
++
++    # Refusing without burning would leave it to be retried for an hour.
++    with client.engine.begin() as conn:
++        used = conn.execute(text(
++            "SELECT used_at FROM claiming_tokens WHERE token = :t"
++        ), {"t": TOKEN_B}).scalar()
++    assert used is not None
++
++
++def test_a_missing_salon_is_404(client):
++    client.act_as(FIRST)
++    r = client.post(f"/api/owner/claim/verify?salon_id=9999&token={TOKEN_A}")
++    assert r.status_code == 404, r.text
++
++
++# ───────────────────────── concurrent, on real Postgres ──────────────────────
++
++
++def _postgres_url() -> str:
++    """
++    Resolve the scratch database, and refuse to be skipped on CI.
++
++    A concurrency test that silently skips is worse than no test: the suite
++    stays green and the guarantee is unproven. On CI the absence of the URL is
++    a failure, not a reason to opt out.
++    """
++    url = os.environ.get("TEST_DATABASE_URL")
++    if url:
++        return url
++    if os.environ.get("CI"):
++        pytest.fail(
++            "TEST_DATABASE_URL is unset on CI — the concurrent-claim guarantee "
++            "cannot be proven against SQLite, which serialises writes by itself"
++        )
++    pytest.skip("set TEST_DATABASE_URL to run the concurrent claim test")
++
++
++def _assert_scratch_database(url: str) -> None:
++    """
++    This test drops and recreates the public schema. Refuse anything that is
++    not visibly a scratch database — an env var pointed at the wrong host is
++    not a mistake worth making twice.
++    """
++    name = url.rsplit("/", 1)[-1].split("?")[0]
++    if "test" not in name.lower():
++        pytest.fail(
++            f"TEST_DATABASE_URL names {name!r}, which is not recognisably a "
++            "test database; this test drops the public schema"
++        )
++
++
++def test_two_simultaneous_verifications_produce_one_owner():
++    url = _postgres_url()
++    _assert_scratch_database(url)
++    engine = create_engine(url, poolclass=None)
++    with engine.begin() as conn:
++        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
++        conn.execute(text("CREATE SCHEMA public"))
++    _seed(engine)
++
++    session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    def override_get_db():
++        db = session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    # The identity travels on the request, not in a thread-local: TestClient
++    # runs the app on its own portal thread, so a value set by the calling
++    # thread is not visible where the dependency actually resolves.
++    def override_user(request: Request):
++        session = session_local()
++        try:
++            return session.get(User, int(request.headers["x-test-user"]))
++        finally:
++            session.close()
++
++    app.dependency_overrides[get_db] = override_get_db
++    app.dependency_overrides[get_current_user] = override_user
++
++    barrier = threading.Barrier(2)
++    results = {}
++
++    def attempt(uid, token):
++        # Plain TestClient, not the context-manager form: entering it runs the
++        # app lifespan, which opens its own connection to the real configured
++        # database and fails here. Only the request path is under test.
++        c = TestClient(app)
++        try:
++            barrier.wait(timeout=10)
++            r = c.post(
++                f"/api/owner/claim/verify?salon_id={SALON}&token={token}",
++                headers={"x-test-user": str(uid)},
++            )
++            results[uid] = r.status_code
++        finally:
++            c.close()
++
++    threads = [
++        threading.Thread(target=attempt, args=(FIRST, TOKEN_A)),
++        threading.Thread(target=attempt, args=(SECOND, TOKEN_B)),
++    ]
++    try:
++        for t in threads:
++            t.start()
++        for t in threads:
++            t.join(timeout=30)
++
++        assert sorted(results.values()) == [200, 409], (
++            f"expected exactly one winner, got {results}"
++        )
++        assert _owner_count(engine) == 1, "concurrent verifications created two owners"
++    finally:
++        app.dependency_overrides.pop(get_db, None)
++        app.dependency_overrides.pop(get_current_user, None)
++        engine.dispose()
++
++
++def test_a_request_arriving_during_a_claim_is_refused_and_issues_no_token():
++    """
++    The other half of the race: `request` against an in-flight `verify`.
++
++    With the lock only in `verify`, a `request` running concurrently reads
++    `salon_owners` before the claim commits, passes its ownership guard, and
++    inserts a token *after* the claim has burnt the outstanding ones — so a
++    live token survives a completed claim and the endpoint reports success for
++    an already-claimed salon.
++
++    The claim is simulated by holding exactly what verify holds: the salon row
++    lock, an uncommitted owner row, and the token sweep. The request must
++    block on that lock, and answer 409 once it is released.
++    """
++    url = _postgres_url()
++    _assert_scratch_database(url)
++    engine = create_engine(url, poolclass=None)
++    with engine.begin() as conn:
++        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
++        conn.execute(text("CREATE SCHEMA public"))
++    _seed(engine)
++
++    session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
++
++    def override_get_db():
++        db = session_local()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    def override_user(request: Request):
++        session = session_local()
++        try:
++            return session.get(User, int(request.headers["x-test-user"]))
++        finally:
++            session.close()
++
++    app.dependency_overrides[get_db] = override_get_db
++    app.dependency_overrides[get_current_user] = override_user
++
++    holder = session_local()
++    result = {}
++
++    def fire_request():
++        c = TestClient(app)
++        try:
++            r = c.post(
++                "/api/owner/claim/request",
++                json={"salon_id": SALON},
++                headers={"x-test-user": str(SECOND)},
++            )
++            result["status"] = r.status_code
++        finally:
++            c.close()
++
++    try:
++        # A claim in flight: lock held, owner written, tokens swept, no commit.
++        holder.execute(text("SELECT id FROM salons WHERE id = :s FOR UPDATE"), {"s": SALON})
++        holder.execute(text(
++            "INSERT INTO salon_owners (user_id, salon_id) VALUES (:u, :s)"
++        ), {"u": FIRST, "s": SALON})
++        holder.execute(text(
++            "UPDATE claiming_tokens SET used_at = CURRENT_TIMESTAMP "
++            "WHERE salon_id = :s AND used_at IS NULL"
++        ), {"s": SALON})
++
++        thread = threading.Thread(target=fire_request)
++        thread.start()
++
++        # It must actually block. Without the lock in `request` nothing waits,
++        # the request completes against the stale read, and this loop times
++        # out — which is the failure this test exists to produce.
++        deadline = time.monotonic() + 15
++        blocked = False
++        while time.monotonic() < deadline:
++            with engine.connect() as probe:
++                blocked = probe.execute(text(
++                    "SELECT count(*) FROM pg_stat_activity "
++                    "WHERE wait_event_type = 'Lock' AND state = 'active'"
++                )).scalar() > 0
++            if blocked:
++                break
++            time.sleep(0.2)
++
++        assert blocked, (
++            "claim/request did not wait for the salon lock — it read ownership "
++            "while a claim was in flight"
++        )
++        assert "status" not in result, "the request completed before the claim committed"
++
++        holder.commit()
++        thread.join(timeout=20)
++
++        assert result.get("status") == 409, (
++            f"expected 409 once the claim landed, got {result.get('status')}"
++        )
++        assert _live_tokens(engine) == 0, "a live token survived a completed claim"
++    finally:
++        holder.close()
++        app.dependency_overrides.pop(get_db, None)
++        app.dependency_overrides.pop(get_current_user, None)
++        engine.dispose()
+diff --git a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+index 3aedc7d..82b0317 100644
+--- a/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
++++ b/docs/05_ROADMAP/IMPLEMENTATION_BACKLOG.md
+@@ -3023,6 +3023,31 @@ docker compose up -d --no-deps web
+ 
+ ---
+ 
++### T-079 — A claim token outlives the claim it was issued for
++**Priority:** P1 | **Owner:** BE | **Epic:** EPIC-09 | **Estimate:** 1h
++**Dependencies:** T-078 ✅ (unreachable until the claim guard was fixed)
++
++`POST /api/owner/claim/verify` inserted into `salon_owners` without re-checking ownership. Two people request a claim on an unclaimed salon; the first verifies and becomes owner; the second's token is still unused and unexpired, so their verification adds a **second owner row** and returns success. `ON CONFLICT DO NOTHING` does not prevent it — the only uniqueness is the composite `(user_id, salon_id)`, so two different users for one salon is a valid pair.
++
++A second `SELECT` before the `INSERT` is not sufficient either: two concurrent verifications can both observe no owner. The salon row is locked with `SELECT … FOR UPDATE`, which serialises claims for that salon and nothing else.
++
++**Both endpoints take that lock**, through one shared helper. With it only in `verify`, a concurrent `request` still reads `salon_owners` before the claim commits, passes its ownership guard, and inserts a token *after* the claim swept the outstanding ones — so a live token survives a completed claim and the endpoint reports success for an already-claimed salon. Both endpoints read ownership and then write on the strength of what they read, so both must hold the same lock or the read is stale by the time the write lands.
++
++**Ownership is checked before the token, and the order matters.** A successful claim burns every outstanding token for the salon, so a loser arriving afterwards has no live token left; checking the token first would answer *"invalid or expired code"* — true, but misleading, since their code was fine and somebody else simply got there first. Claim state is already public via `is_owner_claimed`, so answering 409 first discloses nothing new.
++
++**Acceptance Criteria:**
++- [x] Second verification on a claimed salon returns 409, not 200 and not 400
++- [x] Exactly one `salon_owners` row per salon after any sequence of verifications
++- [x] A successful claim invalidates every other outstanding token for that salon
++- [x] The refused token is burned rather than left retryable for the rest of its hour
++- [x] A database fault is not reported as 409
++- [x] **A request arriving during an in-flight claim** waits on the lock, then returns 409 and issues no token — proven by holding exactly what `verify` holds (lock, uncommitted owner row, token sweep) and asserting the request is genuinely blocked via `pg_stat_activity` before the claim commits, not merely slow
++- [x] **Two simultaneous verifications produce one owner** — proven against a real Postgres, since SQLite serialises writes on its own and would pass without any lock. CI gains a `postgres:16-alpine` service, and the test **fails rather than skips** when `TEST_DATABASE_URL` is missing on CI, so deleting the service breaks the build instead of silently dropping the guarantee.
++
++Mutation-verified: removing `FOR UPDATE` makes both concurrent verifications return 200 and create two owners; removing the lock from `request` alone leaves it not waiting at all; disabling the ownership check fails three tests; not burning the other tokens fails one.
++
++---
++
+ ### T-078 — The duplicate-claim guard queries a column that does not exist
+ **Priority:** P1 | **Owner:** BE | **Estimate:** 0.5h | **Epic:** EPIC-09
+ **Dependencies:** none (found while writing the T-047/T-048 data matrix)

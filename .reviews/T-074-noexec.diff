@@ -1,0 +1,293 @@
+diff --git a/backend/tests/test_t074_apply.py b/backend/tests/test_t074_apply.py
+index 6187a41..6ff04b0 100644
+--- a/backend/tests/test_t074_apply.py
++++ b/backend/tests/test_t074_apply.py
+@@ -793,3 +793,206 @@ def test_only_the_intended_variables_are_injected():
+     assert injected <= allowed, (
+         f"unexpected variables injected into the rollback: {sorted(injected - allowed)}"
+     )
++
++
++# ───────────── arming the timer on a noexec state directory ──────────────────
++
++
++def _refuse_exec_under(directory) -> str:
++    """
++    A `systemd-run` stub that refuses what the kernel refuses.
++
++    `$T074_STATE_DIR` lives under /run on the production host, and /run is
++    mounted `noexec`. exec() on a file there fails with EACCES regardless of
++    its mode bits, so a rollback handed to systemd-run as the executable can
++    never be started — systemd reports "Failed to find executable ...:
++    Permission denied" and the rollout aborts with nothing applied. Passing the
++    script to an interpreter reads it instead of exec'ing it, which noexec does
++    not restrict.
++    """
++    return (
++        'exe=""\n'
++        'for a in "$@"; do case "$a" in -*) ;; *) exe="$a"; break;; esac; done\n'
++        f'case "$exe" in {directory}/*)\n'
++        '  echo "Failed to find executable $exe: Permission denied" >&2\n'
++        "  exit 1;;\n"
++        "esac\n"
++        "exit 0"
++    )
++
++
++def test_the_timer_arms_even_though_the_state_directory_is_noexec(tmp_path):
++    state = tmp_path / "state"
++    env, log = _make_env(
++        tmp_path, extra={"systemd-run": _refuse_exec_under(state)}
++    )
++    r = _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=0)
++
++    assert "Permission denied" not in r.stderr
++    assert any("--apply" in c for c in _calls(log)), (
++        "the rollout never reached the firewall — the timer failed to arm"
++    )
++
++
++def test_the_rollback_reaches_systemd_through_an_interpreter(tmp_path):
++    # The behavioural form of the same guarantee: whatever systemd is asked to
++    # exec must not be the rollback file itself.
++    env, log = _make_env(tmp_path)
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=0)
++
++    armed = next(c for c in _calls(log) if "systemd-run" in c).split()
++    idx = next(i for i, f in enumerate(armed) if f.endswith("rollback.sh"))
++    assert idx > 0 and armed[idx - 1].endswith("bash"), (
++        f"the rollback was handed to systemd as the executable: {' '.join(armed)}"
++    )
++
++
++def test_the_printed_rollback_instruction_is_runnable(tmp_path):
++    # An operator copying the closing instruction on a noexec state directory
++    # would get exit 126 at the moment they most need the rollback to work.
++    env, _ = _make_env(tmp_path)
++    r = _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=0)
++
++    # The log line "[t074] rollback: <path>" also ends in rollback.sh; the
++    # instruction is the one meant to be copied and run.
++    line = next(
++        ln for ln in r.stdout.splitlines()
++        if ln.strip().endswith("rollback.sh") and not ln.startswith("[t074]")
++    )
++    assert line.split()[0] == "bash", (
++        f"the printed rollback command is not runnable under noexec: {line.strip()}"
++    )
++
++
++# ───────────── the marker across a failed arm (previous generation) ──────────
++#
++# The marker is the only thing that authorises a destructive rollback, so a
++# rollout that applies nothing must leave the previous generation exactly as
++# armed as it found it. Two starting states, two different correct outcomes.
++
++
++# A `systemctl` that reports one existing rollback timer, so the retirement
++# loop has something to act on. Without it the "nothing was stopped" assertions
++# hold over an empty set and prove nothing.
++_LISTS_TIMER_4242 = (
++    'case " $* " in *" list-units "*)'
++    ' echo "lookla-t074-rollback-20260101T000000Z-4242.timer '
++    'loaded active waiting";; esac; exit 0'
++)
++
++
++def _marker(env) -> Path:
++    return Path(env["T074_STATE_DIR"]) / "current"
++
++
++def test_a_failed_arm_leaves_no_marker_when_there_was_none(tmp_path):
++    env, _ = _make_env(tmp_path, extra={"systemd-run": "exit 1"})
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++
++    assert not _marker(env).exists(), (
++        "a generation marker survived a rollout that applied nothing"
++    )
++
++
++def test_a_failed_arm_restores_the_previous_generation_marker(tmp_path):
++    # Generation A is installed and its rollback is authorised by the marker.
++    # Rollout B fails to arm. A's rules are still live, so A's marker must
++    # survive byte for byte or nothing can ever remove them.
++    env, _ = _make_env(tmp_path, extra={"systemd-run": "exit 1"})
++    marker = _marker(env)
++    marker.parent.mkdir(parents=True, exist_ok=True)
++    marker.write_text("20260101T000000Z-4242")
++
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++
++    assert marker.exists(), "the previous generation was disarmed by a failed rollout"
++    assert marker.read_text() == "20260101T000000Z-4242", (
++        f"the restored marker does not match: {marker.read_text()!r}"
++    )
++
++
++def test_a_failed_arm_does_not_stop_the_previous_generation_timer(tmp_path):
++    # Stopping A's timer and then failing to arm B would leave A's rules live
++    # with nothing able to remove them.
++    # systemctl must report a timer that exists, or the loop has nothing to
++    # stop and the assertion below passes without proving anything.
++    env, log = _make_env(
++        tmp_path,
++        extra={
++            "systemd-run": "exit 1",
++            "systemctl": _LISTS_TIMER_4242,
++        },
++    )
++    marker = _marker(env)
++    marker.parent.mkdir(parents=True, exist_ok=True)
++    marker.write_text("20260101T000000Z-4242")
++
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++
++    stops = [c for c in _calls(log) if "systemctl" in c and " stop " in f" {c} "]
++    assert not stops, f"a failed rollout stopped an existing timer: {stops}"
++
++
++def test_older_timers_are_stopped_only_after_the_new_one_is_armed(tmp_path):
++    # The successful path still retires stale timers — just not before there is
++    # a replacement.
++    env, log = _make_env(tmp_path, extra={"systemctl": _LISTS_TIMER_4242})
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=0)
++
++    calls = _calls(log)
++    armed = next(i for i, c in enumerate(calls) if "systemd-run" in c)
++    stop = next(
++        (i for i, c in enumerate(calls)
++         if "systemctl" in c and "stop" in c and "4242" in c), None,
++    )
++    assert stop is not None, "the stale timer was never retired"
++    assert stop > armed, "a stale timer was stopped before the new one was armed"
++
++
++def test_the_rollout_does_not_stop_the_timer_it_just_armed(tmp_path):
++    # The retirement loop matches lookla-t074-rollback-*.timer, and on a real
++    # host that glob includes the unit armed seconds earlier. Stopping it would
++    # leave the firewall applied with no rollback at all — the exact state the
++    # attended mode exists to make impossible.
++    state = tmp_path / "state"
++    lists_every_generation = (
++        'case " $* " in *" list-units "*)\n'
++        '  echo "lookla-t074-rollback-20260101T000000Z-4242.timer loaded active waiting"\n'
++        f'  for d in {state}/*/; do\n'
++        '    b=$(basename "$d")\n'
++        '    [ -d "$d" ] || continue\n'
++        '    echo "lookla-t074-rollback-$b.timer loaded active waiting"\n'
++        '  done;;\n'
++        "esac\n"
++        "exit 0"
++    )
++    env, log = _make_env(tmp_path, extra={"systemctl": lists_every_generation})
++    _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=0)
++
++    calls = _calls(log)
++    armed_unit = next(
++        f.split("=", 1)[1]
++        for c in calls if "systemd-run" in c
++        for f in c.split() if f.startswith("--unit=")
++    )
++    stopped = [c for c in calls if "systemctl" in c and " stop " in f" {c} "]
++    assert stopped, "the stale timer was never retired — the test proves nothing"
++    assert not any(armed_unit in c for c in stopped), (
++        f"the rollout stopped its own rollback timer {armed_unit}: {stopped}"
++    )
++
++
++def test_no_failed_arm_scenario_ever_touches_the_firewall(tmp_path):
++    for marker_text in (None, "20260101T000000Z-4242"):
++        env, log = _make_env(tmp_path / f"m{marker_text}",
++                             extra={"systemd-run": "exit 1"})
++        if marker_text is not None:
++            m = _marker(env)
++            m.parent.mkdir(parents=True, exist_ok=True)
++            m.write_text(marker_text)
++
++        _run(tmp_path, ["--interface", IFACE, "--rollout"], env, expect_rc=1)
++
++        calls = _calls(log)
++        assert not any("--apply" in c for c in calls), marker_text
++        assert not any("iptables-restore" in c for c in calls), marker_text
+diff --git a/ops/t074/apply_t074.sh b/ops/t074/apply_t074.sh
+index a0b0c14..6d6b1b8 100755
+--- a/ops/t074/apply_t074.sh
++++ b/ops/t074/apply_t074.sh
+@@ -281,21 +281,58 @@ if [[ $DRY_RUN -eq 1 ]]; then
+   exit 0
+ fi
+ 
+-# Any timer left armed by an earlier rollout is dealt with explicitly rather
+-# than left to coexist silently.
+-for unit in $(systemctl list-units --all --no-legend 'lookla-t074-rollback-*.timer' 2>/dev/null | awk '{print $1}'); do
+-  log "stopping stale rollback timer: $unit"
+-  systemctl stop "$unit" 2>/dev/null || true
+-done
++# The marker of whatever generation is installed right now, preserved byte for
++# byte — including the case where there is none. It is the only thing that
++# authorises a rollback, so losing it disarms the protection that is already in
++# place. The backup lives inside the generation directory, on the same
++# filesystem, so putting it back is a rename and cannot half-succeed.
++MARKER="$STATE_DIR/current"
++MARKER_BACKUP="$GEN_DIR/previous-current"
++if [[ -f "$MARKER" ]]; then
++  cp -p "$MARKER" "$MARKER_BACKUP"
++fi
+ 
+-printf '%s' "$GENERATION" > "$STATE_DIR/current"
++restore_previous_marker() {
++  if [[ -f "$MARKER_BACKUP" ]]; then
++    mv -f "$MARKER_BACKUP" "$MARKER"
++    log "restored the previous generation marker: $(cat "$MARKER")"
++  else
++    rm -f "$MARKER"
++  fi
++}
++
++printf '%s' "$GENERATION" > "$MARKER"
+ 
+ TIMER_UNIT="lookla-t074-rollback-$GENERATION"
++# The rollback is run through an explicit interpreter rather than executed as a
++# file. $STATE_DIR lives under /run, which is mounted noexec on this host, so
++# exec'ing the path fails with EACCES no matter what mode bits it carries and
++# the timer can never be armed. Passing the script to bash reads it instead of
++# exec'ing it, which noexec does not restrict. A test asserts the rollback path
++# is never handed to systemd-run as the executable itself.
+ systemd-run --on-active="$ROLLBACK_AFTER" --unit="$TIMER_UNIT" \
+-  --description="T-074 automatic rollback ($GENERATION)" "$ROLLBACK" >/dev/null \
+-  || fail "could not arm the rollback timer — nothing has been applied"
++  --description="T-074 automatic rollback ($GENERATION)" /bin/bash "$ROLLBACK" >/dev/null \
++  || {
++    # Nothing has been applied and no timer exists. Leaving the new marker in
++    # place would name a generation that was never installed; deleting it
++    # outright would disarm the generation that *is* installed. Put back
++    # exactly what was there.
++    restore_previous_marker
++    fail "could not arm the rollback timer — nothing has been applied"
++  }
+ log "rollback armed: ${ROLLBACK_AFTER}s as $TIMER_UNIT.timer"
+ 
++# Only now are the older timers retired. Stopping them before the new one is
++# armed would leave a failed rollout with the previous generation's rules still
++# installed, its timer stopped and its marker replaced — protection in place
++# with nothing able to remove it. The new unit is skipped by name.
++for unit in $(systemctl list-units --all --no-legend 'lookla-t074-rollback-*.timer' 2>/dev/null | awk '{print $1}'); do
++  [[ "$unit" == "$TIMER_UNIT.timer" ]] && continue
++  log "stopping stale rollback timer: $unit"
++  systemctl stop "$unit" 2>/dev/null || true
++done
++rm -f "$MARKER_BACKUP"
++
+ # Only now is the firewall touched.
+ apply_rules || fail "apply failed — the armed rollback will restore automatically"
+ verify_live || fail "rules are not present after apply — the armed rollback will restore automatically"
+@@ -313,7 +350,7 @@ cat <<NEXT
+ 
+   systemctl stop $TIMER_UNIT.timer
+ 
+-Roll back now:
++Roll back now (through bash — the state directory is mounted noexec):
+ 
+-  $ROLLBACK
++  bash $ROLLBACK
+ NEXT
